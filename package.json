@@ -2,6 +2,7 @@
   "name": "paperify-md",
   "displayName": "paperify-md",
   "description": "Export Markdown files to DOCX with Pandoc templates and Mermaid diagram support.",
+  "icon": "assets/icon.png",
   "version": "0.1.0",
   "publisher": "alexmultiagent",
   "license": "MIT",
