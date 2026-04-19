@@ -1,5 +1,7 @@
 # paperify-md
 
+![paperify-md banner](./assets/banner.png)
+
 Export Markdown files to DOCX from VS Code with:
 
 - Pandoc-based DOCX generation
