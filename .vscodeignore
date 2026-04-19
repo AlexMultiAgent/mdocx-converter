@@ -1,0 +1,10 @@
+.vscode/**
+.vscode-test/**
+node_modules/**
+src/**
+*.vsix
+tsconfig.json
+package-lock.json
+tmp*
+examples/*.docx
+journal-templates/**/*.html

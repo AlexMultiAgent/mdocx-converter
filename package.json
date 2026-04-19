@@ -1,0 +1,143 @@
+{
+  "name": "paperify-md",
+  "displayName": "paperify-md",
+  "description": "Export Markdown files to DOCX with Pandoc templates and Mermaid diagram support.",
+  "version": "0.1.0",
+  "publisher": "alexmultiagent",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.116.0"
+  },
+  "categories": [
+    "Other",
+    "Formatters"
+  ],
+  "keywords": [
+    "markdown",
+    "docx",
+    "pandoc",
+    "mermaid",
+    "word"
+  ],
+  "activationEvents": [
+    "onCommand:paperifyMd.exportToDocx",
+    "onCommand:paperifyMd.checkEnvironment"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "paperifyMd.exportToDocx",
+        "title": "Export Markdown to DOCX",
+        "category": "paperify-md"
+      },
+      {
+        "command": "paperifyMd.checkEnvironment",
+        "title": "Check Export Environment",
+        "category": "paperify-md"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "paperifyMd.exportToDocx",
+          "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
+          "group": "navigation@7"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "paperifyMd.exportToDocx",
+          "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
+          "group": "navigation@7"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "paperifyMd.exportToDocx",
+          "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i || editorLangId == markdown",
+          "group": "navigation@7"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "paperifyMd.exportToDocx"
+        },
+        {
+          "command": "paperifyMd.checkEnvironment"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "paperify-md",
+      "properties": {
+        "paperifyMd.pandocPath": {
+          "type": "string",
+          "default": "pandoc",
+          "description": "Path to the Pandoc executable."
+        },
+        "paperifyMd.mermaidCliPath": {
+          "type": "string",
+          "default": "mmdc",
+          "description": "Path to the Mermaid CLI executable (mmdc). Required only when the Markdown file contains mermaid code fences."
+        },
+        "paperifyMd.referenceDocx": {
+          "type": "string",
+          "default": "",
+          "description": "Optional path to a reference DOCX template. If empty, the extension will first look for reference.docx next to the Markdown file, then use the bundled template selected by paperifyMd.referenceLanguage."
+        },
+        "paperifyMd.referenceLanguage": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "english",
+            "chinese"
+          ],
+          "enumDescriptions": [
+            "Automatically detect Markdown language: choose Chinese template when Chinese content is dominant, otherwise English.",
+            "Use the bundled English CSCI reference DOCX based on the official CSCI/IJMLC template.",
+            "Use the bundled Chinese CSSCI common reference DOCX."
+          ],
+          "default": "auto",
+          "description": "Bundled reference DOCX language used when paperifyMd.referenceDocx is empty and no local reference.docx exists next to the Markdown file."
+        },
+        "paperifyMd.outputDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Optional output directory for exported DOCX files. Relative paths are resolved from the Markdown file folder."
+        },
+        "paperifyMd.mermaidOutputFormat": {
+          "type": "string",
+          "enum": [
+            "png",
+            "svg"
+          ],
+          "default": "png",
+          "description": "Rendered image format for mermaid diagrams before conversion."
+        },
+        "paperifyMd.openAfterExport": {
+          "type": "boolean",
+          "default": false,
+          "description": "After export, open the generated DOCX location. On Windows, the file is selected in Explorer to avoid shell association pop-up failures."
+        },
+        "paperifyMd.keepIntermediateFiles": {
+          "type": "boolean",
+          "default": false,
+          "description": "Keep temporary markdown and rendered mermaid assets for debugging."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "package": "vsce package --no-dependencies --allow-missing-repository",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^24.9.1",
+    "@types/vscode": "^1.116.0",
+    "@vscode/vsce": "^3.9.0",
+    "typescript": "^6.0.3"
+  }
+}
