@@ -20,6 +20,8 @@ graph TD
     C --> D[Word Export]
 ```
 
+![Mermaid flow preview](./assets/mermaid-example.png)
+
 - Use the bundled English CSCI reference DOCX by default
 - Switch to the bundled Chinese CSSCI common reference DOCX when needed
 - Override with a custom Word template via `reference.docx`

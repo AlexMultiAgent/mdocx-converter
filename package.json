@@ -6,6 +6,10 @@
   "version": "0.1.0",
   "publisher": "alexmultiagent",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AlexMultiAgent/md-docx-mermaid-exporter.git"
+  },
   "engines": {
     "vscode": "^1.116.0"
   },
