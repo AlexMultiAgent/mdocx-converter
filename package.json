@@ -8,7 +8,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/AlexMultiAgent/md-docx-mermaid-exporter.git"
+    "url": "https://github.com/AlexMultiAgent/mdocx-paper-converter.git"
   },
   "engines": {
     "vscode": "^1.116.0"
