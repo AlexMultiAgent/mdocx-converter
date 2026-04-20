@@ -1,6 +1,6 @@
 {
-  "name": "paperify-md",
-  "displayName": "paperify-md",
+  "name": "mdocx-paper-converter",
+  "displayName": "MDOCX Paper Converter",
   "description": "Export Markdown files to DOCX with Pandoc templates and Mermaid diagram support.",
   "icon": "assets/icon.png",
   "version": "0.1.0",
@@ -34,12 +34,12 @@
       {
         "command": "paperifyMd.exportToDocx",
         "title": "Export Markdown to DOCX",
-        "category": "paperify-md"
+        "category": "MDOCX Paper Converter"
       },
       {
         "command": "paperifyMd.checkEnvironment",
         "title": "Check Export Environment",
-        "category": "paperify-md"
+        "category": "MDOCX Paper Converter"
       }
     ],
     "menus": {
@@ -74,7 +74,7 @@
       ]
     },
     "configuration": {
-      "title": "paperify-md",
+      "title": "MDOCX Paper Converter",
       "properties": {
         "paperifyMd.pandocPath": {
           "type": "string",

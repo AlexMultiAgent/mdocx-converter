@@ -1,6 +1,6 @@
-# paperify-md
+# MDOCX Paper Converter
 
-![paperify-md banner](./assets/banner.png)
+![MDOCX Paper Converter banner](./assets/banner.png)
 
 Export Markdown files to DOCX from VS Code with:
 
