@@ -3,7 +3,7 @@
   "displayName": "MDocx Converter",
   "description": "Export Markdown files to DOCX with Pandoc templates and Mermaid diagram support.",
   "icon": "assets/icon.png",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "alexmultiagent",
   "license": "MIT",
   "repository": {
@@ -33,7 +33,7 @@
     "commands": [
       {
         "command": "mdocxConverter.exportToDocx",
-        "title": "Export Markdown to DOCX",
+        "title": "Export Markdown to DOCX（MDocx）",
         "category": "MDocx Converter"
       },
       {
@@ -47,21 +47,21 @@
         {
           "command": "mdocxConverter.exportToDocx",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
-          "group": "navigation@7"
+          "group": "z_mdocx@95"
         }
       ],
       "editor/title/context": [
         {
           "command": "mdocxConverter.exportToDocx",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
-          "group": "navigation@7"
+          "group": "z_mdocx@95"
         }
       ],
       "editor/context": [
         {
           "command": "mdocxConverter.exportToDocx",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i || editorLangId == markdown",
-          "group": "navigation@7"
+          "group": "z_mdocx@95"
         }
       ],
       "commandPalette": [
