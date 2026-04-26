@@ -71,6 +71,7 @@ interface ExportSettings {
 interface ResolvedExecutable {
     command: string;
     versionLine: string;
+    useShell?: boolean;
 }
 
 interface PreparedMarkdown {
@@ -406,6 +407,7 @@ async function prepareMarkdown(
                 'transparent'
             ],
             {
+                shell: mermaid.useShell,
                 cwd: path.dirname(markdownPath)
             }
         );
@@ -569,8 +571,10 @@ async function resolveExecutable(candidates: string[], versionArgs: string[]): P
         seen.add(normalized);
 
         try {
-            const { stdout, stderr } = await execFileAsync(normalized, versionArgs, {
-                windowsHide: true
+            const useShell = shouldRunThroughShell(normalized);
+            const { stdout, stderr } = await execExecutable(normalized, versionArgs, {
+                windowsHide: true,
+                shell: useShell
             });
 
             const versionLine = [stdout, stderr]
@@ -581,7 +585,8 @@ async function resolveExecutable(candidates: string[], versionArgs: string[]): P
 
             return {
                 command: normalized,
-                versionLine
+                versionLine,
+                useShell
             };
         } catch {
             // Try the next candidate.
@@ -638,6 +643,7 @@ async function runPandoc(options: {
 
     try {
         const result = await runExecutable(pandoc.command, args, {
+            shell: pandoc.useShell,
             cwd: path.dirname(originalMarkdownPath)
         });
 
@@ -903,13 +909,37 @@ async function runExecutable(
     args: string[],
     options: {
         cwd?: string;
+        shell?: boolean;
+    }
+): Promise<{ stdout: string; stderr: string; }> {
+    return execExecutable(command, args, {
+        cwd: options.cwd,
+        shell: options.shell,
+        windowsHide: true,
+        maxBuffer: 16 * 1024 * 1024
+    });
+}
+
+async function execExecutable(
+    command: string,
+    args: string[],
+    options: {
+        cwd?: string;
+        shell?: boolean;
+        windowsHide?: boolean;
+        maxBuffer?: number;
     }
 ): Promise<{ stdout: string; stderr: string; }> {
     return execFileAsync(command, args, {
         cwd: options.cwd,
-        windowsHide: true,
-        maxBuffer: 16 * 1024 * 1024
+        shell: options.shell,
+        windowsHide: options.windowsHide,
+        maxBuffer: options.maxBuffer ?? 16 * 1024 * 1024
     });
+}
+
+function shouldRunThroughShell(command: string): boolean {
+    return process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
 }
 
 async function openExportedDocx(outputPath: string, outputChannel: vscode.OutputChannel): Promise<void> {

@@ -3,7 +3,7 @@
   "displayName": "MDOCX Paper Converter",
   "description": "Export Markdown files to DOCX with Pandoc templates and Mermaid diagram support.",
   "icon": "assets/icon.png",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "publisher": "alexmultiagent",
   "license": "MIT",
   "repository": {
