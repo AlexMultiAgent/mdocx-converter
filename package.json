@@ -3,7 +3,7 @@
   "displayName": "MDocx Converter",
   "description": "Export Markdown files to DOCX with Pandoc templates and Mermaid diagram support.",
   "icon": "assets/icon.png",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "alexmultiagent",
   "license": "MIT",
   "repository": {
@@ -26,6 +26,7 @@
   ],
   "activationEvents": [
     "onCommand:mdocxConverter.exportToDocx",
+    "onCommand:mdocxConverter.exportToDocxWithProfile",
     "onCommand:mdocxConverter.checkEnvironment"
   ],
   "main": "./out/extension.js",
@@ -34,6 +35,11 @@
       {
         "command": "mdocxConverter.exportToDocx",
         "title": "Export Markdown to DOCX（MDocx）",
+        "category": "MDocx Converter"
+      },
+      {
+        "command": "mdocxConverter.exportToDocxWithProfile",
+        "title": "Export Markdown to DOCX by Type（MDocx）",
         "category": "MDocx Converter"
       },
       {
@@ -48,6 +54,11 @@
           "command": "mdocxConverter.exportToDocx",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
           "group": "z_mdocx@95"
+        },
+        {
+          "command": "mdocxConverter.exportToDocxWithProfile",
+          "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
+          "group": "z_mdocx@96"
         }
       ],
       "editor/title/context": [
@@ -55,6 +66,11 @@
           "command": "mdocxConverter.exportToDocx",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
           "group": "z_mdocx@95"
+        },
+        {
+          "command": "mdocxConverter.exportToDocxWithProfile",
+          "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
+          "group": "z_mdocx@96"
         }
       ],
       "editor/context": [
@@ -62,11 +78,19 @@
           "command": "mdocxConverter.exportToDocx",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i || editorLangId == markdown",
           "group": "z_mdocx@95"
+        },
+        {
+          "command": "mdocxConverter.exportToDocxWithProfile",
+          "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i || editorLangId == markdown",
+          "group": "z_mdocx@96"
         }
       ],
       "commandPalette": [
         {
           "command": "mdocxConverter.exportToDocx"
+        },
+        {
+          "command": "mdocxConverter.exportToDocxWithProfile"
         },
         {
           "command": "mdocxConverter.checkEnvironment"
@@ -139,10 +163,10 @@
             "technical"
           ],
           "enumDescriptions": [
-            "Use the selected reference DOCX without extra metadata overrides.",
-            "Academic paper defaults: 12 pt, 1.5 line spacing, wider margins.",
-            "Business report defaults: 11 pt, 1.25 line spacing, Microsoft YaHei/Arial-oriented fonts.",
-            "Technical document defaults: compact spacing and Consolas monospace metadata."
+            "Template only: use the selected reference DOCX without extra metadata overrides.",
+            "Academic paper: 12 pt, 1.5 line spacing, SimSun/SimHei-oriented Chinese paper defaults.",
+            "Business report: 11 pt, 1.25 line spacing, Microsoft YaHei/Arial-oriented report defaults.",
+            "Technical document: compact spacing, Arial body text, and Consolas-oriented code styles."
           ],
           "default": "template",
           "description": "Optional FlexMD-style document preset layered on top of the selected reference DOCX."

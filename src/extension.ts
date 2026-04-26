@@ -10,6 +10,7 @@ import AdmZip = require('adm-zip');
 const execFileAsync = promisify(execFile);
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
 const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
+const EXPORT_WITH_PROFILE_COMMAND_ID = 'mdocxConverter.exportToDocxWithProfile';
 const CHECK_ENVIRONMENT_COMMAND_ID = 'mdocxConverter.checkEnvironment';
 const CONFIGURATION_SECTION = 'mdocxConverter';
 const LEGACY_CONFIGURATION_SECTION = 'paperifyMd';
@@ -44,6 +45,10 @@ const STYLE_PROFILE_METADATA: Record<StyleProfile, Record<string, string>> = {
 type ReferenceLanguage = 'english' | 'chinese';
 type ReferenceLanguageSetting = ReferenceLanguage | 'auto';
 type StyleProfile = 'template' | 'academic' | 'business' | 'technical';
+
+interface StyleProfilePickItem extends vscode.QuickPickItem {
+    profile: StyleProfile;
+}
 
 interface ExportSettings {
     pandocPath: string;
@@ -96,18 +101,31 @@ export function activate(context: vscode.ExtensionContext): void {
     const exportDisposable = vscode.commands.registerCommand(EXPORT_COMMAND_ID, async (uri?: vscode.Uri) => {
         await runExport(uri, outputChannel, context.extensionPath);
     });
+    const exportWithProfileDisposable = vscode.commands.registerCommand(EXPORT_WITH_PROFILE_COMMAND_ID, async (uri?: vscode.Uri) => {
+        const profile = await pickStyleProfile();
+        if (!profile) {
+            return;
+        }
+
+        await runExport(uri, outputChannel, context.extensionPath, profile);
+    });
     const checkEnvironmentDisposable = vscode.commands.registerCommand(CHECK_ENVIRONMENT_COMMAND_ID, async (uri?: vscode.Uri) => {
         await checkEnvironment(uri, outputChannel);
     });
 
-    context.subscriptions.push(exportDisposable, checkEnvironmentDisposable);
+    context.subscriptions.push(exportDisposable, exportWithProfileDisposable, checkEnvironmentDisposable);
 }
 
 export function deactivate(): void {
     // No-op.
 }
 
-async function runExport(uri: vscode.Uri | undefined, outputChannel: vscode.OutputChannel, extensionPath: string): Promise<void> {
+async function runExport(
+    uri: vscode.Uri | undefined,
+    outputChannel: vscode.OutputChannel,
+    extensionPath: string,
+    styleProfileOverride?: StyleProfile
+): Promise<void> {
     const markdownUri = getMarkdownUri(uri);
     if (!markdownUri) {
         void vscode.window.showErrorMessage('Open a Markdown file or right-click a .md file to export it.');
@@ -121,7 +139,7 @@ async function runExport(uri: vscode.Uri | undefined, outputChannel: vscode.Outp
     let prepared: PreparedMarkdown | undefined;
 
     try {
-        const settings = readSettings(markdownUri);
+        const settings = readSettings(markdownUri, styleProfileOverride);
         const outputPath = await resolveOutputPath(markdownUri, settings.outputDirectory);
         const markdownText = await fsp.readFile(markdownUri.fsPath, 'utf8');
         const resolvedLanguage = resolveReferenceLanguage(markdownText, settings.referenceLanguage);
@@ -165,7 +183,7 @@ async function runExport(uri: vscode.Uri | undefined, outputChannel: vscode.Outp
         void vscode.window.showErrorMessage(message);
     } finally {
         if (prepared?.tempDir) {
-            const settings = readSettings(markdownUri);
+            const settings = readSettings(markdownUri, styleProfileOverride);
             if (!settings.keepIntermediateFiles) {
                 await fsp.rm(prepared.tempDir, { recursive: true, force: true });
             } else {
@@ -173,6 +191,42 @@ async function runExport(uri: vscode.Uri | undefined, outputChannel: vscode.Outp
             }
         }
     }
+}
+
+async function pickStyleProfile(): Promise<StyleProfile | undefined> {
+    const items: StyleProfilePickItem[] = [
+        {
+            label: '学术论文',
+            description: 'Academic paper',
+            detail: '12 pt body text, 1.5 line spacing, SimSun/SimHei-oriented paper defaults.',
+            profile: 'academic'
+        },
+        {
+            label: '技术文档',
+            description: 'Technical document',
+            detail: 'Compact spacing, Arial body text, and Consolas-oriented code styles.',
+            profile: 'technical'
+        },
+        {
+            label: '商务报告',
+            description: 'Business report',
+            detail: '11 pt body text, 1.25 line spacing, Microsoft YaHei/Arial-oriented report defaults.',
+            profile: 'business'
+        },
+        {
+            label: '模板默认',
+            description: 'Reference DOCX only',
+            detail: 'Use the selected reference DOCX without extra profile overrides.',
+            profile: 'template'
+        }
+    ];
+
+    const selected = await vscode.window.showQuickPick(items, {
+        title: 'Select DOCX document type',
+        placeHolder: 'Choose how MDocx Converter should style this export'
+    });
+
+    return selected?.profile;
 }
 
 async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vscode.OutputChannel): Promise<void> {
@@ -224,7 +278,7 @@ function getMarkdownUri(uri?: vscode.Uri): vscode.Uri | undefined {
     return undefined;
 }
 
-function readSettings(markdownUri: vscode.Uri): ExportSettings {
+function readSettings(markdownUri: vscode.Uri, styleProfileOverride?: StyleProfile): ExportSettings {
     const config = vscode.workspace.getConfiguration(CONFIGURATION_SECTION, markdownUri);
     const legacyConfig = vscode.workspace.getConfiguration(LEGACY_CONFIGURATION_SECTION, markdownUri);
     return {
@@ -236,7 +290,7 @@ function readSettings(markdownUri: vscode.Uri): ExportSettings {
         mermaidOutputFormat: readConfigValue<'png' | 'svg'>(config, legacyConfig, 'mermaidOutputFormat', 'png'),
         openAfterExport: readConfigValue(config, legacyConfig, 'openAfterExport', false),
         keepIntermediateFiles: readConfigValue(config, legacyConfig, 'keepIntermediateFiles', false),
-        styleProfile: normalizeStyleProfile(readConfigValue(config, legacyConfig, 'styleProfile', 'template')),
+        styleProfile: styleProfileOverride ?? normalizeStyleProfile(readConfigValue(config, legacyConfig, 'styleProfile', 'template')),
         bodyFont: readConfigValue(config, legacyConfig, 'bodyFont', '').trim(),
         bodySizePt: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'bodySizePt', undefined)),
         heading1Font: readConfigValue(config, legacyConfig, 'heading1Font', '').trim(),
@@ -712,11 +766,13 @@ interface DocxStyleOverride {
     font?: string;
     sizePt?: number;
     lineSpacing?: number;
+    color?: string;
+    shadingFill?: string;
 }
 
 function buildDocxStyleOverrides(settings: ExportSettings): DocxStyleOverride[] {
     const profileDefaults = getProfileDocxDefaults(settings.styleProfile);
-    return [
+    const overrides: DocxStyleOverride[] = [
         {
             styleId: 'Normal',
             font: settings.bodyFont || profileDefaults.bodyFont,
@@ -738,7 +794,49 @@ function buildDocxStyleOverrides(settings: ExportSettings): DocxStyleOverride[] 
             font: settings.heading3Font || profileDefaults.heading3Font,
             sizePt: settings.heading3SizePt ?? profileDefaults.heading3SizePt
         }
-    ].filter((override) => Boolean(override.font || override.sizePt || override.lineSpacing));
+    ];
+
+    if (settings.styleProfile === 'technical') {
+        overrides.push(...buildTechnicalCodeStyleOverrides());
+    }
+
+    return overrides.filter((override) => hasDocxStyleOverrideValue(override));
+}
+
+function buildTechnicalCodeStyleOverrides(): DocxStyleOverride[] {
+    return [
+        {
+            styleId: 'SourceCode',
+            font: 'Consolas',
+            sizePt: 10,
+            lineSpacing: 1.05,
+            color: '1F2937',
+            shadingFill: 'F3F4F6'
+        },
+        {
+            styleId: 'Code',
+            font: 'Consolas',
+            sizePt: 10,
+            color: '1F2937',
+            shadingFill: 'F3F4F6'
+        },
+        {
+            styleId: 'VerbatimChar',
+            font: 'Consolas',
+            sizePt: 10,
+            color: '1F2937'
+        }
+    ];
+}
+
+function hasDocxStyleOverrideValue(override: DocxStyleOverride): boolean {
+    return Boolean(
+        override.font
+        || override.sizePt
+        || override.lineSpacing
+        || override.color
+        || override.shadingFill
+    );
 }
 
 function getProfileDocxDefaults(styleProfile: StyleProfile): {
@@ -825,13 +923,28 @@ async function applyDocxStyleOverrides(
 
 function upsertStyleOverride(stylesXml: string, override: DocxStyleOverride): string {
     const styleRegex = new RegExp(`<w:style\\b(?=[^>]*w:styleId="${escapeRegex(override.styleId)}")[\\s\\S]*?</w:style>`);
-    return stylesXml.replace(styleRegex, (styleXml) => updateStyleXml(styleXml, override));
+    if (styleRegex.test(stylesXml)) {
+        return stylesXml.replace(styleRegex, (styleXml) => updateStyleXml(styleXml, override));
+    }
+
+    return insertDocxStyle(stylesXml, override);
+}
+
+function insertDocxStyle(stylesXml: string, override: DocxStyleOverride): string {
+    const styleType = override.styleId.endsWith('Char') ? 'character' : 'paragraph';
+    const styleName = override.styleId.replace(/([a-z])([A-Z])/g, '$1 $2');
+    const baseStyleXml = `<w:style w:type="${styleType}" w:customStyle="1" w:styleId="${escapeXmlAttribute(override.styleId)}"><w:name w:val="${escapeXmlAttribute(styleName)}"/></w:style>`;
+    const updatedStyleXml = updateStyleXml(baseStyleXml, override);
+    return stylesXml.replace(/<\/w:styles>\s*$/, `${updatedStyleXml}</w:styles>`);
 }
 
 function updateStyleXml(styleXml: string, override: DocxStyleOverride): string {
     let updated = styleXml;
     updated = ensureChildElement(updated, 'w:rPr');
-    updated = ensureChildElement(updated, 'w:pPr');
+
+    if (override.lineSpacing || override.shadingFill) {
+        updated = ensureChildElement(updated, 'w:pPr');
+    }
 
     if (override.font) {
         const fontXml = `<w:rFonts w:ascii="${escapeXmlAttribute(override.font)}" w:hAnsi="${escapeXmlAttribute(override.font)}" w:eastAsia="${escapeXmlAttribute(override.font)}" w:cs="${escapeXmlAttribute(override.font)}"/>`;
@@ -847,6 +960,14 @@ function updateStyleXml(styleXml: string, override: DocxStyleOverride): string {
     if (override.lineSpacing) {
         const lineTwips = String(Math.round(override.lineSpacing * 240));
         updated = upsertInsideElement(updated, 'w:pPr', /<w:spacing\b[^>]*\/>/, `<w:spacing w:line="${lineTwips}" w:lineRule="auto"/>`);
+    }
+
+    if (override.color) {
+        updated = upsertInsideElement(updated, 'w:rPr', /<w:color\b[^>]*\/>/, `<w:color w:val="${escapeXmlAttribute(override.color)}"/>`);
+    }
+
+    if (override.shadingFill) {
+        updated = upsertInsideElement(updated, 'w:pPr', /<w:shd\b[^>]*\/>/, `<w:shd w:val="clear" w:color="auto" w:fill="${escapeXmlAttribute(override.shadingFill)}"/>`);
     }
 
     return updated;
