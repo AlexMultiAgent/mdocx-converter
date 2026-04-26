@@ -1,6 +1,6 @@
 # MDocx Converter
 
-![MDocx Converter banner](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/assets/banner.png)
+![MDocx Converter banner](assets/banner.png)
 
 Export Markdown files to DOCX from VS Code with:
 
@@ -23,7 +23,7 @@ graph TD
     C --> D[Word Export]
 ```
 
-![Mermaid flow preview](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/assets/mermaid-example.png)
+![Mermaid flow preview](assets/mermaid-example.png)
 
 - Use the bundled English multi-template reference DOCX by default
 - Switch to the bundled Chinese multi-template reference DOCX when needed
