@@ -16,5 +16,5 @@ out/**/*.map
 !assets/icon.png
 !assets/banner.png
 !assets/mermaid-example.png
-!journal-templates/reference_english_csci.docx
-!journal-templates/reference_cssci_三刊通用.docx
+!journal-templates/reference_english_multi_template.docx
+!journal-templates/reference_chinese_multi_template.docx

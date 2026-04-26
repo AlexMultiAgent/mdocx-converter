@@ -6,7 +6,7 @@ Export Markdown files to DOCX from VS Code with:
 
 - Pandoc-based DOCX generation
 - Mermaid code fence rendering
-- Built-in English CSCI and Chinese CSSCI reference DOCX templates
+- Built-in English and Chinese multi-template (多模板) reference DOCX files
 - Optional custom `reference.docx` template support
 - Helpful diagnostics in the output panel
 
@@ -25,8 +25,8 @@ graph TD
 
 ![Mermaid flow preview](./assets/mermaid-example.png)
 
-- Use the bundled English CSCI reference DOCX by default
-- Switch to the bundled Chinese CSSCI common reference DOCX when needed
+- Use the bundled English multi-template (多模板) reference DOCX by default
+- Switch to the bundled Chinese multi-template (多模板) reference DOCX when needed
 - Override with a custom Word template via `reference.docx`
 - Keep temporary files when debugging conversion problems
 
@@ -120,8 +120,8 @@ You can still override individual values:
 `mdocxConverter.referenceLanguage` defaults to `auto`.
 
 - `auto`: detect Markdown content language automatically, choose Chinese template when Chinese is dominant, otherwise English
-- `english`: force bundled English CSCI reference DOCX
-- `chinese`: force bundled Chinese CSSCI reference DOCX
+- `english`: force bundled English multi-template (多模板) reference DOCX
+- `chinese`: force bundled Chinese multi-template (多模板) reference DOCX
 
 Reference DOCX resolution order:
 
@@ -129,7 +129,7 @@ Reference DOCX resolution order:
 2. `reference.docx` next to the Markdown file, when present
 3. Bundled reference selected by `mdocxConverter.referenceLanguage`
 
-To force the bundled Chinese CSSCI common reference:
+To force the bundled Chinese multi-template (多模板) reference:
 
 ```json
 {
@@ -141,7 +141,7 @@ To force a specific template:
 
 ```json
 {
-  "mdocxConverter.referenceDocx": "D:\\GitHub\\md-docx-mermaid-exporter\\journal-templates\\reference_cssci_三刊通用.docx"
+  "mdocxConverter.referenceDocx": "D:\\GitHub\\mdocx-converter\\journal-templates\\reference_chinese_multi_template.docx"
 }
 ```
 

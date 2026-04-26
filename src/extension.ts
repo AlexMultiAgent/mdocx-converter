@@ -16,8 +16,8 @@ const CONFIGURATION_SECTION = 'mdocxConverter';
 const LEGACY_CONFIGURATION_SECTION = 'paperifyMd';
 const MERMAID_BLOCK_REGEX = /```mermaid[^\n]*\r?\n([\s\S]*?)```/gi;
 const BUNDLED_REFERENCE_DOCX_BY_LANGUAGE: Record<ReferenceLanguage, string> = {
-    english: path.join('journal-templates', 'reference_english_csci.docx'),
-    chinese: path.join('journal-templates', 'reference_cssci_三刊通用.docx')
+    english: path.join('journal-templates', 'reference_english_multi_template.docx'),
+    chinese: path.join('journal-templates', 'reference_chinese_multi_template.docx')
 };
 const STYLE_PROFILE_METADATA: Record<StyleProfile, Record<string, string>> = {
     template: {},
