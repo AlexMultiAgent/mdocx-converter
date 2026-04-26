@@ -1,6 +1,6 @@
-# MDOCX Paper Converter
+# MDocx Converter
 
-![MDOCX Paper Converter banner](./assets/banner.png)
+![MDocx Converter banner](./assets/banner.png)
 
 Export Markdown files to DOCX from VS Code with:
 
@@ -53,28 +53,30 @@ The extension does not bundle Pandoc and does not block installation when Pandoc
 
 ## Settings
 
-- `paperifyMd.pandocPath`
-- `paperifyMd.mermaidCliPath`
-- `paperifyMd.referenceDocx`
-- `paperifyMd.referenceLanguage`
-- `paperifyMd.outputDirectory`
-- `paperifyMd.mermaidOutputFormat`
-- `paperifyMd.openAfterExport`
-- `paperifyMd.keepIntermediateFiles`
-- `paperifyMd.styleProfile`
-- `paperifyMd.bodyFont`
-- `paperifyMd.bodySizePt`
-- `paperifyMd.heading1Font`
-- `paperifyMd.heading1SizePt`
-- `paperifyMd.heading2Font`
-- `paperifyMd.heading2SizePt`
-- `paperifyMd.heading3Font`
-- `paperifyMd.heading3SizePt`
-- `paperifyMd.lineSpacing`
-- `paperifyMd.marginTopMm`
-- `paperifyMd.marginBottomMm`
-- `paperifyMd.marginLeftMm`
-- `paperifyMd.marginRightMm`
+- `mdocxConverter.pandocPath`
+- `mdocxConverter.mermaidCliPath`
+- `mdocxConverter.referenceDocx`
+- `mdocxConverter.referenceLanguage`
+- `mdocxConverter.outputDirectory`
+- `mdocxConverter.mermaidOutputFormat`
+- `mdocxConverter.openAfterExport`
+- `mdocxConverter.keepIntermediateFiles`
+- `mdocxConverter.styleProfile`
+- `mdocxConverter.bodyFont`
+- `mdocxConverter.bodySizePt`
+- `mdocxConverter.heading1Font`
+- `mdocxConverter.heading1SizePt`
+- `mdocxConverter.heading2Font`
+- `mdocxConverter.heading2SizePt`
+- `mdocxConverter.heading3Font`
+- `mdocxConverter.heading3SizePt`
+- `mdocxConverter.lineSpacing`
+- `mdocxConverter.marginTopMm`
+- `mdocxConverter.marginBottomMm`
+- `mdocxConverter.marginLeftMm`
+- `mdocxConverter.marginRightMm`
+
+Older `paperifyMd.*` settings are still read as a fallback, but new configuration should use `mdocxConverter.*`.
 
 ## Style presets
 
@@ -89,22 +91,22 @@ Example:
 
 ```json
 {
-  "paperifyMd.styleProfile": "academic",
-  "paperifyMd.bodyFont": "SimSun",
-  "paperifyMd.bodySizePt": 12,
-  "paperifyMd.heading1Font": "Microsoft YaHei",
-  "paperifyMd.heading1SizePt": 16,
-  "paperifyMd.lineSpacing": 1.5,
-  "paperifyMd.marginTopMm": 25,
-  "paperifyMd.marginBottomMm": 25,
-  "paperifyMd.marginLeftMm": 25,
-  "paperifyMd.marginRightMm": 25
+  "mdocxConverter.styleProfile": "academic",
+  "mdocxConverter.bodyFont": "SimSun",
+  "mdocxConverter.bodySizePt": 12,
+  "mdocxConverter.heading1Font": "Microsoft YaHei",
+  "mdocxConverter.heading1SizePt": 16,
+  "mdocxConverter.lineSpacing": 1.5,
+  "mdocxConverter.marginTopMm": 25,
+  "mdocxConverter.marginBottomMm": 25,
+  "mdocxConverter.marginLeftMm": 25,
+  "mdocxConverter.marginRightMm": 25
 }
 ```
 
 ## Template behavior
 
-`paperifyMd.referenceLanguage` defaults to `auto`.
+`mdocxConverter.referenceLanguage` defaults to `auto`.
 
 - `auto`: detect Markdown content language automatically, choose Chinese template when Chinese is dominant, otherwise English
 - `english`: force bundled English CSCI reference DOCX
@@ -112,15 +114,15 @@ Example:
 
 Reference DOCX resolution order:
 
-1. `paperifyMd.referenceDocx`, when configured
+1. `mdocxConverter.referenceDocx`, when configured
 2. `reference.docx` next to the Markdown file, when present
-3. Bundled reference selected by `paperifyMd.referenceLanguage`
+3. Bundled reference selected by `mdocxConverter.referenceLanguage`
 
 To force the bundled Chinese CSSCI common reference:
 
 ```json
 {
-  "paperifyMd.referenceLanguage": "chinese"
+  "mdocxConverter.referenceLanguage": "chinese"
 }
 ```
 
@@ -128,13 +130,13 @@ To force a specific template:
 
 ```json
 {
-  "paperifyMd.referenceDocx": "D:\\GitHub\\md-docx-mermaid-exporter\\journal-templates\\reference_cssci_三刊通用.docx"
+  "mdocxConverter.referenceDocx": "D:\\GitHub\\md-docx-mermaid-exporter\\journal-templates\\reference_cssci_三刊通用.docx"
 }
 ```
 
 ## Open-after-export behavior
 
-`paperifyMd.openAfterExport` defaults to `false`.
+`mdocxConverter.openAfterExport` defaults to `false`.
 
 When enabled:
 

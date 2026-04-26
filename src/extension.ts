@@ -8,9 +8,11 @@ import { promisify } from 'util';
 import AdmZip = require('adm-zip');
 
 const execFileAsync = promisify(execFile);
-const OUTPUT_CHANNEL_NAME = 'paperify-md';
-const EXPORT_COMMAND_ID = 'paperifyMd.exportToDocx';
-const CHECK_ENVIRONMENT_COMMAND_ID = 'paperifyMd.checkEnvironment';
+const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
+const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
+const CHECK_ENVIRONMENT_COMMAND_ID = 'mdocxConverter.checkEnvironment';
+const CONFIGURATION_SECTION = 'mdocxConverter';
+const LEGACY_CONFIGURATION_SECTION = 'paperifyMd';
 const MERMAID_BLOCK_REGEX = /```mermaid[^\n]*\r?\n([\s\S]*?)```/gi;
 const BUNDLED_REFERENCE_DOCX_BY_LANGUAGE: Record<ReferenceLanguage, string> = {
     english: path.join('journal-templates', 'reference_english_csci.docx'),
@@ -179,7 +181,7 @@ async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vsco
 
     outputChannel.clear();
     outputChannel.show(true);
-    outputChannel.appendLine('Checking paperify-md export environment...');
+    outputChannel.appendLine('Checking mdocx-converter export environment...');
 
     const pandoc = await resolvePandoc(settings.pandocPath);
     if (pandoc) {
@@ -197,11 +199,11 @@ async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vsco
     } else {
         outputChannel.appendLine('MISSING Mermaid CLI');
         outputChannel.appendLine('   Required only for ```mermaid code fences. Install with: npm install -g @mermaid-js/mermaid-cli');
-        outputChannel.appendLine('   Or set paperifyMd.mermaidCliPath.');
+        outputChannel.appendLine('   Or set mdocxConverter.mermaidCliPath.');
     }
 
     if (pandoc && mermaid) {
-        void vscode.window.showInformationMessage('paperify-md export environment looks ready.');
+        void vscode.window.showInformationMessage('mdocx-converter export environment looks ready.');
     } else if (pandoc) {
         void vscode.window.showWarningMessage('Pandoc is ready. Mermaid CLI is missing, so Mermaid diagrams will not export until mmdc is installed.');
     } else {
@@ -223,31 +225,49 @@ function getMarkdownUri(uri?: vscode.Uri): vscode.Uri | undefined {
 }
 
 function readSettings(markdownUri: vscode.Uri): ExportSettings {
-    const config = vscode.workspace.getConfiguration('paperifyMd', markdownUri);
+    const config = vscode.workspace.getConfiguration(CONFIGURATION_SECTION, markdownUri);
+    const legacyConfig = vscode.workspace.getConfiguration(LEGACY_CONFIGURATION_SECTION, markdownUri);
     return {
-        pandocPath: config.get<string>('pandocPath', 'pandoc').trim() || 'pandoc',
-        mermaidCliPath: config.get<string>('mermaidCliPath', 'mmdc').trim() || 'mmdc',
-        referenceDocx: config.get<string>('referenceDocx', '').trim(),
-        referenceLanguage: normalizeReferenceLanguageSetting(config.get<string>('referenceLanguage', 'auto')),
-        outputDirectory: config.get<string>('outputDirectory', '').trim(),
-        mermaidOutputFormat: config.get<'png' | 'svg'>('mermaidOutputFormat', 'png'),
-        openAfterExport: config.get<boolean>('openAfterExport', false),
-        keepIntermediateFiles: config.get<boolean>('keepIntermediateFiles', false),
-        styleProfile: normalizeStyleProfile(config.get<string>('styleProfile', 'template')),
-        bodyFont: config.get<string>('bodyFont', '').trim(),
-        bodySizePt: normalizePositiveNumber(config.get<number>('bodySizePt')),
-        heading1Font: config.get<string>('heading1Font', '').trim(),
-        heading1SizePt: normalizePositiveNumber(config.get<number>('heading1SizePt')),
-        heading2Font: config.get<string>('heading2Font', '').trim(),
-        heading2SizePt: normalizePositiveNumber(config.get<number>('heading2SizePt')),
-        heading3Font: config.get<string>('heading3Font', '').trim(),
-        heading3SizePt: normalizePositiveNumber(config.get<number>('heading3SizePt')),
-        lineSpacing: normalizePositiveNumber(config.get<number>('lineSpacing')),
-        marginTopMm: normalizePositiveNumber(config.get<number>('marginTopMm')),
-        marginBottomMm: normalizePositiveNumber(config.get<number>('marginBottomMm')),
-        marginLeftMm: normalizePositiveNumber(config.get<number>('marginLeftMm')),
-        marginRightMm: normalizePositiveNumber(config.get<number>('marginRightMm'))
+        pandocPath: readConfigValue(config, legacyConfig, 'pandocPath', 'pandoc').trim() || 'pandoc',
+        mermaidCliPath: readConfigValue(config, legacyConfig, 'mermaidCliPath', 'mmdc').trim() || 'mmdc',
+        referenceDocx: readConfigValue(config, legacyConfig, 'referenceDocx', '').trim(),
+        referenceLanguage: normalizeReferenceLanguageSetting(readConfigValue(config, legacyConfig, 'referenceLanguage', 'auto')),
+        outputDirectory: readConfigValue(config, legacyConfig, 'outputDirectory', '').trim(),
+        mermaidOutputFormat: readConfigValue<'png' | 'svg'>(config, legacyConfig, 'mermaidOutputFormat', 'png'),
+        openAfterExport: readConfigValue(config, legacyConfig, 'openAfterExport', false),
+        keepIntermediateFiles: readConfigValue(config, legacyConfig, 'keepIntermediateFiles', false),
+        styleProfile: normalizeStyleProfile(readConfigValue(config, legacyConfig, 'styleProfile', 'template')),
+        bodyFont: readConfigValue(config, legacyConfig, 'bodyFont', '').trim(),
+        bodySizePt: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'bodySizePt', undefined)),
+        heading1Font: readConfigValue(config, legacyConfig, 'heading1Font', '').trim(),
+        heading1SizePt: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'heading1SizePt', undefined)),
+        heading2Font: readConfigValue(config, legacyConfig, 'heading2Font', '').trim(),
+        heading2SizePt: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'heading2SizePt', undefined)),
+        heading3Font: readConfigValue(config, legacyConfig, 'heading3Font', '').trim(),
+        heading3SizePt: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'heading3SizePt', undefined)),
+        lineSpacing: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'lineSpacing', undefined)),
+        marginTopMm: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'marginTopMm', undefined)),
+        marginBottomMm: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'marginBottomMm', undefined)),
+        marginLeftMm: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'marginLeftMm', undefined)),
+        marginRightMm: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'marginRightMm', undefined))
     };
+}
+
+function readConfigValue<T>(
+    config: vscode.WorkspaceConfiguration,
+    legacyConfig: vscode.WorkspaceConfiguration,
+    key: string,
+    defaultValue: T
+): T {
+    const inspected = config.inspect<T>(key);
+    const hasNewValue = inspected?.workspaceFolderValue !== undefined
+        || inspected?.workspaceValue !== undefined
+        || inspected?.globalValue !== undefined;
+    if (hasNewValue) {
+        return config.get<T>(key, defaultValue);
+    }
+
+    return legacyConfig.get<T>(key, defaultValue);
 }
 
 function normalizeStyleProfile(value: string | undefined): StyleProfile {
@@ -375,7 +395,7 @@ async function prepareMarkdown(
     outputChannel.appendLine(`Using Mermaid CLI: ${mermaid.command}`);
     outputChannel.appendLine(`Mermaid CLI version: ${mermaid.versionLine}`);
 
-    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'paperify-md-'));
+    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'mdocx-converter-'));
     const assetsDir = path.join(tempDir, 'mermaid-assets');
     await fsp.mkdir(assetsDir, { recursive: true });
 
@@ -439,14 +459,14 @@ async function requirePandoc(configuredPath: string): Promise<ResolvedExecutable
 
 function getPandocInstallHelp(): string {
     if (process.platform === 'win32') {
-        return 'Install with "winget install --id JohnMacFarlane.Pandoc" or set paperifyMd.pandocPath.';
+        return 'Install with "winget install --id JohnMacFarlane.Pandoc" or set mdocxConverter.pandocPath.';
     }
 
     if (process.platform === 'darwin') {
-        return 'Install with "brew install pandoc" or set paperifyMd.pandocPath.';
+        return 'Install with "brew install pandoc" or set mdocxConverter.pandocPath.';
     }
 
-    return 'Install from https://pandoc.org/installing.html or set paperifyMd.pandocPath.';
+    return 'Install from https://pandoc.org/installing.html or set mdocxConverter.pandocPath.';
 }
 
 async function resolvePandoc(configuredPath: string): Promise<ResolvedExecutable | undefined> {
@@ -458,7 +478,7 @@ async function requireMermaidCli(configuredPath: string, markdownPath: string): 
     const mermaid = await resolveMermaidCli(configuredPath, markdownPath);
     if (!mermaid) {
         throw new UserFacingError(
-            'Mermaid CLI was not found, but this Markdown file contains mermaid code fences. Install with "npm install -g @mermaid-js/mermaid-cli" or set paperifyMd.mermaidCliPath.'
+            'Mermaid CLI was not found, but this Markdown file contains mermaid code fences. Install with "npm install -g @mermaid-js/mermaid-cli" or set mdocxConverter.mermaidCliPath.'
         );
     }
     return mermaid;

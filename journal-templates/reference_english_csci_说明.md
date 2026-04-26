@@ -23,13 +23,13 @@ CSCI 官方投稿页面在 Full Paper Submission 区域要求作者使用 Paper 
 
 ## 插件使用方式
 
-`paperifyMd.referenceLanguage` 默认为 `english`，因此在没有配置 `paperifyMd.referenceDocx`，且 Markdown 同目录没有 `reference.docx` 时，会自动使用这份英文 CSCI reference。
+`mdocxConverter.referenceLanguage` 默认为 `english`，因此在没有配置 `mdocxConverter.referenceDocx`，且 Markdown 同目录没有 `reference.docx` 时，会自动使用这份英文 CSCI reference。
 
 如需显式指定：
 
 ```json
 {
-  "paperifyMd.referenceLanguage": "english"
+  "mdocxConverter.referenceLanguage": "english"
 }
 ```
 
@@ -37,6 +37,6 @@ CSCI 官方投稿页面在 Full Paper Submission 区域要求作者使用 Paper 
 
 ```json
 {
-  "paperifyMd.referenceLanguage": "chinese"
+  "mdocxConverter.referenceLanguage": "chinese"
 }
 ```

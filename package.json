@@ -1,14 +1,14 @@
 {
-  "name": "mdocx-paper-converter",
-  "displayName": "MDOCX Paper Converter",
+  "name": "mdocx-converter",
+  "displayName": "MDocx Converter",
   "description": "Export Markdown files to DOCX with Pandoc templates and Mermaid diagram support.",
   "icon": "assets/icon.png",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "publisher": "alexmultiagent",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/AlexMultiAgent/mdocx-paper-converter.git"
+    "url": "https://github.com/AlexMultiAgent/mdocx-converter.git"
   },
   "engines": {
     "vscode": "^1.116.0"
@@ -25,73 +25,73 @@
     "word"
   ],
   "activationEvents": [
-    "onCommand:paperifyMd.exportToDocx",
-    "onCommand:paperifyMd.checkEnvironment"
+    "onCommand:mdocxConverter.exportToDocx",
+    "onCommand:mdocxConverter.checkEnvironment"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "paperifyMd.exportToDocx",
+        "command": "mdocxConverter.exportToDocx",
         "title": "Export Markdown to DOCX",
-        "category": "MDOCX Paper Converter"
+        "category": "MDocx Converter"
       },
       {
-        "command": "paperifyMd.checkEnvironment",
+        "command": "mdocxConverter.checkEnvironment",
         "title": "Check Export Environment",
-        "category": "MDOCX Paper Converter"
+        "category": "MDocx Converter"
       }
     ],
     "menus": {
       "explorer/context": [
         {
-          "command": "paperifyMd.exportToDocx",
+          "command": "mdocxConverter.exportToDocx",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
           "group": "navigation@7"
         }
       ],
       "editor/title/context": [
         {
-          "command": "paperifyMd.exportToDocx",
+          "command": "mdocxConverter.exportToDocx",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
           "group": "navigation@7"
         }
       ],
       "editor/context": [
         {
-          "command": "paperifyMd.exportToDocx",
+          "command": "mdocxConverter.exportToDocx",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i || editorLangId == markdown",
           "group": "navigation@7"
         }
       ],
       "commandPalette": [
         {
-          "command": "paperifyMd.exportToDocx"
+          "command": "mdocxConverter.exportToDocx"
         },
         {
-          "command": "paperifyMd.checkEnvironment"
+          "command": "mdocxConverter.checkEnvironment"
         }
       ]
     },
     "configuration": {
-      "title": "MDOCX Paper Converter",
+      "title": "MDocx Converter",
       "properties": {
-        "paperifyMd.pandocPath": {
+        "mdocxConverter.pandocPath": {
           "type": "string",
           "default": "pandoc",
           "description": "Path to the Pandoc executable."
         },
-        "paperifyMd.mermaidCliPath": {
+        "mdocxConverter.mermaidCliPath": {
           "type": "string",
           "default": "mmdc",
           "description": "Path to the Mermaid CLI executable (mmdc). Required only when the Markdown file contains mermaid code fences."
         },
-        "paperifyMd.referenceDocx": {
+        "mdocxConverter.referenceDocx": {
           "type": "string",
           "default": "",
-          "description": "Optional path to a reference DOCX template. If empty, the extension will first look for reference.docx next to the Markdown file, then use the bundled template selected by paperifyMd.referenceLanguage."
+          "description": "Optional path to a reference DOCX template. If empty, the extension will first look for reference.docx next to the Markdown file, then use the bundled template selected by mdocxConverter.referenceLanguage."
         },
-        "paperifyMd.referenceLanguage": {
+        "mdocxConverter.referenceLanguage": {
           "type": "string",
           "enum": [
             "auto",
@@ -104,14 +104,14 @@
             "Use the bundled Chinese CSSCI common reference DOCX."
           ],
           "default": "auto",
-          "description": "Bundled reference DOCX language used when paperifyMd.referenceDocx is empty and no local reference.docx exists next to the Markdown file."
+          "description": "Bundled reference DOCX language used when mdocxConverter.referenceDocx is empty and no local reference.docx exists next to the Markdown file."
         },
-        "paperifyMd.outputDirectory": {
+        "mdocxConverter.outputDirectory": {
           "type": "string",
           "default": "",
           "description": "Optional output directory for exported DOCX files. Relative paths are resolved from the Markdown file folder."
         },
-        "paperifyMd.mermaidOutputFormat": {
+        "mdocxConverter.mermaidOutputFormat": {
           "type": "string",
           "enum": [
             "png",
@@ -120,17 +120,17 @@
           "default": "png",
           "description": "Rendered image format for mermaid diagrams before conversion."
         },
-        "paperifyMd.openAfterExport": {
+        "mdocxConverter.openAfterExport": {
           "type": "boolean",
           "default": false,
           "description": "After export, open the generated DOCX location. On Windows, the file is selected in Explorer to avoid shell association pop-up failures."
         },
-        "paperifyMd.keepIntermediateFiles": {
+        "mdocxConverter.keepIntermediateFiles": {
           "type": "boolean",
           "default": false,
           "description": "Keep temporary markdown and rendered mermaid assets for debugging."
         },
-        "paperifyMd.styleProfile": {
+        "mdocxConverter.styleProfile": {
           "type": "string",
           "enum": [
             "template",
@@ -147,75 +147,75 @@
           "default": "template",
           "description": "Optional FlexMD-style document preset layered on top of the selected reference DOCX."
         },
-        "paperifyMd.bodyFont": {
+        "mdocxConverter.bodyFont": {
           "type": "string",
           "default": "",
           "description": "Optional body font metadata override, for example SimSun, Microsoft YaHei, Times New Roman, or Arial."
         },
-        "paperifyMd.bodySizePt": {
+        "mdocxConverter.bodySizePt": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "description": "Optional body font size in points. Set 0 to use the template/default."
         },
-        "paperifyMd.heading1Font": {
+        "mdocxConverter.heading1Font": {
           "type": "string",
           "default": "",
           "description": "Optional Heading 1 font override."
         },
-        "paperifyMd.heading1SizePt": {
+        "mdocxConverter.heading1SizePt": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "description": "Optional Heading 1 font size in points. Set 0 to use the template/default."
         },
-        "paperifyMd.heading2Font": {
+        "mdocxConverter.heading2Font": {
           "type": "string",
           "default": "",
           "description": "Optional Heading 2 font override."
         },
-        "paperifyMd.heading2SizePt": {
+        "mdocxConverter.heading2SizePt": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "description": "Optional Heading 2 font size in points. Set 0 to use the template/default."
         },
-        "paperifyMd.heading3Font": {
+        "mdocxConverter.heading3Font": {
           "type": "string",
           "default": "",
           "description": "Optional Heading 3 font override."
         },
-        "paperifyMd.heading3SizePt": {
+        "mdocxConverter.heading3SizePt": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "description": "Optional Heading 3 font size in points. Set 0 to use the template/default."
         },
-        "paperifyMd.lineSpacing": {
+        "mdocxConverter.lineSpacing": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "description": "Optional line spacing multiplier, for example 1, 1.25, or 1.5. Set 0 to use the template/default."
         },
-        "paperifyMd.marginTopMm": {
+        "mdocxConverter.marginTopMm": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "description": "Optional top margin in millimeters. Set 0 to use the template/default."
         },
-        "paperifyMd.marginBottomMm": {
+        "mdocxConverter.marginBottomMm": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "description": "Optional bottom margin in millimeters. Set 0 to use the template/default."
         },
-        "paperifyMd.marginLeftMm": {
+        "mdocxConverter.marginLeftMm": {
           "type": "number",
           "default": 0,
           "minimum": 0,
           "description": "Optional left margin in millimeters. Set 0 to use the template/default."
         },
-        "paperifyMd.marginRightMm": {
+        "mdocxConverter.marginRightMm": {
           "type": "number",
           "default": 0,
           "minimum": 0,

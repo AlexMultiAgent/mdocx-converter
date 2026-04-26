@@ -1,4 +1,4 @@
-# paperify-md
+# mdocx-converter
 
 This sample demonstrates regular markdown, superscripts like 10<sup>2</sup>, and a Mermaid diagram.
 

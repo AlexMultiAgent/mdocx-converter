@@ -78,15 +78,15 @@
 
 ## 使用建议
 
-如果你想直接给插件使用，可以把 VS Code 配置里的 `paperifyMd.referenceLanguage` 切换为 `chinese`：
+如果你想直接给插件使用，可以把 VS Code 配置里的 `mdocxConverter.referenceLanguage` 切换为 `chinese`：
 
 ```json
 {
-  "paperifyMd.referenceLanguage": "chinese"
+  "mdocxConverter.referenceLanguage": "chinese"
 }
 ```
 
-如果你想强制指定这份模板，则把 `paperifyMd.referenceDocx` 指向这份文件：
+如果你想强制指定这份模板，则把 `mdocxConverter.referenceDocx` 指向这份文件：
 
 - `D:\\GitHub\\md-docx-mermaid-exporter\\journal-templates\\reference_cssci_三刊通用.docx`
 
