@@ -1,9 +1,9 @@
 {
   "name": "mdocx-converter",
   "displayName": "MDocx Converter",
-  "description": "Export Markdown files to DOCX with Pandoc, Mermaid diagrams, multi-template (多模板) support, and document profiles.",
+  "description": "Export Markdown files to DOCX with Pandoc, Mermaid diagrams, multi-template support, and document profiles.",
   "icon": "assets/icon.png",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "publisher": "alexmultiagent",
   "license": "MIT",
   "repository": {
@@ -124,8 +124,8 @@
           ],
           "enumDescriptions": [
             "Automatically detect Markdown language: choose Chinese template when Chinese content is dominant, otherwise English.",
-            "Use the bundled English multi-template (多模板) reference DOCX.",
-            "Use the bundled Chinese multi-template (多模板) reference DOCX."
+            "Use the bundled English multi-template reference DOCX.",
+            "Use the bundled Chinese multi-template reference DOCX."
           ],
           "default": "auto",
           "description": "Bundled reference DOCX language used when mdocxConverter.referenceDocx is empty and no local reference.docx exists next to the Markdown file."
