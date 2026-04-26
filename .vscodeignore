@@ -8,6 +8,7 @@ package-lock.json
 tmp*
 .gitignore
 examples/**
+docs/**
 assets/**
 journal-templates/**
 out/**/*.map

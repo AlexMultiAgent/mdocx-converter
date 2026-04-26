@@ -61,6 +61,46 @@ The extension does not bundle Pandoc and does not block installation when Pandoc
 - `paperifyMd.mermaidOutputFormat`
 - `paperifyMd.openAfterExport`
 - `paperifyMd.keepIntermediateFiles`
+- `paperifyMd.styleProfile`
+- `paperifyMd.bodyFont`
+- `paperifyMd.bodySizePt`
+- `paperifyMd.heading1Font`
+- `paperifyMd.heading1SizePt`
+- `paperifyMd.heading2Font`
+- `paperifyMd.heading2SizePt`
+- `paperifyMd.heading3Font`
+- `paperifyMd.heading3SizePt`
+- `paperifyMd.lineSpacing`
+- `paperifyMd.marginTopMm`
+- `paperifyMd.marginBottomMm`
+- `paperifyMd.marginLeftMm`
+- `paperifyMd.marginRightMm`
+
+## Style presets
+
+The converter keeps Pandoc and `reference.docx` as the primary DOCX path, then can apply FlexMD-style metadata overrides when you need quick style control.
+
+- `template`: use only the selected reference DOCX
+- `academic`: 12 pt, 1.5 line spacing, wider margins
+- `business`: compact report defaults with Arial/Microsoft YaHei-oriented metadata
+- `technical`: compact technical defaults with Consolas monospace metadata
+
+Example:
+
+```json
+{
+  "paperifyMd.styleProfile": "academic",
+  "paperifyMd.bodyFont": "SimSun",
+  "paperifyMd.bodySizePt": 12,
+  "paperifyMd.heading1Font": "Microsoft YaHei",
+  "paperifyMd.heading1SizePt": 16,
+  "paperifyMd.lineSpacing": 1.5,
+  "paperifyMd.marginTopMm": 25,
+  "paperifyMd.marginBottomMm": 25,
+  "paperifyMd.marginLeftMm": 25,
+  "paperifyMd.marginRightMm": 25
+}
+```
 
 ## Template behavior
 

@@ -1,0 +1,195 @@
+app:
+  description: Convert Markdown to Word with the installed FlexMD-to-Word plugin.
+  icon: 📄
+  icon_background: '#E0F2FE'
+  mode: workflow
+  name: FlexMD Markdown to Word Export
+  use_icon_as_answer_icon: false
+dependencies:
+  - current_identifier: null
+    type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: chuhaojiqi/flexmd-to-word:0.0.1@1d67c3478c47019913144c63b20e236f0926d49545a3cc39affd5600cf231c5e
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables: []
+  features:
+    file_upload:
+      enabled: false
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+  graph:
+    edges:
+      - data:
+          isInIteration: false
+          isInLoop: false
+          sourceType: start
+          targetType: tool
+        id: start-to-flexmd
+        source: start
+        sourceHandle: source
+        target: flexmd_to_word
+        targetHandle: target
+        type: custom
+        zIndex: 0
+      - data:
+          isInIteration: false
+          isInLoop: false
+          sourceType: tool
+          targetType: end
+        id: flexmd-to-end
+        source: flexmd_to_word
+        sourceHandle: source
+        target: end
+        targetHandle: target
+        type: custom
+        zIndex: 0
+    nodes:
+      - data:
+          desc: ''
+          selected: false
+          title: Start
+          type: start
+          variables:
+            - label: markdown
+              max_length: null
+              options: []
+              required: true
+              type: paragraph
+              variable: markdown
+            - label: filename
+              max_length: 120
+              options: []
+              required: false
+              type: text-input
+              variable: filename
+            - label: style_profile
+              max_length: null
+              options:
+                - 学术论文
+                - 商务报告
+                - 技术文档
+              required: false
+              type: select
+              variable: style_profile
+        height: 142
+        id: start
+        position:
+          x: 30
+          y: 227
+        positionAbsolute:
+          x: 30
+          y: 227
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 244
+      - data:
+          desc: Convert Markdown into a downloadable DOCX file.
+          is_team_authorization: true
+          plugin_unique_identifier: chuhaojiqi/flexmd-to-word:0.0.1@1d67c3478c47019913144c63b20e236f0926d49545a3cc39affd5600cf231c5e
+          provider_id: chuhaojiqi/flexmd-to-word/document-converter-word-01
+          provider_name: chuhaojiqi/flexmd-to-word/document-converter-word-01
+          provider_type: builtin
+          selected: false
+          title: FlexMD-to-Word
+          tool_configurations:
+            body_font:
+              type: constant
+              value: 宋体
+            body_size_pt:
+              type: constant
+              value: '12'
+            h1_font:
+              type: constant
+              value: 黑体
+            h1_size_pt:
+              type: constant
+              value: '16'
+            h2_font:
+              type: constant
+              value: 黑体
+            h2_size_pt:
+              type: constant
+              value: '14'
+          tool_description: Convert Markdown text to Word (.docx) file.
+          tool_label: FlexMD-to-Word
+          tool_name: document-converter-word-01
+          tool_node_version: '2'
+          tool_parameters:
+            filename:
+              type: mixed
+              value: '{{#start.filename#}}'
+            markdown:
+              type: variable
+              value:
+                - start
+                - markdown
+            style_profile:
+              type: mixed
+              value: '{{#start.style_profile#}}'
+          type: tool
+        height: 116
+        id: flexmd_to_word
+        position:
+          x: 334
+          y: 227
+        positionAbsolute:
+          x: 334
+          y: 227
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 244
+      - data:
+          desc: ''
+          outputs:
+            - value_selector:
+                - flexmd_to_word
+                - files
+              value_type: array[file]
+              variable: docx_files
+            - value_selector:
+                - flexmd_to_word
+                - text
+              value_type: string
+              variable: summary
+            - value_selector:
+                - flexmd_to_word
+                - json
+              value_type: array[object]
+              variable: metadata
+          selected: false
+          title: End
+          type: end
+        height: 116
+        id: end
+        position:
+          x: 638
+          y: 227
+        positionAbsolute:
+          x: 638
+          y: 227
+        selected: false
+        sourcePosition: right
+        targetPosition: left
+        type: custom
+        width: 244
+    viewport:
+      x: 0
+      y: 0
+      zoom: 0.7

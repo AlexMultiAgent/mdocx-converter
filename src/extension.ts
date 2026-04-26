@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import { promises as fsp } from 'fs';
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
+import AdmZip = require('adm-zip');
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_CHANNEL_NAME = 'paperify-md';
@@ -15,9 +16,32 @@ const BUNDLED_REFERENCE_DOCX_BY_LANGUAGE: Record<ReferenceLanguage, string> = {
     english: path.join('journal-templates', 'reference_english_csci.docx'),
     chinese: path.join('journal-templates', 'reference_cssci_三刊通用.docx')
 };
+const STYLE_PROFILE_METADATA: Record<StyleProfile, Record<string, string>> = {
+    template: {},
+    academic: {
+        'mainfont': 'Times New Roman',
+        'CJKmainfont': 'SimSun',
+        'fontsize': '12pt',
+        'linestretch': '1.5'
+    },
+    business: {
+        'mainfont': 'Arial',
+        'CJKmainfont': 'Microsoft YaHei',
+        'fontsize': '11pt',
+        'linestretch': '1.25'
+    },
+    technical: {
+        'mainfont': 'Arial',
+        'CJKmainfont': 'Microsoft YaHei',
+        'monofont': 'Consolas',
+        'fontsize': '11pt',
+        'linestretch': '1.2'
+    }
+};
 
 type ReferenceLanguage = 'english' | 'chinese';
 type ReferenceLanguageSetting = ReferenceLanguage | 'auto';
+type StyleProfile = 'template' | 'academic' | 'business' | 'technical';
 
 interface ExportSettings {
     pandocPath: string;
@@ -28,6 +52,20 @@ interface ExportSettings {
     mermaidOutputFormat: 'png' | 'svg';
     openAfterExport: boolean;
     keepIntermediateFiles: boolean;
+    styleProfile: StyleProfile;
+    bodyFont: string;
+    bodySizePt: number | undefined;
+    heading1Font: string;
+    heading1SizePt: number | undefined;
+    heading2Font: string;
+    heading2SizePt: number | undefined;
+    heading3Font: string;
+    heading3SizePt: number | undefined;
+    lineSpacing: number | undefined;
+    marginTopMm: number | undefined;
+    marginBottomMm: number | undefined;
+    marginLeftMm: number | undefined;
+    marginRightMm: number | undefined;
 }
 
 interface ResolvedExecutable {
@@ -107,6 +145,7 @@ async function runExport(uri: vscode.Uri | undefined, outputChannel: vscode.Outp
             originalMarkdownPath: markdownUri.fsPath,
             outputPath,
             referenceDocx,
+            settings,
             tempDir: prepared.tempDir,
             outputChannel
         });
@@ -192,8 +231,38 @@ function readSettings(markdownUri: vscode.Uri): ExportSettings {
         outputDirectory: config.get<string>('outputDirectory', '').trim(),
         mermaidOutputFormat: config.get<'png' | 'svg'>('mermaidOutputFormat', 'png'),
         openAfterExport: config.get<boolean>('openAfterExport', false),
-        keepIntermediateFiles: config.get<boolean>('keepIntermediateFiles', false)
+        keepIntermediateFiles: config.get<boolean>('keepIntermediateFiles', false),
+        styleProfile: normalizeStyleProfile(config.get<string>('styleProfile', 'template')),
+        bodyFont: config.get<string>('bodyFont', '').trim(),
+        bodySizePt: normalizePositiveNumber(config.get<number>('bodySizePt')),
+        heading1Font: config.get<string>('heading1Font', '').trim(),
+        heading1SizePt: normalizePositiveNumber(config.get<number>('heading1SizePt')),
+        heading2Font: config.get<string>('heading2Font', '').trim(),
+        heading2SizePt: normalizePositiveNumber(config.get<number>('heading2SizePt')),
+        heading3Font: config.get<string>('heading3Font', '').trim(),
+        heading3SizePt: normalizePositiveNumber(config.get<number>('heading3SizePt')),
+        lineSpacing: normalizePositiveNumber(config.get<number>('lineSpacing')),
+        marginTopMm: normalizePositiveNumber(config.get<number>('marginTopMm')),
+        marginBottomMm: normalizePositiveNumber(config.get<number>('marginBottomMm')),
+        marginLeftMm: normalizePositiveNumber(config.get<number>('marginLeftMm')),
+        marginRightMm: normalizePositiveNumber(config.get<number>('marginRightMm'))
     };
+}
+
+function normalizeStyleProfile(value: string | undefined): StyleProfile {
+    if (value === 'academic' || value === 'business' || value === 'technical') {
+        return value;
+    }
+
+    return 'template';
+}
+
+function normalizePositiveNumber(value: number | undefined): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+        return undefined;
+    }
+
+    return value;
 }
 
 async function resolveOutputPath(markdownUri: vscode.Uri, configuredOutputDirectory: string): Promise<string> {
@@ -528,10 +597,11 @@ async function runPandoc(options: {
     originalMarkdownPath: string;
     outputPath: string;
     referenceDocx?: string;
+    settings: ExportSettings;
     tempDir?: string;
     outputChannel: vscode.OutputChannel;
 }): Promise<void> {
-    const { pandoc, sourceMarkdownPath, originalMarkdownPath, outputPath, referenceDocx, tempDir, outputChannel } = options;
+    const { pandoc, sourceMarkdownPath, originalMarkdownPath, outputPath, referenceDocx, settings, tempDir, outputChannel } = options;
     const resourcePathSeparator = process.platform === 'win32' ? ';' : ':';
     const resourcePathEntries = [
         path.dirname(originalMarkdownPath),
@@ -554,6 +624,16 @@ async function runPandoc(options: {
         args.push('--reference-doc', referenceDocx);
     }
 
+    const metadata = buildPandocMetadata(settings);
+    for (const [key, value] of Object.entries(metadata)) {
+        args.push('--metadata', `${key}=${value}`);
+    }
+
+    if (Object.keys(metadata).length > 0) {
+        outputChannel.appendLine(`Style profile: ${settings.styleProfile}`);
+        outputChannel.appendLine(`Pandoc metadata overrides: ${Object.entries(metadata).map(([key, value]) => `${key}=${value}`).join(', ')}`);
+    }
+
     outputChannel.appendLine(`Running Pandoc with args: ${args.join(' ')}`);
 
     try {
@@ -568,10 +648,254 @@ async function runPandoc(options: {
         if (result.stderr.trim()) {
             outputChannel.appendLine(result.stderr.trim());
         }
+
+        const docxStyleOverrides = buildDocxStyleOverrides(settings);
+        if (docxStyleOverrides.length > 0 || hasMarginOverrides(settings)) {
+            await applyDocxStyleOverrides(outputPath, settings, docxStyleOverrides);
+            outputChannel.appendLine('Applied DOCX style overrides.');
+        }
     } catch (error) {
         const message = getProcessErrorMessage(error);
         throw new UserFacingError(message);
     }
+}
+
+function buildPandocMetadata(settings: ExportSettings): Record<string, string> {
+    const metadata: Record<string, string> = {
+        ...STYLE_PROFILE_METADATA[settings.styleProfile]
+    };
+
+    if (settings.bodyFont) {
+        metadata.mainfont = settings.bodyFont;
+        metadata.CJKmainfont = settings.bodyFont;
+    }
+
+    if (settings.bodySizePt) {
+        metadata.fontsize = `${settings.bodySizePt}pt`;
+    }
+
+    if (settings.lineSpacing) {
+        metadata.linestretch = String(settings.lineSpacing);
+    }
+
+    return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value.trim().length > 0));
+}
+
+interface DocxStyleOverride {
+    styleId: string;
+    font?: string;
+    sizePt?: number;
+    lineSpacing?: number;
+}
+
+function buildDocxStyleOverrides(settings: ExportSettings): DocxStyleOverride[] {
+    const profileDefaults = getProfileDocxDefaults(settings.styleProfile);
+    return [
+        {
+            styleId: 'Normal',
+            font: settings.bodyFont || profileDefaults.bodyFont,
+            sizePt: settings.bodySizePt ?? profileDefaults.bodySizePt,
+            lineSpacing: settings.lineSpacing ?? profileDefaults.lineSpacing
+        },
+        {
+            styleId: 'Heading1',
+            font: settings.heading1Font || profileDefaults.heading1Font,
+            sizePt: settings.heading1SizePt ?? profileDefaults.heading1SizePt
+        },
+        {
+            styleId: 'Heading2',
+            font: settings.heading2Font || profileDefaults.heading2Font,
+            sizePt: settings.heading2SizePt ?? profileDefaults.heading2SizePt
+        },
+        {
+            styleId: 'Heading3',
+            font: settings.heading3Font || profileDefaults.heading3Font,
+            sizePt: settings.heading3SizePt ?? profileDefaults.heading3SizePt
+        }
+    ].filter((override) => Boolean(override.font || override.sizePt || override.lineSpacing));
+}
+
+function getProfileDocxDefaults(styleProfile: StyleProfile): {
+    bodyFont?: string;
+    bodySizePt?: number;
+    heading1Font?: string;
+    heading1SizePt?: number;
+    heading2Font?: string;
+    heading2SizePt?: number;
+    heading3Font?: string;
+    heading3SizePt?: number;
+    lineSpacing?: number;
+} {
+    if (styleProfile === 'academic') {
+        return {
+            bodyFont: 'SimSun',
+            bodySizePt: 12,
+            heading1Font: 'SimHei',
+            heading1SizePt: 16,
+            heading2Font: 'SimHei',
+            heading2SizePt: 14,
+            heading3Font: 'SimHei',
+            heading3SizePt: 12,
+            lineSpacing: 1.5
+        };
+    }
+
+    if (styleProfile === 'business') {
+        return {
+            bodyFont: 'Microsoft YaHei',
+            bodySizePt: 11,
+            heading1Font: 'Microsoft YaHei',
+            heading1SizePt: 18,
+            heading2Font: 'Microsoft YaHei',
+            heading2SizePt: 14,
+            heading3Font: 'Microsoft YaHei',
+            heading3SizePt: 12,
+            lineSpacing: 1.25
+        };
+    }
+
+    if (styleProfile === 'technical') {
+        return {
+            bodyFont: 'Arial',
+            bodySizePt: 11,
+            heading1Font: 'Arial',
+            heading1SizePt: 16,
+            heading2Font: 'Arial',
+            heading2SizePt: 14,
+            heading3Font: 'Arial',
+            heading3SizePt: 12,
+            lineSpacing: 1.2
+        };
+    }
+
+    return {};
+}
+
+async function applyDocxStyleOverrides(
+    outputPath: string,
+    settings: ExportSettings,
+    styleOverrides: DocxStyleOverride[]
+): Promise<void> {
+    const zip = new AdmZip(outputPath);
+    const stylesEntry = zip.getEntry('word/styles.xml');
+    if (stylesEntry && styleOverrides.length > 0) {
+        let stylesXml = stylesEntry.getData().toString('utf8');
+        for (const override of styleOverrides) {
+            stylesXml = upsertStyleOverride(stylesXml, override);
+        }
+        zip.updateFile('word/styles.xml', Buffer.from(stylesXml, 'utf8'));
+    }
+
+    if (hasMarginOverrides(settings)) {
+        const documentEntry = zip.getEntry('word/document.xml');
+        if (documentEntry) {
+            const documentXml = updateDocumentMargins(documentEntry.getData().toString('utf8'), settings);
+            zip.updateFile('word/document.xml', Buffer.from(documentXml, 'utf8'));
+        }
+    }
+
+    zip.writeZip(outputPath);
+}
+
+function upsertStyleOverride(stylesXml: string, override: DocxStyleOverride): string {
+    const styleRegex = new RegExp(`<w:style\\b(?=[^>]*w:styleId="${escapeRegex(override.styleId)}")[\\s\\S]*?</w:style>`);
+    return stylesXml.replace(styleRegex, (styleXml) => updateStyleXml(styleXml, override));
+}
+
+function updateStyleXml(styleXml: string, override: DocxStyleOverride): string {
+    let updated = styleXml;
+    updated = ensureChildElement(updated, 'w:rPr');
+    updated = ensureChildElement(updated, 'w:pPr');
+
+    if (override.font) {
+        const fontXml = `<w:rFonts w:ascii="${escapeXmlAttribute(override.font)}" w:hAnsi="${escapeXmlAttribute(override.font)}" w:eastAsia="${escapeXmlAttribute(override.font)}" w:cs="${escapeXmlAttribute(override.font)}"/>`;
+        updated = upsertInsideElement(updated, 'w:rPr', /<w:rFonts\b[^>]*\/>/, fontXml);
+    }
+
+    if (override.sizePt) {
+        const halfPoints = String(Math.round(override.sizePt * 2));
+        updated = upsertInsideElement(updated, 'w:rPr', /<w:sz\b[^>]*\/>/, `<w:sz w:val="${halfPoints}"/>`);
+        updated = upsertInsideElement(updated, 'w:rPr', /<w:szCs\b[^>]*\/>/, `<w:szCs w:val="${halfPoints}"/>`);
+    }
+
+    if (override.lineSpacing) {
+        const lineTwips = String(Math.round(override.lineSpacing * 240));
+        updated = upsertInsideElement(updated, 'w:pPr', /<w:spacing\b[^>]*\/>/, `<w:spacing w:line="${lineTwips}" w:lineRule="auto"/>`);
+    }
+
+    return updated;
+}
+
+function ensureChildElement(xml: string, tagName: string): string {
+    if (new RegExp(`<${tagName}\\b`).test(xml)) {
+        return xml;
+    }
+
+    return xml.replace(/(<w:style\b[^>]*>)/, `$1<${tagName}/>`);
+}
+
+function upsertInsideElement(xml: string, tagName: string, childRegex: RegExp, childXml: string): string {
+    const elementRegex = new RegExp(`<${tagName}\\b[^>]*(?:/>|>[\\s\\S]*?</${tagName}>)`);
+    return xml.replace(elementRegex, (elementXml) => {
+        if (childRegex.test(elementXml)) {
+            return elementXml.replace(childRegex, childXml);
+        }
+
+        if (elementXml.endsWith('/>')) {
+            return elementXml.replace(/\/>$/, `>${childXml}</${tagName}>`);
+        }
+
+        return elementXml.replace(new RegExp(`</${tagName}>$`), `${childXml}</${tagName}>`);
+    });
+}
+
+function hasMarginOverrides(settings: ExportSettings): boolean {
+    return Boolean(settings.marginTopMm || settings.marginBottomMm || settings.marginLeftMm || settings.marginRightMm);
+}
+
+function updateDocumentMargins(documentXml: string, settings: ExportSettings): string {
+    return documentXml.replace(/<w:pgMar\b[^>]*\/>/g, (pgMarXml) => {
+        const marginUpdates = [
+            { attr: 'w:top', value: settings.marginTopMm },
+            { attr: 'w:bottom', value: settings.marginBottomMm },
+            { attr: 'w:left', value: settings.marginLeftMm },
+            { attr: 'w:right', value: settings.marginRightMm }
+        ];
+
+        let updated = pgMarXml;
+        for (const margin of marginUpdates) {
+            if (margin.value) {
+                updated = upsertXmlAttribute(updated, margin.attr, String(mmToTwips(margin.value)));
+            }
+        }
+
+        return updated;
+    });
+}
+
+function upsertXmlAttribute(xml: string, attrName: string, value: string): string {
+    const attrRegex = new RegExp(`${escapeRegex(attrName)}="[^"]*"`);
+    if (attrRegex.test(xml)) {
+        return xml.replace(attrRegex, `${attrName}="${escapeXmlAttribute(value)}"`);
+    }
+
+    return xml.replace(/\/>$/, ` ${attrName}="${escapeXmlAttribute(value)}"/>`);
+}
+
+function mmToTwips(value: number): number {
+    return Math.round(value * 56.6929133858);
+}
+
+function escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeXmlAttribute(value: string): string {
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 async function runExecutable(
