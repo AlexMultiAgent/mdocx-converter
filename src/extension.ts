@@ -492,7 +492,8 @@ async function prepareMarkdown(
         );
 
         const relativeDiagramPath = `./mermaid-assets/${path.basename(outputPath)}`.replace(/\\/g, '/');
-        processedMarkdown += `![Mermaid Diagram ${blockIndex}](${relativeDiagramPath})`;
+        processedMarkdown = ensureTrailingBlankLine(processedMarkdown);
+        processedMarkdown += `![Mermaid Diagram ${blockIndex}](${relativeDiagramPath})\n\n`;
         lastIndex = matchIndex + fullMatch.length;
     }
 
@@ -506,6 +507,18 @@ async function prepareMarkdown(
         tempDir,
         mermaidCount: mermaidMatches.length
     };
+}
+
+function ensureTrailingBlankLine(markdownText: string): string {
+    if (markdownText.length === 0 || /\n\s*\n$/.test(markdownText)) {
+        return markdownText;
+    }
+
+    if (/\n$/.test(markdownText)) {
+        return `${markdownText}\n`;
+    }
+
+    return `${markdownText}\n\n`;
 }
 
 async function requirePandoc(configuredPath: string): Promise<ResolvedExecutable> {
