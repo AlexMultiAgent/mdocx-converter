@@ -98,6 +98,14 @@ Use `mdocxConverter.styleProfile` when you want a persistent default:
 }
 ```
 
+Bundled template mapping now follows both language and document type:
+
+- `academic` and `template`: `reference_english_paper.docx` / `reference_chinese_paper.docx`
+- `technical`: `reference_english_technical.docx` / `reference_chinese_technical.docx`
+- `business`: `reference_english_business.docx` / `reference_chinese_business.docx`
+
+If a specialized template file is missing, the extension automatically falls back to the corresponding `*_paper.docx` template for that language.
+
 You can still override individual values:
 
 ```json

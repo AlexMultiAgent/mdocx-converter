@@ -17,9 +17,23 @@ const CHECK_ENVIRONMENT_COMMAND_ID = 'mdocxConverter.checkEnvironment';
 const CONFIGURATION_SECTION = 'mdocxConverter';
 const LEGACY_CONFIGURATION_SECTION = 'paperifyMd';
 const MERMAID_BLOCK_REGEX = /```mermaid[^\n]*\r?\n([\s\S]*?)```/gi;
-const BUNDLED_REFERENCE_DOCX_BY_LANGUAGE: Record<ReferenceLanguage, string> = {
-    english: path.join('multi-templates', 'reference_english_paper.docx'),
-    chinese: path.join('multi-templates', 'reference_chinese_paper.docx')
+const BUNDLED_REFERENCE_DOCX_BY_PROFILE_AND_LANGUAGE: Record<StyleProfile, Record<ReferenceLanguage, string>> = {
+    template: {
+        english: path.join('multi-templates', 'reference_english_paper.docx'),
+        chinese: path.join('multi-templates', 'reference_chinese_paper.docx')
+    },
+    academic: {
+        english: path.join('multi-templates', 'reference_english_paper.docx'),
+        chinese: path.join('multi-templates', 'reference_chinese_paper.docx')
+    },
+    technical: {
+        english: path.join('multi-templates', 'reference_english_technical.docx'),
+        chinese: path.join('multi-templates', 'reference_chinese_technical.docx')
+    },
+    business: {
+        english: path.join('multi-templates', 'reference_english_business.docx'),
+        chinese: path.join('multi-templates', 'reference_chinese_business.docx')
+    }
 };
 const STYLE_PROFILE_METADATA: Record<StyleProfile, Record<string, string>> = {
     template: {},
@@ -157,7 +171,7 @@ async function runExport(
         const outputPath = await resolveOutputPath(markdownUri, settings.outputDirectory);
         const markdownText = await fsp.readFile(markdownUri.fsPath, 'utf8');
         const resolvedLanguage = resolveReferenceLanguage(markdownText, settings.referenceLanguage);
-        const referenceDocx = await resolveReferenceDocx(markdownUri, settings.referenceDocx, resolvedLanguage, extensionPath);
+        const referenceDocx = await resolveReferenceDocx(markdownUri, settings.referenceDocx, resolvedLanguage, settings.styleProfile, extensionPath);
 
         logMissingLocalImages(markdownUri.fsPath, markdownText, outputChannel);
 
@@ -342,6 +356,7 @@ async function resolveReferenceDocx(
     markdownUri: vscode.Uri,
     configuredReferenceDocx: string,
     referenceLanguage: ReferenceLanguage,
+    styleProfile: StyleProfile,
     extensionPath: string
 ): Promise<string | undefined> {
     const markdownDir = path.dirname(markdownUri.fsPath);
@@ -368,12 +383,14 @@ async function resolveReferenceDocx(
         return localReferenceDocx;
     }
 
-    const bundledReferenceDocx = getBundledReferenceDocx(extensionPath, referenceLanguage);
-    if (await exists(bundledReferenceDocx)) {
-        return bundledReferenceDocx;
+    const bundledReferenceDocxCandidates = getBundledReferenceDocxCandidates(extensionPath, referenceLanguage, styleProfile);
+    for (const bundledReferenceDocx of bundledReferenceDocxCandidates) {
+        if (await exists(bundledReferenceDocx)) {
+            return bundledReferenceDocx;
+        }
     }
 
-    throw new UserFacingError(`Bundled ${referenceLanguage} reference DOCX was not found: ${bundledReferenceDocx}`);
+    throw new UserFacingError(`Bundled ${referenceLanguage} reference DOCX was not found: ${bundledReferenceDocxCandidates.join(', ')}`);
 }
 
 function normalizeReferenceLanguage(value: string | undefined): ReferenceLanguage {
@@ -409,8 +426,22 @@ function detectMarkdownLanguage(markdownText: string): ReferenceLanguage {
     return 'english';
 }
 
-function getBundledReferenceDocx(extensionPath: string, referenceLanguage: ReferenceLanguage): string {
-    return path.join(extensionPath, BUNDLED_REFERENCE_DOCX_BY_LANGUAGE[referenceLanguage]);
+function getBundledReferenceDocxCandidates(
+    extensionPath: string,
+    referenceLanguage: ReferenceLanguage,
+    styleProfile: StyleProfile
+): string[] {
+    const candidates: string[] = [];
+    const primary = BUNDLED_REFERENCE_DOCX_BY_PROFILE_AND_LANGUAGE[styleProfile][referenceLanguage];
+    candidates.push(path.join(extensionPath, primary));
+
+    // Fallback to paper baseline when specialized templates are missing.
+    const fallback = BUNDLED_REFERENCE_DOCX_BY_PROFILE_AND_LANGUAGE.template[referenceLanguage];
+    if (fallback !== primary) {
+        candidates.push(path.join(extensionPath, fallback));
+    }
+
+    return candidates;
 }
 
 async function prepareMarkdown(
