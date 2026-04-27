@@ -6,7 +6,7 @@ Export Markdown files to DOCX from VS Code with:
 
 - Pandoc-based DOCX generation
 - Mermaid code fence rendering
-- Built-in English and Chinese multi-template reference DOCX files
+- Built-in English and Chinese reference DOCX files for academic, technical, and business exports
 - Optional custom `reference.docx` template support
 - Helpful diagnostics in the output panel
 
@@ -26,6 +26,7 @@ graph TD
 ![Mermaid flow preview](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/assets/mermaid-example.png)
 
 - Use bundled English and Chinese reference DOCX files matched to document type
+- Technical and business templates are standards-derived / guidance-derived reference files, not official template attachments
 - Override with a custom Word template via `reference.docx`
 - Keep temporary files when debugging conversion problems
 
@@ -105,6 +106,8 @@ Bundled template mapping follows both language and document type:
 
 Specialized templates do not fall back to the paper templates. If a required bundled template file is missing, export fails with a clear error.
 
+The bundled technical templates are derived from current software and systems documentation guidance such as GB/T 8567-2006, GB/T 32424-2015, ISO/IEC/IEEE 26514:2022, ISO/IEC/IEEE 15289:2019, and ISO/IEC/IEEE 42010:2022. The bundled business templates are derived from current business-plan and project-case guidance such as the NDRC 2023 feasibility-study outline, U.S. SBA business-plan guidance, and HM Treasury Green Book / Five Case Model guidance. These files are practical reference DOCX templates; they are not official Word attachments published by those bodies.
+
 You can still override individual values:
 
 ```json
@@ -127,8 +130,8 @@ You can still override individual values:
 `mdocxConverter.referenceLanguage` defaults to `auto`.
 
 - `auto`: detect Markdown content language automatically, choose Chinese template when Chinese is dominant, otherwise English
-- `english`: force bundled English multi-template reference DOCX
-- `chinese`: force bundled Chinese multi-template reference DOCX
+- `english`: force bundled English reference DOCX
+- `chinese`: force bundled Chinese reference DOCX
 
 Reference DOCX resolution order:
 
@@ -136,7 +139,7 @@ Reference DOCX resolution order:
 2. `reference.docx` next to the Markdown file, when present
 3. Bundled reference selected by `mdocxConverter.referenceLanguage` and `mdocxConverter.styleProfile`
 
-To force the bundled Chinese multi-template reference:
+To force the bundled Chinese reference:
 
 ```json
 {
