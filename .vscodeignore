@@ -9,12 +9,13 @@ tmp*
 .gitignore
 examples/**
 docs/**
+local-archive/**
 assets/**
-journal-templates/**
+multi-templates/**
 out/**/*.map
 
 !assets/icon.png
 !assets/banner.png
 !assets/mermaid-example.png
-!journal-templates/reference_english_paper.docx
-!journal-templates/reference_chinese_paper.docx
+!multi-templates/reference_english_paper.docx
+!multi-templates/reference_chinese_paper.docx

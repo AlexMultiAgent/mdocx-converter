@@ -141,7 +141,7 @@ To force a specific template:
 
 ```json
 {
-  "mdocxConverter.referenceDocx": "D:\\GitHub\\mdocx-converter\\journal-templates\\reference_chinese_paper.docx"
+  "mdocxConverter.referenceDocx": "D:\\GitHub\\mdocx-converter\\multi-templates\\reference_chinese_paper.docx"
 }
 ```
 
