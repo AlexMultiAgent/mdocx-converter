@@ -19,12 +19,12 @@ const LEGACY_CONFIGURATION_SECTION = 'paperifyMd';
 const MERMAID_BLOCK_REGEX = /```mermaid[^\n]*\r?\n([\s\S]*?)```/gi;
 const BUNDLED_REFERENCE_DOCX_BY_PROFILE_AND_LANGUAGE: Record<StyleProfile, Record<ReferenceLanguage, string>> = {
     template: {
-        english: path.join('multi-templates', 'reference_english_paper.docx'),
-        chinese: path.join('multi-templates', 'reference_chinese_paper.docx')
+        english: path.join('multi-templates', 'reference_english_academic.docx'),
+        chinese: path.join('multi-templates', 'reference_chinese_academic.docx')
     },
     academic: {
-        english: path.join('multi-templates', 'reference_english_paper.docx'),
-        chinese: path.join('multi-templates', 'reference_chinese_paper.docx')
+        english: path.join('multi-templates', 'reference_english_academic.docx'),
+        chinese: path.join('multi-templates', 'reference_chinese_academic.docx')
     },
     technical: {
         english: path.join('multi-templates', 'reference_english_technical.docx'),
@@ -431,17 +431,8 @@ function getBundledReferenceDocxCandidates(
     referenceLanguage: ReferenceLanguage,
     styleProfile: StyleProfile
 ): string[] {
-    const candidates: string[] = [];
     const primary = BUNDLED_REFERENCE_DOCX_BY_PROFILE_AND_LANGUAGE[styleProfile][referenceLanguage];
-    candidates.push(path.join(extensionPath, primary));
-
-    // Fallback to paper baseline when specialized templates are missing.
-    const fallback = BUNDLED_REFERENCE_DOCX_BY_PROFILE_AND_LANGUAGE.template[referenceLanguage];
-    if (fallback !== primary) {
-        candidates.push(path.join(extensionPath, fallback));
-    }
-
-    return candidates;
+    return [path.join(extensionPath, primary)];
 }
 
 async function prepareMarkdown(
@@ -777,6 +768,7 @@ function buildPandocMetadata(settings: ExportSettings): Record<string, string> {
 
 interface DocxStyleOverride {
     styleId: string;
+    aliases?: string[];
     font?: string;
     sizePt?: number;
     lineSpacing?: number;
@@ -789,22 +781,26 @@ function buildDocxStyleOverrides(settings: ExportSettings): DocxStyleOverride[] 
     const overrides: DocxStyleOverride[] = [
         {
             styleId: 'Normal',
+            aliases: ['a', 'a1', 'Text', 'BodyText', 'Body Text', 'FirstParagraph', 'Compact'],
             font: settings.bodyFont || profileDefaults.bodyFont,
             sizePt: settings.bodySizePt ?? profileDefaults.bodySizePt,
             lineSpacing: settings.lineSpacing ?? profileDefaults.lineSpacing
         },
         {
             styleId: 'Heading1',
+            aliases: ['1'],
             font: settings.heading1Font || profileDefaults.heading1Font,
             sizePt: settings.heading1SizePt ?? profileDefaults.heading1SizePt
         },
         {
             styleId: 'Heading2',
+            aliases: ['2', '21'],
             font: settings.heading2Font || profileDefaults.heading2Font,
             sizePt: settings.heading2SizePt ?? profileDefaults.heading2SizePt
         },
         {
             styleId: 'Heading3',
+            aliases: ['3', '31'],
             font: settings.heading3Font || profileDefaults.heading3Font,
             sizePt: settings.heading3SizePt ?? profileDefaults.heading3SizePt
         }
@@ -821,16 +817,10 @@ function buildTechnicalCodeStyleOverrides(): DocxStyleOverride[] {
     return [
         {
             styleId: 'SourceCode',
+            aliases: ['Code'],
             font: 'Consolas',
             sizePt: 10,
             lineSpacing: 1.05,
-            color: '1F2937',
-            shadingFill: 'F3F4F6'
-        },
-        {
-            styleId: 'Code',
-            font: 'Consolas',
-            sizePt: 10,
             color: '1F2937',
             shadingFill: 'F3F4F6'
         },
@@ -880,15 +870,15 @@ function getProfileDocxDefaults(styleProfile: StyleProfile): {
 
     if (styleProfile === 'business') {
         return {
-            bodyFont: 'Microsoft YaHei',
+            bodyFont: 'Arial',
             bodySizePt: 11,
-            heading1Font: 'Microsoft YaHei',
+            heading1Font: 'Arial',
             heading1SizePt: 18,
-            heading2Font: 'Microsoft YaHei',
+            heading2Font: 'Arial',
             heading2SizePt: 14,
-            heading3Font: 'Microsoft YaHei',
+            heading3Font: 'Arial',
             heading3SizePt: 12,
-            lineSpacing: 1.25
+            lineSpacing: 1.3
         };
     }
 
@@ -902,7 +892,7 @@ function getProfileDocxDefaults(styleProfile: StyleProfile): {
             heading2SizePt: 14,
             heading3Font: 'Arial',
             heading3SizePt: 12,
-            lineSpacing: 1.2
+            lineSpacing: 1.25
         };
     }
 
@@ -919,7 +909,7 @@ async function applyDocxStyleOverrides(
     if (stylesEntry && styleOverrides.length > 0) {
         let stylesXml = stylesEntry.getData().toString('utf8');
         for (const override of styleOverrides) {
-            stylesXml = upsertStyleOverride(stylesXml, override);
+            stylesXml = applyStyleOverrideToPrimaryAndAliases(stylesXml, override);
         }
         zip.updateFile('word/styles.xml', Buffer.from(stylesXml, 'utf8'));
     }
@@ -933,6 +923,23 @@ async function applyDocxStyleOverrides(
     }
 
     zip.writeZip(outputPath);
+}
+
+function applyStyleOverrideToPrimaryAndAliases(stylesXml: string, override: DocxStyleOverride): string {
+    let updated = upsertStyleOverride(stylesXml, {
+        ...override,
+        aliases: undefined
+    });
+
+    for (const alias of override.aliases ?? []) {
+        updated = upsertStyleOverride(updated, {
+            ...override,
+            styleId: alias,
+            aliases: undefined
+        });
+    }
+
+    return updated;
 }
 
 function upsertStyleOverride(stylesXml: string, override: DocxStyleOverride): string {

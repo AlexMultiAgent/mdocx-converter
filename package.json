@@ -3,7 +3,7 @@
   "displayName": "MDocx Converter",
   "description": "Export Markdown files to DOCX with Pandoc, Mermaid diagrams, multi-template support, and document profiles.",
   "icon": "assets/icon.png",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "publisher": "alexmultiagent",
   "license": "MIT",
   "repository": {

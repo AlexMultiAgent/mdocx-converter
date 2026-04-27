@@ -1,6 +1,6 @@
 # MDocx Converter
 
-![MDocx Converter banner](assets/banner.png)
+![MDocx Converter banner](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/assets/banner.png)
 
 Export Markdown files to DOCX from VS Code with:
 
@@ -23,10 +23,9 @@ graph TD
     C --> D[Word Export]
 ```
 
-![Mermaid flow preview](assets/mermaid-example.png)
+![Mermaid flow preview](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/assets/mermaid-example.png)
 
-- Use the bundled English multi-template reference DOCX by default
-- Switch to the bundled Chinese multi-template reference DOCX when needed
+- Use bundled English and Chinese reference DOCX files matched to document type
 - Override with a custom Word template via `reference.docx`
 - Keep temporary files when debugging conversion problems
 
@@ -98,13 +97,13 @@ Use `mdocxConverter.styleProfile` when you want a persistent default:
 }
 ```
 
-Bundled template mapping now follows both language and document type:
+Bundled template mapping follows both language and document type:
 
-- `academic` and `template`: `reference_english_paper.docx` / `reference_chinese_paper.docx`
+- `academic` and `template`: `reference_english_academic.docx` / `reference_chinese_academic.docx`
 - `technical`: `reference_english_technical.docx` / `reference_chinese_technical.docx`
 - `business`: `reference_english_business.docx` / `reference_chinese_business.docx`
 
-If a specialized template file is missing, the extension automatically falls back to the corresponding `*_paper.docx` template for that language.
+Specialized templates do not fall back to the paper templates. If a required bundled template file is missing, export fails with a clear error.
 
 You can still override individual values:
 
@@ -135,7 +134,7 @@ Reference DOCX resolution order:
 
 1. `mdocxConverter.referenceDocx`, when configured
 2. `reference.docx` next to the Markdown file, when present
-3. Bundled reference selected by `mdocxConverter.referenceLanguage`
+3. Bundled reference selected by `mdocxConverter.referenceLanguage` and `mdocxConverter.styleProfile`
 
 To force the bundled Chinese multi-template reference:
 
@@ -149,7 +148,7 @@ To force a specific template:
 
 ```json
 {
-  "mdocxConverter.referenceDocx": "D:\\GitHub\\mdocx-converter\\multi-templates\\reference_chinese_paper.docx"
+  "mdocxConverter.referenceDocx": "D:\\GitHub\\mdocx-converter\\multi-templates\\reference_chinese_academic.docx"
 }
 ```
 

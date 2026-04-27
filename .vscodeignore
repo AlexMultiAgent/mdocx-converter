@@ -11,6 +11,7 @@ examples/**
 docs/**
 local-archive/**
 assets/**
+scripts/**
 multi-templates/**
 out/**/*.map
 
@@ -18,8 +19,8 @@ out/**/*.map
 !assets/banner.png
 !assets/mermaid-example.png
 !multi-templates/reference_english_business.docx
-!multi-templates/reference_english_paper.docx
+!multi-templates/reference_english_academic.docx
 !multi-templates/reference_english_technical.docx
 !multi-templates/reference_chinese_business.docx
-!multi-templates/reference_chinese_paper.docx
+!multi-templates/reference_chinese_academic.docx
 !multi-templates/reference_chinese_technical.docx
