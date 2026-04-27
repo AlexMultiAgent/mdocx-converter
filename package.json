@@ -3,7 +3,7 @@
   "displayName": "MDocx Converter",
   "description": "Export Markdown files to DOCX with Pandoc, Mermaid diagrams, multi-template support, and document profiles.",
   "icon": "assets/icon.png",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "publisher": "alexmultiagent",
   "license": "MIT",
   "repository": {
@@ -26,7 +26,9 @@
   ],
   "activationEvents": [
     "onCommand:mdocxConverter.exportToDocx",
-    "onCommand:mdocxConverter.exportToDocxWithProfile",
+    "onCommand:mdocxConverter.exportAcademicPaper",
+    "onCommand:mdocxConverter.exportTechnicalDocument",
+    "onCommand:mdocxConverter.exportBusinessReport",
     "onCommand:mdocxConverter.checkEnvironment"
   ],
   "main": "./out/extension.js",
@@ -34,12 +36,25 @@
     "commands": [
       {
         "command": "mdocxConverter.exportToDocx",
-        "title": "Export Markdown to DOCX（MDocx）",
+        "title": "Export Markdown to DOCX (MDocx)",
         "category": "MDocx Converter"
       },
       {
-        "command": "mdocxConverter.exportToDocxWithProfile",
-        "title": "Export Markdown to DOCX by Type（MDocx）",
+        "command": "mdocxConverter.exportAcademicPaper",
+        "title": "Export as Academic Paper (MDocx)",
+        "shortTitle": "Academic Paper",
+        "category": "MDocx Converter"
+      },
+      {
+        "command": "mdocxConverter.exportTechnicalDocument",
+        "title": "Export as Technical Document (MDocx)",
+        "shortTitle": "Technical Document",
+        "category": "MDocx Converter"
+      },
+      {
+        "command": "mdocxConverter.exportBusinessReport",
+        "title": "Export as Business Report (MDocx)",
+        "shortTitle": "Business Report",
         "category": "MDocx Converter"
       },
       {
@@ -51,38 +66,37 @@
     "menus": {
       "explorer/context": [
         {
-          "command": "mdocxConverter.exportToDocx",
+          "submenu": "mdocxConverter.exportSubmenu",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
           "group": "z_mdocx@95"
+        }
+      ],
+      "mdocxConverter.exportSubmenu": [
+        {
+          "command": "mdocxConverter.exportAcademicPaper",
+          "group": "1_profiles@10"
         },
         {
-          "command": "mdocxConverter.exportToDocxWithProfile",
-          "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
-          "group": "z_mdocx@96"
+          "command": "mdocxConverter.exportTechnicalDocument",
+          "group": "1_profiles@20"
+        },
+        {
+          "command": "mdocxConverter.exportBusinessReport",
+          "group": "1_profiles@30"
         }
       ],
       "editor/title/context": [
         {
-          "command": "mdocxConverter.exportToDocx",
+          "submenu": "mdocxConverter.exportSubmenu",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
           "group": "z_mdocx@95"
-        },
-        {
-          "command": "mdocxConverter.exportToDocxWithProfile",
-          "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i",
-          "group": "z_mdocx@96"
         }
       ],
       "editor/context": [
         {
-          "command": "mdocxConverter.exportToDocx",
+          "submenu": "mdocxConverter.exportSubmenu",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i || editorLangId == markdown",
           "group": "z_mdocx@95"
-        },
-        {
-          "command": "mdocxConverter.exportToDocxWithProfile",
-          "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i || editorLangId == markdown",
-          "group": "z_mdocx@96"
         }
       ],
       "commandPalette": [
@@ -90,13 +104,25 @@
           "command": "mdocxConverter.exportToDocx"
         },
         {
-          "command": "mdocxConverter.exportToDocxWithProfile"
+          "command": "mdocxConverter.exportAcademicPaper"
+        },
+        {
+          "command": "mdocxConverter.exportTechnicalDocument"
+        },
+        {
+          "command": "mdocxConverter.exportBusinessReport"
         },
         {
           "command": "mdocxConverter.checkEnvironment"
         }
       ]
     },
+    "submenus": [
+      {
+        "id": "mdocxConverter.exportSubmenu",
+        "label": "Export Markdown to DOCX (MDocx)"
+      }
+    ],
     "configuration": {
       "title": "MDocx Converter",
       "properties": {

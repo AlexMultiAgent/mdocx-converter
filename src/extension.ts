@@ -10,7 +10,9 @@ import AdmZip = require('adm-zip');
 const execFileAsync = promisify(execFile);
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
 const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
-const EXPORT_WITH_PROFILE_COMMAND_ID = 'mdocxConverter.exportToDocxWithProfile';
+const EXPORT_ACADEMIC_PAPER_COMMAND_ID = 'mdocxConverter.exportAcademicPaper';
+const EXPORT_TECHNICAL_DOCUMENT_COMMAND_ID = 'mdocxConverter.exportTechnicalDocument';
+const EXPORT_BUSINESS_REPORT_COMMAND_ID = 'mdocxConverter.exportBusinessReport';
 const CHECK_ENVIRONMENT_COMMAND_ID = 'mdocxConverter.checkEnvironment';
 const CONFIGURATION_SECTION = 'mdocxConverter';
 const LEGACY_CONFIGURATION_SECTION = 'paperifyMd';
@@ -45,10 +47,6 @@ const STYLE_PROFILE_METADATA: Record<StyleProfile, Record<string, string>> = {
 type ReferenceLanguage = 'english' | 'chinese';
 type ReferenceLanguageSetting = ReferenceLanguage | 'auto';
 type StyleProfile = 'template' | 'academic' | 'business' | 'technical';
-
-interface StyleProfilePickItem extends vscode.QuickPickItem {
-    profile: StyleProfile;
-}
 
 interface ExportSettings {
     pandocPath: string;
@@ -101,19 +99,35 @@ export function activate(context: vscode.ExtensionContext): void {
     const exportDisposable = vscode.commands.registerCommand(EXPORT_COMMAND_ID, async (uri?: vscode.Uri) => {
         await runExport(uri, outputChannel, context.extensionPath);
     });
-    const exportWithProfileDisposable = vscode.commands.registerCommand(EXPORT_WITH_PROFILE_COMMAND_ID, async (uri?: vscode.Uri) => {
-        const profile = await pickStyleProfile();
-        if (!profile) {
-            return;
-        }
-
-        await runExport(uri, outputChannel, context.extensionPath, profile);
+    const exportAcademicPaperDisposable = vscode.commands.registerCommand(EXPORT_ACADEMIC_PAPER_COMMAND_ID, async (uri?: vscode.Uri) => {
+        await runExport(uri, outputChannel, context.extensionPath, {
+            styleProfile: 'academic',
+            referenceLanguage: 'auto'
+        });
+    });
+    const exportTechnicalDocumentDisposable = vscode.commands.registerCommand(EXPORT_TECHNICAL_DOCUMENT_COMMAND_ID, async (uri?: vscode.Uri) => {
+        await runExport(uri, outputChannel, context.extensionPath, {
+            styleProfile: 'technical',
+            referenceLanguage: 'auto'
+        });
+    });
+    const exportBusinessReportDisposable = vscode.commands.registerCommand(EXPORT_BUSINESS_REPORT_COMMAND_ID, async (uri?: vscode.Uri) => {
+        await runExport(uri, outputChannel, context.extensionPath, {
+            styleProfile: 'business',
+            referenceLanguage: 'auto'
+        });
     });
     const checkEnvironmentDisposable = vscode.commands.registerCommand(CHECK_ENVIRONMENT_COMMAND_ID, async (uri?: vscode.Uri) => {
         await checkEnvironment(uri, outputChannel);
     });
 
-    context.subscriptions.push(exportDisposable, exportWithProfileDisposable, checkEnvironmentDisposable);
+    context.subscriptions.push(
+        exportDisposable,
+        exportAcademicPaperDisposable,
+        exportTechnicalDocumentDisposable,
+        exportBusinessReportDisposable,
+        checkEnvironmentDisposable
+    );
 }
 
 export function deactivate(): void {
@@ -124,7 +138,7 @@ async function runExport(
     uri: vscode.Uri | undefined,
     outputChannel: vscode.OutputChannel,
     extensionPath: string,
-    styleProfileOverride?: StyleProfile
+    exportOverrides?: ExportOverrides
 ): Promise<void> {
     const markdownUri = getMarkdownUri(uri);
     if (!markdownUri) {
@@ -139,7 +153,7 @@ async function runExport(
     let prepared: PreparedMarkdown | undefined;
 
     try {
-        const settings = readSettings(markdownUri, styleProfileOverride);
+        const settings = readSettings(markdownUri, exportOverrides);
         const outputPath = await resolveOutputPath(markdownUri, settings.outputDirectory);
         const markdownText = await fsp.readFile(markdownUri.fsPath, 'utf8');
         const resolvedLanguage = resolveReferenceLanguage(markdownText, settings.referenceLanguage);
@@ -183,7 +197,7 @@ async function runExport(
         void vscode.window.showErrorMessage(message);
     } finally {
         if (prepared?.tempDir) {
-            const settings = readSettings(markdownUri, styleProfileOverride);
+            const settings = readSettings(markdownUri, exportOverrides);
             if (!settings.keepIntermediateFiles) {
                 await fsp.rm(prepared.tempDir, { recursive: true, force: true });
             } else {
@@ -193,40 +207,9 @@ async function runExport(
     }
 }
 
-async function pickStyleProfile(): Promise<StyleProfile | undefined> {
-    const items: StyleProfilePickItem[] = [
-        {
-            label: '学术论文',
-            description: 'Academic paper',
-            detail: '12 pt body text, 1.5 line spacing, SimSun/SimHei-oriented paper defaults.',
-            profile: 'academic'
-        },
-        {
-            label: '技术文档',
-            description: 'Technical document',
-            detail: 'Compact spacing, Arial body text, and Consolas-oriented code styles.',
-            profile: 'technical'
-        },
-        {
-            label: '商务报告',
-            description: 'Business report',
-            detail: '11 pt body text, 1.25 line spacing, Microsoft YaHei/Arial-oriented report defaults.',
-            profile: 'business'
-        },
-        {
-            label: '模板默认',
-            description: 'Reference DOCX only',
-            detail: 'Use the selected reference DOCX without extra profile overrides.',
-            profile: 'template'
-        }
-    ];
-
-    const selected = await vscode.window.showQuickPick(items, {
-        title: 'Select DOCX document type',
-        placeHolder: 'Choose how MDocx Converter should style this export'
-    });
-
-    return selected?.profile;
+interface ExportOverrides {
+    styleProfile?: StyleProfile;
+    referenceLanguage?: ReferenceLanguageSetting;
 }
 
 async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vscode.OutputChannel): Promise<void> {
@@ -278,19 +261,19 @@ function getMarkdownUri(uri?: vscode.Uri): vscode.Uri | undefined {
     return undefined;
 }
 
-function readSettings(markdownUri: vscode.Uri, styleProfileOverride?: StyleProfile): ExportSettings {
+function readSettings(markdownUri: vscode.Uri, exportOverrides?: ExportOverrides): ExportSettings {
     const config = vscode.workspace.getConfiguration(CONFIGURATION_SECTION, markdownUri);
     const legacyConfig = vscode.workspace.getConfiguration(LEGACY_CONFIGURATION_SECTION, markdownUri);
     return {
         pandocPath: readConfigValue(config, legacyConfig, 'pandocPath', 'pandoc').trim() || 'pandoc',
         mermaidCliPath: readConfigValue(config, legacyConfig, 'mermaidCliPath', 'mmdc').trim() || 'mmdc',
         referenceDocx: readConfigValue(config, legacyConfig, 'referenceDocx', '').trim(),
-        referenceLanguage: normalizeReferenceLanguageSetting(readConfigValue(config, legacyConfig, 'referenceLanguage', 'auto')),
+        referenceLanguage: exportOverrides?.referenceLanguage ?? normalizeReferenceLanguageSetting(readConfigValue(config, legacyConfig, 'referenceLanguage', 'auto')),
         outputDirectory: readConfigValue(config, legacyConfig, 'outputDirectory', '').trim(),
         mermaidOutputFormat: readConfigValue<'png' | 'svg'>(config, legacyConfig, 'mermaidOutputFormat', 'png'),
         openAfterExport: readConfigValue(config, legacyConfig, 'openAfterExport', false),
         keepIntermediateFiles: readConfigValue(config, legacyConfig, 'keepIntermediateFiles', false),
-        styleProfile: styleProfileOverride ?? normalizeStyleProfile(readConfigValue(config, legacyConfig, 'styleProfile', 'template')),
+        styleProfile: exportOverrides?.styleProfile ?? normalizeStyleProfile(readConfigValue(config, legacyConfig, 'styleProfile', 'template')),
         bodyFont: readConfigValue(config, legacyConfig, 'bodyFont', '').trim(),
         bodySizePt: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'bodySizePt', undefined)),
         heading1Font: readConfigValue(config, legacyConfig, 'heading1Font', '').trim(),

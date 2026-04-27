@@ -13,7 +13,7 @@ Export Markdown files to DOCX from VS Code with:
 ## Features
 
 - Right-click any `.md` file and export it to `.docx`
-- Choose a document type at export time: academic paper, technical document, business report, or template default
+- Choose an export submenu type: academic paper, technical document, or business report
 - Render fenced mermaid diagrams such as:
 
 ```mermaid
@@ -83,12 +83,12 @@ Older `paperifyMd.*` settings are still read as a fallback, but new configuratio
 
 The converter keeps Pandoc and `reference.docx` as the primary DOCX path, then can apply FlexMD-style metadata and DOCX style overrides when you need quick style control.
 
-- `template` / 模板默认: use only the selected reference DOCX
-- `academic` / 学术论文: 12 pt body text, 1.5 line spacing, SimSun/SimHei-oriented paper defaults
-- `business` / 商务报告: 11 pt body text, 1.25 line spacing, Microsoft YaHei/Arial-oriented report defaults
-- `technical` / 技术文档: compact spacing, Arial body text, and Consolas-oriented code styles
+- `template`: use only the selected reference DOCX
+- `academic`: 12 pt body text, 1.5 line spacing, SimSun/SimHei-oriented paper defaults
+- `business`: 11 pt body text, 1.25 line spacing, Microsoft YaHei/Arial-oriented report defaults
+- `technical`: compact spacing, Arial body text, and Consolas-oriented code styles
 
-Use `Export Markdown to DOCX by Type（MDocx）` from the command palette or Markdown context menu when you want to choose the type for a single export without changing settings.
+Use the `Export Markdown to DOCX (MDocx)` submenu from a Markdown context menu to export as `Academic Paper`, `Technical Document`, or `Business Report`. These submenu exports force automatic English/Chinese template detection for the current Markdown file.
 
 Use `mdocxConverter.styleProfile` when you want a persistent default:
 
