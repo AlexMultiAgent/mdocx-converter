@@ -177,5 +177,5 @@ Then press `F5` in VS Code to launch an Extension Development Host.
 
 1. Open this folder in VS Code
 2. Press `F5`
-3. In the Extension Development Host, open `examples/sample.md`
-4. Run `Export Markdown to DOCX`
+3. In the Extension Development Host, create or open any `.md` file
+4. Run `Export Markdown to DOCX (MDocx)`
