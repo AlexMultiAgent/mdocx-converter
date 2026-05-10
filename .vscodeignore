@@ -1,10 +1,13 @@
 .vscode/**
 .vscode-test/**
+.claude/**
 node_modules/**
+!node_modules/adm-zip/**
 src/**
 *.vsix
 tsconfig.json
 package-lock.json
+test_*.js
 tmp*
 .gitignore
 examples/**
