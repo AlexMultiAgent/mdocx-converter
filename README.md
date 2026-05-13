@@ -1,6 +1,6 @@
-# MDocx Converter
+# MD2Docx Converter
 
-![MDocx Converter banner](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/assets/banner.png)
+![MD2Docx Converter banner](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/assets/banner.png)
 
 Export Markdown files to DOCX from VS Code with:
 
@@ -51,6 +51,14 @@ The extension does not bundle Pandoc and does not block installation when Pandoc
 ### Required only for Mermaid diagrams
 
 - Mermaid CLI: `mmdc`
+
+Install:
+
+```bash
+npm install -g @mermaid-js/mermaid-cli
+```
+
+If Mermaid CLI is not found and the Markdown file contains ` ```mermaid ` code fences, the export will fail with a message asking you to install it or set `mdocxConverter.mermaidCliPath`.
 
 ## Settings
 
