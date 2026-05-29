@@ -315,3 +315,131 @@ def convert_via_pandoc(
     )
 
     return io.BytesIO(output)
+
+
+# ── DOCX style overrides ─────────────────────────────────────
+
+def _set_font(run_or_style, font_name: str) -> None:
+    """Set the font on a run or style element, including east-asia."""
+    rPr = run_or_style._element.get_or_add_rPr()
+    rFonts = rPr.find(qn("w:rFonts"))
+    if rFonts is None:
+        from lxml import etree
+        rFonts = etree.SubElement(rPr, qn("w:rFonts"))
+    rFonts.set(qn("w:ascii"), font_name)
+    rFonts.set(qn("w:hAnsi"), font_name)
+    rFonts.set(qn("w:eastAsia"), font_name)
+
+
+def _set_font_size(run_or_style, size_pt: float) -> None:
+    """Set font size on a run or style element."""
+    rPr = run_or_style._element.get_or_add_rPr()
+    sz = rPr.find(qn("w:sz"))
+    if sz is None:
+        from lxml import etree
+        sz = etree.SubElement(rPr, qn("w:sz"))
+    half_pts = str(int(round(size_pt * 2)))
+    sz.set(qn("w:val"), half_pts)
+
+
+def _set_line_spacing(paragraph_format, spacing: float) -> None:
+    """Set line spacing on a paragraph format."""
+    line_value = int(round(spacing * 240))
+    pPr = paragraph_format._element.get_or_add_pPr()
+    spacing_el = pPr.find(qn("w:spacing"))
+    if spacing_el is None:
+        from lxml import etree
+        spacing_el = etree.SubElement(pPr, qn("w:spacing"))
+    spacing_el.set(qn("w:line"), str(line_value))
+    spacing_el.set(qn("w:lineRule"), "auto")
+
+
+def _set_shading(paragraph_format, fill_color: str) -> None:
+    """Set paragraph shading (background color)."""
+    pPr = paragraph_format._element.get_or_add_pPr()
+    shd = pPr.find(qn("w:shd"))
+    if shd is None:
+        from lxml import etree
+        shd = etree.SubElement(pPr, qn("w:shd"))
+    shd.set(qn("w:val"), "clear")
+    shd.set(qn("w:color"), "auto")
+    shd.set(qn("w:fill"), fill_color)
+
+
+def _set_font_color(run_or_style, color_hex: str) -> None:
+    """Set text color on a run or style."""
+    rPr = run_or_style._element.get_or_add_rPr()
+    color = rPr.find(qn("w:color"))
+    if color is None:
+        from lxml import etree
+        color = etree.SubElement(rPr, qn("w:color"))
+    color.set(qn("w:val"), color_hex)
+
+
+def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> None:
+    """Apply font/size/spacing overrides to Normal and Heading styles."""
+    profile = PROFILE_DEFAULTS.get(style_profile, {})
+
+    # Resolve effective values: user param > profile default > None (skip)
+    body_font = params.get("body_font") or profile.get("body_font")
+    body_size = parse_pt(params.get("body_size_pt")) or profile.get("body_size_pt")
+    line_spacing = parse_spacing(params.get("line_spacing")) or profile.get("line_spacing")
+
+    h1_font = params.get("heading1_font") or profile.get("heading1_font")
+    h1_size = parse_pt(params.get("heading1_size_pt")) or profile.get("heading1_size_pt")
+    h2_font = params.get("heading2_font") or profile.get("heading2_font")
+    h2_size = parse_pt(params.get("heading2_size_pt")) or profile.get("heading2_size_pt")
+    h3_font = params.get("heading3_font") or profile.get("heading3_font")
+    h3_size = parse_pt(params.get("heading3_size_pt")) or profile.get("heading3_size_pt")
+
+    # Normal style
+    normal = doc.styles["Normal"]
+    if body_font:
+        _set_font(normal, body_font)
+    if body_size:
+        _set_font_size(normal, body_size)
+    if line_spacing:
+        _set_line_spacing(normal.paragraph_format, line_spacing)
+
+    # Heading styles
+    for style_name, font, size in [
+        ("Heading 1", h1_font, h1_size),
+        ("Heading 2", h2_font, h2_size),
+        ("Heading 3", h3_font, h3_size),
+    ]:
+        try:
+            style = doc.styles[style_name]
+            if font:
+                _set_font(style, font)
+            if size:
+                _set_font_size(style, size)
+        except KeyError:
+            pass
+
+    # Technical profile: code styles
+    if style_profile == "technical":
+        for code_style_name in ("SourceCode", "VerbatimChar"):
+            try:
+                cs = doc.styles[code_style_name]
+                _set_font(cs, "Consolas")
+                _set_font_size(cs, 10)
+                _set_font_color(cs, "1F2937")
+            except KeyError:
+                pass
+
+    # Page margins
+    margin_top = parse_mm(params.get("margin_top_mm"))
+    margin_bottom = parse_mm(params.get("margin_bottom_mm"))
+    margin_left = parse_mm(params.get("margin_left_mm"))
+    margin_right = parse_mm(params.get("margin_right_mm"))
+
+    if any([margin_top, margin_bottom, margin_left, margin_right]):
+        for section in doc.sections:
+            if margin_top:
+                section.top_margin = Cm(margin_top / 10)
+            if margin_bottom:
+                section.bottom_margin = Cm(margin_bottom / 10)
+            if margin_left:
+                section.left_margin = Cm(margin_left / 10)
+            if margin_right:
+                section.right_margin = Cm(margin_right / 10)
