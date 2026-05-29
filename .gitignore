@@ -1,0 +1,10 @@
+VSC-plugin-MD2Docx-Converter/node_modules/
+VSC-plugin-MD2Docx-Converter/out/
+VSC-plugin-MD2Docx-Converter/*.vsix
+VSC-plugin-MD2Docx-Converter/.vscode-test/
+VSC-plugin-MD2Docx-Converter/tmp*.html
+dify-plugin-MD2Docx/node_modules/
+dify-plugin-MD2Docx/dist/
+dify-plugin-MD2Docx/*.difypkg
+**/__pycache__/
+*.pyc
