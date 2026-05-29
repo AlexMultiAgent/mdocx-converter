@@ -1,0 +1,47 @@
+version: 0.0.1
+type: plugin
+author: "alexmultiagent"
+name: "md2docx"
+created_at: "2026-05-29T00:00:00.000000Z"
+
+label:
+  en_US: "md2docx - Markdown to DOCX"
+  zh_Hans: "md2docx - Markdown 转 Word"
+
+description:
+  en_US: >
+    Convert Markdown to polished DOCX with built-in Chinese/English templates.
+    Supports academic paper, technical document, and business report style presets,
+    Mermaid diagram rendering, and fine-grained font/margin/spacing control.
+  zh_Hans: >
+    将 Markdown 转换为精美 DOCX 文档，内置中英文模板。
+    支持学术论文、技术文档、商业报告三种样式预设，
+    Mermaid 图表渲染，以及字体/页边距/行距的精细控制。
+
+icon: "icon.svg"
+
+resource:
+  memory: 536870912
+  permission:
+    tool:
+      enabled: true
+    storage:
+      enabled: true
+      size: 104857600
+
+plugins:
+  tools:
+    - "provider/md2docx.yaml"
+
+meta:
+  version: "0.0.1"
+  arch:
+    - "amd64"
+    - "arm64"
+  runner:
+    language: "python"
+    version: "3.12"
+    entrypoint: "src.md2docx"
+  minimum_dify_version: "1.4.0"
+
+privacy: "./PRIVACY.md"
