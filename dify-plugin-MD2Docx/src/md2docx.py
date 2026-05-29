@@ -256,3 +256,62 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True) -> tuple[str, i
 
     parts.append(markdown_text[last_end:])
     return "".join(parts), count
+
+
+# ── Pandoc conversion ────────────────────────────────────────
+
+def _ensure_pandoc() -> None:
+    """Check for pandoc; download on first use via pypandoc."""
+    try:
+        pypandoc.get_pandoc_version()
+    except OSError:
+        pypandoc.download_pandoc()
+
+
+def build_pandoc_metadata(
+    style_profile: str,
+    body_font: Optional[str],
+    body_size_pt: Optional[float],
+    line_spacing: Optional[float],
+) -> dict[str, str]:
+    """Build the pandoc --metadata dict, layering profile defaults + user overrides."""
+    metadata = dict(PROFILE_METADATA.get(style_profile, {}))
+
+    if body_font:
+        metadata["mainfont"] = body_font
+        metadata["CJKmainfont"] = body_font
+    if body_size_pt:
+        metadata["fontsize"] = f"{body_size_pt}pt"
+    if line_spacing:
+        metadata["linestretch"] = str(line_spacing)
+
+    return {k: v for k, v in metadata.items() if v.strip()}
+
+
+def convert_via_pandoc(
+    markdown_text: str,
+    reference_docx: str,
+    source_dir: str,
+    metadata: dict[str, str],
+) -> io.BytesIO:
+    """Run pandoc to convert markdown to DOCX. Returns BytesIO of the docx content."""
+    _ensure_pandoc()
+
+    extra_args = [
+        "--from", "gfm+raw_html",
+        "--to", "docx",
+        "--reference-doc", reference_docx,
+        "--resource-path", source_dir,
+    ]
+
+    for key, value in metadata.items():
+        extra_args.extend(["--metadata", f"{key}={value}"])
+
+    output = pypandoc.convert_text(
+        markdown_text,
+        "docx",
+        format="gfm+raw_html",
+        extra_args=extra_args,
+    )
+
+    return io.BytesIO(output)
