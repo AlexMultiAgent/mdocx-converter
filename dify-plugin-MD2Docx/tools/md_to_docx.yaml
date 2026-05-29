@@ -1,0 +1,230 @@
+identity:
+  name: "md_to_docx"
+  author: "alexmultiagent"
+  label:
+    en_US: "Markdown to DOCX"
+    zh_Hans: "Markdown 转 DOCX"
+
+description:
+  human:
+    en_US: "Convert Markdown text to a Microsoft Word DOCX document with style presets, templates, and Mermaid rendering."
+    zh_Hans: "将 Markdown 文本转换为 Word DOCX 文档，支持样式预设、模板和 Mermaid 渲染。"
+  llm: "call this tool to convert markdown text to a docx word document with formatting"
+
+parameters:
+  - name: markdown_content
+    type: string
+    required: true
+    label:
+      en_US: "Markdown Content"
+      zh_Hans: "Markdown 内容"
+    human_description:
+      en_US: "The Markdown text to convert. Supports GFM syntax, Mermaid code blocks, tables, and images."
+      zh_Hans: "要转换的 Markdown 文本。支持 GFM 语法、Mermaid 代码块、表格和图片。"
+    llm_description: "The full markdown text content to be converted to a docx document"
+    form: llm
+
+  - name: title
+    type: string
+    required: false
+    label:
+      en_US: "Document Title"
+      zh_Hans: "文档标题"
+    human_description:
+      en_US: "Title for the output DOCX file (without .docx extension). Defaults to 'Document'."
+      zh_Hans: "输出 DOCX 文件的标题（不含 .docx 扩展名）。默认为 'Document'。"
+    llm_description: "The title or filename for the output document, used as the filename"
+    form: llm
+
+  - name: style_profile
+    type: select
+    required: false
+    default: "academic"
+    options:
+      - value: "academic"
+        label:
+          en_US: "Academic Paper"
+          zh_Hans: "学术论文"
+      - value: "technical"
+        label:
+          en_US: "Technical Document"
+          zh_Hans: "技术文档"
+      - value: "business"
+        label:
+          en_US: "Business Report"
+          zh_Hans: "商业报告"
+      - value: "template"
+        label:
+          en_US: "Template Only (no overrides)"
+          zh_Hans: "仅模板（无样式覆盖）"
+    label:
+      en_US: "Style Profile"
+      zh_Hans: "样式预设"
+    human_description:
+      en_US: "Document style preset with font, size, and spacing defaults."
+      zh_Hans: "文档样式预设，包含字体、字号和行距默认值。"
+    form: form
+
+  - name: reference_language
+    type: select
+    required: false
+    default: "auto"
+    options:
+      - value: "auto"
+        label:
+          en_US: "Auto-detect"
+          zh_Hans: "自动检测"
+      - value: "english"
+        label:
+          en_US: "English"
+          zh_Hans: "英文"
+      - value: "chinese"
+        label:
+          en_US: "Chinese"
+          zh_Hans: "中文"
+    label:
+      en_US: "Reference Language"
+      zh_Hans: "模板语言"
+    human_description:
+      en_US: "Template language. Auto-detect samples the first 20K characters to determine Chinese vs English."
+      zh_Hans: "模板语言。自动检测会采样前 20000 个字符判断中文还是英文。"
+    form: form
+
+  - name: mermaid_enabled
+    type: boolean
+    required: false
+    default: true
+    label:
+      en_US: "Render Mermaid Diagrams"
+      zh_Hans: "渲染 Mermaid 图表"
+    human_description:
+      en_US: "When enabled, ```mermaid code blocks are rendered to images via the public Mermaid Ink API. Disable for offline use or privacy."
+      zh_Hans: "启用后，```mermaid 代码块会通过 Mermaid Ink API 渲染为图片。离线或注重隐私时可关闭。"
+    form: form
+
+  - name: custom_template
+    type: file
+    required: false
+    label:
+      en_US: "Custom DOCX Template"
+      zh_Hans: "自定义 DOCX 模板"
+    human_description:
+      en_US: "Upload a custom reference.docx template. Overrides the built-in template when provided."
+      zh_Hans: "上传自定义 reference.docx 模板。提供后会覆盖内置模板。"
+    form: form
+
+  - name: body_font
+    type: string
+    required: false
+    label:
+      en_US: "Body Font"
+      zh_Hans: "正文字体"
+    human_description:
+      en_US: "Override body text font. Leave empty to use profile default."
+      zh_Hans: "覆盖正文字体。留空使用预设默认值。"
+    form: form
+
+  - name: body_size_pt
+    type: number
+    required: false
+    label:
+      en_US: "Body Font Size (pt)"
+      zh_Hans: "正文字号 (pt)"
+    human_description:
+      en_US: "Override body font size in points. Set 0 to use profile default."
+      zh_Hans: "覆盖正文字号。设 0 使用预设默认值。"
+    form: form
+
+  - name: line_spacing
+    type: number
+    required: false
+    label:
+      en_US: "Line Spacing"
+      zh_Hans: "行距"
+    human_description:
+      en_US: "Line spacing multiplier (e.g., 1.0, 1.25, 1.5, 2.0). Set 0 to use profile default."
+      zh_Hans: "行距倍数（如 1.0、1.25、1.5、2.0）。设 0 使用预设默认值。"
+    form: form
+
+  - name: margin_top_mm
+    type: number
+    required: false
+    label:
+      en_US: "Top Margin (mm)"
+      zh_Hans: "上边距 (mm)"
+    human_description:
+      en_US: "Top page margin in millimeters. Set 0 for default."
+      zh_Hans: "上边距，单位毫米。设 0 使用默认值。"
+    form: form
+
+  - name: margin_bottom_mm
+    type: number
+    required: false
+    label:
+      en_US: "Bottom Margin (mm)"
+      zh_Hans: "下边距 (mm)"
+    form: form
+
+  - name: margin_left_mm
+    type: number
+    required: false
+    label:
+      en_US: "Left Margin (mm)"
+      zh_Hans: "左边距 (mm)"
+    form: form
+
+  - name: margin_right_mm
+    type: number
+    required: false
+    label:
+      en_US: "Right Margin (mm)"
+      zh_Hans: "右边距 (mm)"
+    form: form
+
+  - name: heading1_font
+    type: string
+    required: false
+    label:
+      en_US: "Heading 1 Font"
+      zh_Hans: "一级标题字体"
+    form: form
+
+  - name: heading1_size_pt
+    type: number
+    required: false
+    label:
+      en_US: "Heading 1 Size (pt)"
+      zh_Hans: "一级标题字号 (pt)"
+    form: form
+
+  - name: heading2_font
+    type: string
+    required: false
+    label:
+      en_US: "Heading 2 Font"
+      zh_Hans: "二级标题字体"
+    form: form
+
+  - name: heading2_size_pt
+    type: number
+    required: false
+    label:
+      en_US: "Heading 2 Size (pt)"
+      zh_Hans: "二级标题字号 (pt)"
+    form: form
+
+  - name: heading3_font
+    type: string
+    required: false
+    label:
+      en_US: "Heading 3 Font"
+      zh_Hans: "三级标题字体"
+    form: form
+
+  - name: heading3_size_pt
+    type: number
+    required: false
+    label:
+      en_US: "Heading 3 Size (pt)"
+      zh_Hans: "三级标题字号 (pt)"
+    form: form

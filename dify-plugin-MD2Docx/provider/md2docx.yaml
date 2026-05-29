@@ -1,0 +1,23 @@
+identity:
+  author: "alexmultiagent"
+  name: "md2docx"
+  label:
+    en_US: "md2docx - Markdown to Word"
+    zh_Hans: "md2docx - Markdown 转 Word"
+  description:
+    en_US: "Convert Markdown to polished DOCX with templates, Mermaid, and style presets."
+    zh_Hans: "将 Markdown 转换为精美 DOCX，支持模板、Mermaid 和样式预设。"
+  icon: "icon.svg"
+  tags:
+    - "markdown"
+    - "docx"
+    - "word"
+    - "document"
+    - "converter"
+
+tools:
+  - "tools/md_to_docx.yaml"
+
+extra:
+  python:
+    source: "src/md2docx.py"
