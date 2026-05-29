@@ -196,3 +196,63 @@ def parse_mm(value) -> Optional[float]:
 def mm_to_twips(mm: float) -> int:
     """Convert millimeters to twips (1 mm ≈ 56.69 twips)."""
     return round(mm * 56.6929133858)
+
+
+# ── Mermaid preprocessing ────────────────────────────────────
+
+MERMAID_INK_URL = "https://mermaid.ink/img"
+
+
+def render_mermaid_via_api(diagram: str) -> bytes:
+    """Render a Mermaid diagram via the Mermaid Ink API. Returns PNG bytes."""
+    resp = requests.post(
+        MERMAID_INK_URL,
+        json={"code": diagram},
+        headers={"Content-Type": "application/json"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    return resp.content
+
+
+def preprocess_mermaid(markdown_text: str, enabled: bool = True) -> tuple[str, int]:
+    """Extract ```mermaid blocks, render to PNGs via API, replace with image refs.
+
+    Returns (processed_markdown, mermaid_count).
+    """
+    if not enabled:
+        return markdown_text, 0
+
+    matches = list(MERMAID_BLOCK_RE.finditer(markdown_text))
+    if not matches:
+        return markdown_text, 0
+
+    temp_dir = tempfile.mkdtemp(prefix="mermaid-")
+
+    parts = []
+    last_end = 0
+    count = 0
+
+    for i, match in enumerate(matches, 1):
+        diagram = match.group(1).strip()
+        start = match.start()
+
+        # Append text before this mermaid block
+        parts.append(markdown_text[last_end:start])
+
+        # Render diagram
+        try:
+            png_bytes = render_mermaid_via_api(diagram)
+            png_path = os.path.join(temp_dir, f"diagram-{i}.png")
+            with open(png_path, "wb") as f:
+                f.write(png_bytes)
+            parts.append(f"![Mermaid Diagram {i}]({png_path})\n\n")
+            count += 1
+        except Exception as e:
+            # On render failure, keep the original mermaid block as code
+            parts.append(match.group(0) + "\n\n")
+
+        last_end = match.end()
+
+    parts.append(markdown_text[last_end:])
+    return "".join(parts), count
