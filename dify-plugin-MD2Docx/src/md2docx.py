@@ -443,3 +443,112 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> No
                 section.left_margin = Cm(margin_left / 10)
             if margin_right:
                 section.right_margin = Cm(margin_right / 10)
+
+
+# ── Dify Tool entry point ────────────────────────────────────
+
+from typing import Generator
+from dify_plugin import Tool
+from dify_plugin.entities.tool import ToolInvokeMessage
+
+
+class Md2DocxTool(Tool):
+    """Dify Tool: convert Markdown to DOCX."""
+
+    def _invoke(
+        self, parameters: dict
+    ) -> Generator[ToolInvokeMessage, None, None]:
+        try:
+            markdown_content = parameters.get("markdown_content", "")
+            if not markdown_content.strip():
+                yield self.create_text_message(
+                    "Error: markdown_content is empty. Please provide Markdown text to convert."
+                )
+                return
+
+            title = parameters.get("title") or "Document"
+            style_profile = normalize_profile(parameters.get("style_profile"))
+            language_setting = parameters.get("reference_language", "auto")
+            mermaid_enabled = parameters.get("mermaid_enabled", True)
+            if isinstance(mermaid_enabled, str):
+                mermaid_enabled = mermaid_enabled.lower() != "false"
+
+            # Resolve language
+            reference_language = resolve_language(language_setting, markdown_content)
+
+            # Resolve template
+            custom_template = parameters.get("custom_template")
+            custom_template_path = None
+            if custom_template:
+                # custom_template is a file upload — save to temp
+                import tempfile as tmp
+                fd, custom_template_path = tmp.mkstemp(suffix=".docx")
+                os.close(fd)
+                if isinstance(custom_template, bytes):
+                    with open(custom_template_path, "wb") as f:
+                        f.write(custom_template)
+                elif isinstance(custom_template, str):
+                    with open(custom_template_path, "w") as f:
+                        f.write(custom_template)
+
+            # Plugin root is available via runtime
+            plugin_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            reference_docx = resolve_template(
+                style_profile, reference_language, custom_template_path, plugin_root
+            )
+
+            # Mermaid preprocessing
+            processed_md, mermaid_count = preprocess_mermaid(
+                markdown_content, enabled=mermaid_enabled
+            )
+
+            # Pandoc metadata
+            metadata = build_pandoc_metadata(
+                style_profile,
+                parameters.get("body_font"),
+                parse_pt(parameters.get("body_size_pt")),
+                parse_spacing(parameters.get("line_spacing")),
+            )
+
+            # Convert via pandoc
+            source_dir = os.path.dirname(reference_docx)
+            docx_io = convert_via_pandoc(
+                processed_md, reference_docx, source_dir, metadata
+            )
+
+            # Apply style overrides
+            doc = Document(docx_io)
+            apply_style_overrides(doc, style_profile, parameters)
+
+            # Save to BytesIO
+            output_io = io.BytesIO()
+            doc.save(output_io)
+            output_io.seek(0)
+            docx_bytes = output_io.read()
+
+            # Cleanup
+            if custom_template_path and os.path.exists(custom_template_path):
+                os.unlink(custom_template_path)
+
+            # Messages
+            size_kb = len(docx_bytes) / 1024
+            summary_parts = [
+                f"DOCX generated: {title}.docx ({size_kb:.1f} KB)",
+                f"Style: {style_profile} | Language: {reference_language}",
+            ]
+            if mermaid_count > 0:
+                summary_parts.append(f"Mermaid diagrams rendered: {mermaid_count}")
+
+            yield self.create_text_message("\n".join(summary_parts))
+            yield self.create_blob_message(
+                blob=docx_bytes,
+                meta={
+                    "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                },
+                save_as=f"{title}.docx",
+            )
+
+        except Exception as e:
+            yield self.create_text_message(
+                f"md2docx conversion failed: {type(e).__name__}: {e}"
+            )
