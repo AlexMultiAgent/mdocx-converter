@@ -7,16 +7,15 @@ Ported from mdocx-converter VS Code extension.
 import os
 import re
 import io
+import shutil
 import tempfile
-import zlib
-import base64
-from typing import Optional
+import threading
+from typing import Optional, Any
 
 import requests
 import pypandoc
 from docx import Document
-from docx.shared import Pt, Cm, Emu, Twips
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Cm
 from docx.oxml.ns import qn
 
 # ── Regex ───────────────────────────────────────────────────
@@ -27,7 +26,7 @@ LATIN_CHAR_RE = re.compile(r"[A-Za-z]")
 
 # ── Profile defaults (ported from getProfileDocxDefaults) ───
 
-PROFILE_DEFAULTS: dict[str, dict[str, any]] = {
+PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
     "academic": {
         "body_font": "SimSun",
         "body_size_pt": 12,
@@ -78,14 +77,14 @@ PROFILE_METADATA: dict[str, dict[str, str]] = {
         "mainfont": "Arial",
         "CJKmainfont": "Microsoft YaHei",
         "fontsize": "11pt",
-        "linestretch": "1.25",
+        "linestretch": "1.3",
     },
     "technical": {
         "mainfont": "Arial",
         "CJKmainfont": "Microsoft YaHei",
         "monofont": "Consolas",
         "fontsize": "11pt",
-        "linestretch": "1.2",
+        "linestretch": "1.25",
     },
 }
 
@@ -111,6 +110,16 @@ TEMPLATE_MAP: dict[str, dict[str, str]] = {
 }
 
 VALID_PROFILES = {"template", "academic", "business", "technical"}
+
+# Style name aliases used by some reference.docx templates
+NORMAL_STYLE_NAMES = ("Normal", "a", "a1", "Text", "BodyText", "Body Text",
+                       "FirstParagraph", "Compact")
+HEADING_ALIASES = {
+    "Heading 1": ("Heading 1", "1"),
+    "Heading 2": ("Heading 2", "2", "21"),
+    "Heading 3": ("Heading 3", "3", "31"),
+}
+CODE_STYLE_NAMES = ("SourceCode", "VerbatimChar", "Code")
 
 
 # ── Language detection ───────────────────────────────────────
@@ -176,6 +185,9 @@ def parse_pt(value) -> Optional[float]:
     """Parse a pt value, return None if 0, negative, or non-numeric."""
     if value is None:
         return None
+    # Guard against bool (subclass of int): float(True) == 1.0
+    if isinstance(value, bool):
+        return None
     try:
         v = float(value)
         return v if v > 0 else None
@@ -198,6 +210,16 @@ def mm_to_twips(mm: float) -> int:
     return round(mm * 56.6929133858)
 
 
+# ── Title sanitization ───────────────────────────────────────
+
+_FILENAME_BAD_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def sanitize_filename(name: str) -> str:
+    """Replace characters illegal in filenames with underscores."""
+    return _FILENAME_BAD_CHARS_RE.sub("_", name).strip() or "Document"
+
+
 # ── Mermaid preprocessing ────────────────────────────────────
 
 MERMAID_INK_URL = "https://mermaid.ink/img"
@@ -215,19 +237,21 @@ def render_mermaid_via_api(diagram: str) -> bytes:
     return resp.content
 
 
-def preprocess_mermaid(markdown_text: str, enabled: bool = True) -> tuple[str, int]:
+def preprocess_mermaid(markdown_text: str, enabled: bool = True) -> tuple[str, int, str, list[str]]:
     """Extract ```mermaid blocks, render to PNGs via API, replace with image refs.
 
-    Returns (processed_markdown, mermaid_count).
+    Returns (processed_markdown, mermaid_count, temp_dir, errors).
+    Caller must clean up temp_dir via shutil.rmtree after pandoc conversion.
     """
     if not enabled:
-        return markdown_text, 0
+        return markdown_text, 0, "", []
 
     matches = list(MERMAID_BLOCK_RE.finditer(markdown_text))
     if not matches:
-        return markdown_text, 0
+        return markdown_text, 0, "", []
 
     temp_dir = tempfile.mkdtemp(prefix="mermaid-")
+    errors: list[str] = []
 
     parts = []
     last_end = 0
@@ -237,35 +261,42 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True) -> tuple[str, i
         diagram = match.group(1).strip()
         start = match.start()
 
-        # Append text before this mermaid block
         parts.append(markdown_text[last_end:start])
 
-        # Render diagram
         try:
             png_bytes = render_mermaid_via_api(diagram)
             png_path = os.path.join(temp_dir, f"diagram-{i}.png")
             with open(png_path, "wb") as f:
                 f.write(png_bytes)
-            parts.append(f"![Mermaid Diagram {i}]({png_path})\n\n")
+            # Wrap path in angle brackets to handle paths with spaces on Windows
+            parts.append(f"![Mermaid Diagram {i}](<{png_path}>)\n\n")
             count += 1
         except Exception as e:
-            # On render failure, keep the original mermaid block as code
+            errors.append(f"Diagram {i}: {e}")
             parts.append(match.group(0) + "\n\n")
 
         last_end = match.end()
 
     parts.append(markdown_text[last_end:])
-    return "".join(parts), count
+    return "".join(parts), count, temp_dir, errors
 
 
 # ── Pandoc conversion ────────────────────────────────────────
 
+_pandoc_lock = threading.Lock()
+
+
 def _ensure_pandoc() -> None:
-    """Check for pandoc; download on first use via pypandoc."""
+    """Check for pandoc; download on first use via pypandoc (thread-safe)."""
     try:
         pypandoc.get_pandoc_version()
     except OSError:
-        pypandoc.download_pandoc()
+        with _pandoc_lock:
+            # Double-check inside lock — another thread may have finished downloading
+            try:
+                pypandoc.get_pandoc_version()
+            except OSError:
+                pypandoc.download_pandoc()
 
 
 def build_pandoc_metadata(
@@ -277,42 +308,65 @@ def build_pandoc_metadata(
     """Build the pandoc --metadata dict, layering profile defaults + user overrides."""
     metadata = dict(PROFILE_METADATA.get(style_profile, {}))
 
-    if body_font:
-        metadata["mainfont"] = body_font
-        metadata["CJKmainfont"] = body_font
+    if body_font and body_font.strip():
+        metadata["mainfont"] = body_font.strip()
+        metadata["CJKmainfont"] = body_font.strip()
     if body_size_pt:
         metadata["fontsize"] = f"{body_size_pt}pt"
     if line_spacing:
         metadata["linestretch"] = str(line_spacing)
 
-    return {k: v for k, v in metadata.items() if v.strip()}
+    return {k: v for k, v in metadata.items() if v}
+
+
+def _map_pandoc_error(message: str) -> str:
+    """Map raw pandoc errors to user-friendly guidance."""
+    msg_lower = message.lower()
+    if any(kw in msg_lower for kw in ("permission denied", "access is denied", "eperm", "eacces")):
+        return "Pandoc could not write the output file. Close the target DOCX in Word and try again."
+    if any(kw in msg_lower for kw in ("cannot decode image", "image", "could not fetch resource", "not found")):
+        return "Pandoc could not resolve one or more images. Check that all image paths in the Markdown are valid and accessible."
+    if any(kw in msg_lower for kw in ("unknown reader", "unknown extension", "mermaid")):
+        return "Pandoc encountered syntax it could not handle. Check for unsupported Markdown constructs or malformed Mermaid blocks."
+    if any(kw in msg_lower for kw in ("not a valid docx", "reference docx", "could not read")):
+        return "Pandoc could not read the reference template. The uploaded .docx may be corrupted or not in the expected format."
+    return f"Pandoc conversion failed: {message}"
 
 
 def convert_via_pandoc(
     markdown_text: str,
     reference_docx: str,
     source_dir: str,
+    mermaid_dir: str,
     metadata: dict[str, str],
 ) -> io.BytesIO:
     """Run pandoc to convert markdown to DOCX. Returns BytesIO of the docx content."""
     _ensure_pandoc()
 
+    # Combine reference-docx dir and mermaid temp dir in resource-path
+    resource_path = source_dir
+    if mermaid_dir:
+        resource_path = f"{mermaid_dir}{os.pathsep}{resource_path}"
+
     extra_args = [
         "--from", "gfm+raw_html",
         "--to", "docx",
         "--reference-doc", reference_docx,
-        "--resource-path", source_dir,
+        "--resource-path", resource_path,
     ]
 
     for key, value in metadata.items():
         extra_args.extend(["--metadata", f"{key}={value}"])
 
-    output = pypandoc.convert_text(
-        markdown_text,
-        "docx",
-        format="gfm+raw_html",
-        extra_args=extra_args,
-    )
+    try:
+        output = pypandoc.convert_text(
+            markdown_text,
+            "docx",
+            format="gfm+raw_html",
+            extra_args=extra_args,
+        )
+    except Exception as e:
+        raise RuntimeError(_map_pandoc_error(str(e))) from e
 
     return io.BytesIO(output)
 
@@ -376,6 +430,19 @@ def _set_font_color(run_or_style, color_hex: str) -> None:
     color.set(qn("w:val"), color_hex)
 
 
+def _try_apply_to_style_names(doc: Document, names: tuple[str, ...], font, size) -> None:
+    """Apply font and size to all matching style names, ignoring missing ones."""
+    for name in names:
+        try:
+            style = doc.styles[name]
+            if font:
+                _set_font(style, font)
+            if size:
+                _set_font_size(style, size)
+        except KeyError:
+            pass
+
+
 def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> None:
     """Apply font/size/spacing overrides to Normal and Heading styles."""
     profile = PROFILE_DEFAULTS.get(style_profile, {})
@@ -392,38 +459,34 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> No
     h3_font = params.get("heading3_font") or profile.get("heading3_font")
     h3_size = parse_pt(params.get("heading3_size_pt")) or profile.get("heading3_size_pt")
 
-    # Normal style
-    normal = doc.styles["Normal"]
-    if body_font:
-        _set_font(normal, body_font)
-    if body_size:
-        _set_font_size(normal, body_size)
-    if line_spacing:
-        _set_line_spacing(normal.paragraph_format, line_spacing)
-
-    # Heading styles
-    for style_name, font, size in [
-        ("Heading 1", h1_font, h1_size),
-        ("Heading 2", h2_font, h2_size),
-        ("Heading 3", h3_font, h3_size),
-    ]:
+    # Normal style + aliases (BodyText, Compact, etc.)
+    normal_names = list(NORMAL_STYLE_NAMES)
+    for name in normal_names:
         try:
-            style = doc.styles[style_name]
-            if font:
-                _set_font(style, font)
-            if size:
-                _set_font_size(style, size)
+            style = doc.styles[name]
+            if body_font:
+                _set_font(style, body_font)
+            if body_size:
+                _set_font_size(style, body_size)
+            if line_spacing:
+                _set_line_spacing(style.paragraph_format, line_spacing)
         except KeyError:
             pass
 
+    # Heading styles + aliases
+    _try_apply_to_style_names(doc, HEADING_ALIASES["Heading 1"], h1_font, h1_size)
+    _try_apply_to_style_names(doc, HEADING_ALIASES["Heading 2"], h2_font, h2_size)
+    _try_apply_to_style_names(doc, HEADING_ALIASES["Heading 3"], h3_font, h3_size)
+
     # Technical profile: code styles
     if style_profile == "technical":
-        for code_style_name in ("SourceCode", "VerbatimChar"):
+        for code_style_name in CODE_STYLE_NAMES:
             try:
                 cs = doc.styles[code_style_name]
                 _set_font(cs, "Consolas")
                 _set_font_size(cs, 10)
                 _set_font_color(cs, "1F2937")
+                _set_shading(cs.paragraph_format, "F3F4F6")
             except KeyError:
                 pass
 
@@ -451,6 +514,18 @@ from typing import Generator
 from dify_plugin import Tool
 from dify_plugin.entities.tool import ToolInvokeMessage
 
+# Characters that can appear in "falsy" string representations
+_FALSY_STRINGS = frozenset({"false", "0", "no", "off", "disabled", "n", ""})
+
+
+def _coerce_bool(value) -> bool:
+    """Coerce a value to bool, handling Dify string-form booleans."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in _FALSY_STRINGS
+    return bool(value)
+
 
 class Md2DocxTool(Tool):
     """Dify Tool: convert Markdown to DOCX."""
@@ -458,47 +533,49 @@ class Md2DocxTool(Tool):
     def _invoke(
         self, parameters: dict
     ) -> Generator[ToolInvokeMessage, None, None]:
+        custom_template_path = None
+        mermaid_dir = ""
+
         try:
-            markdown_content = parameters.get("markdown_content", "")
+            markdown_content = parameters.get("markdown_content") or ""
             if not markdown_content.strip():
                 yield self.create_text_message(
                     "Error: markdown_content is empty. Please provide Markdown text to convert."
                 )
                 return
 
-            title = parameters.get("title") or "Document"
+            title = sanitize_filename(parameters.get("title") or "Document")
             style_profile = normalize_profile(parameters.get("style_profile"))
             language_setting = parameters.get("reference_language", "auto")
-            mermaid_enabled = parameters.get("mermaid_enabled", True)
-            if isinstance(mermaid_enabled, str):
-                mermaid_enabled = mermaid_enabled.lower() != "false"
+            mermaid_enabled = _coerce_bool(parameters.get("mermaid_enabled", True))
 
             # Resolve language
             reference_language = resolve_language(language_setting, markdown_content)
 
             # Resolve template
             custom_template = parameters.get("custom_template")
-            custom_template_path = None
             if custom_template:
-                # custom_template is a file upload — save to temp
-                import tempfile as tmp
-                fd, custom_template_path = tmp.mkstemp(suffix=".docx")
+                fd, custom_template_path = tempfile.mkstemp(suffix=".docx")
                 os.close(fd)
                 if isinstance(custom_template, bytes):
                     with open(custom_template_path, "wb") as f:
                         f.write(custom_template)
                 elif isinstance(custom_template, str):
-                    with open(custom_template_path, "w") as f:
-                        f.write(custom_template)
+                    # Docx is binary — encode string and write as bytes
+                    with open(custom_template_path, "wb") as f:
+                        f.write(custom_template.encode("utf-8", errors="surrogateescape"))
+                else:
+                    # Unexpected type (e.g. file-like object) — skip silently
+                    os.unlink(custom_template_path)
+                    custom_template_path = None
 
-            # Plugin root is available via runtime
             plugin_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             reference_docx = resolve_template(
                 style_profile, reference_language, custom_template_path, plugin_root
             )
 
             # Mermaid preprocessing
-            processed_md, mermaid_count = preprocess_mermaid(
+            processed_md, mermaid_count, mermaid_dir, mermaid_errors = preprocess_mermaid(
                 markdown_content, enabled=mermaid_enabled
             )
 
@@ -513,7 +590,7 @@ class Md2DocxTool(Tool):
             # Convert via pandoc
             source_dir = os.path.dirname(reference_docx)
             docx_io = convert_via_pandoc(
-                processed_md, reference_docx, source_dir, metadata
+                processed_md, reference_docx, source_dir, mermaid_dir, metadata
             )
 
             # Apply style overrides
@@ -526,10 +603,6 @@ class Md2DocxTool(Tool):
             output_io.seek(0)
             docx_bytes = output_io.read()
 
-            # Cleanup
-            if custom_template_path and os.path.exists(custom_template_path):
-                os.unlink(custom_template_path)
-
             # Messages
             size_kb = len(docx_bytes) / 1024
             summary_parts = [
@@ -538,6 +611,11 @@ class Md2DocxTool(Tool):
             ]
             if mermaid_count > 0:
                 summary_parts.append(f"Mermaid diagrams rendered: {mermaid_count}")
+            if mermaid_errors:
+                failed = len(mermaid_errors)
+                summary_parts.append(
+                    f"Warning: {failed} Mermaid diagram(s) failed to render and were kept as code blocks."
+                )
 
             yield self.create_text_message("\n".join(summary_parts))
             yield self.create_blob_message(
@@ -550,5 +628,11 @@ class Md2DocxTool(Tool):
 
         except Exception as e:
             yield self.create_text_message(
-                f"md2docx conversion failed: {type(e).__name__}: {e}"
+                f"md2docx conversion failed: {e}"
             )
+
+        finally:
+            if custom_template_path and os.path.exists(custom_template_path):
+                os.unlink(custom_template_path)
+            if mermaid_dir and os.path.isdir(mermaid_dir):
+                shutil.rmtree(mermaid_dir, ignore_errors=True)
