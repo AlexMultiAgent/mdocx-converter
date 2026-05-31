@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with the VS Code extension in this subdirectory.
-
 This extension lives in the `VSC-plugin-MD2Docx-Converter/` directory of the [mdocx-converter](https://github.com/AlexMultiAgent/mdocx-converter) monorepo. The sibling `dify-plugin-MD2Docx/` directory contains a Dify Tool plugin port of the same pipeline.
 
 ## Commands

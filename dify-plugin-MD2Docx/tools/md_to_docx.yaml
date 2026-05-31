@@ -53,6 +53,10 @@ parameters:
         label:
           en_US: "Business Report"
           zh_Hans: "商业报告"
+      - value: "government"
+        label:
+          en_US: "Government Official Document"
+          zh_Hans: "公务公文"
       - value: "template"
         label:
           en_US: "Template Only (no overrides)"

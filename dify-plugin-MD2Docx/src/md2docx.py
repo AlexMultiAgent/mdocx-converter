@@ -17,6 +17,7 @@ import pypandoc
 from docx import Document
 from docx.shared import Cm
 from docx.oxml.ns import qn
+from lxml import etree
 
 # ── Regex ───────────────────────────────────────────────────
 
@@ -60,6 +61,17 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "heading3_size_pt": 12,
         "line_spacing": 1.25,
     },
+    "government": {
+        "body_font": "FangSong",
+        "body_size_pt": 16,
+        "heading1_font": "SimHei",
+        "heading1_size_pt": 16,
+        "heading2_font": "KaiTi",
+        "heading2_size_pt": 16,
+        "heading3_font": "FangSong",
+        "heading3_size_pt": 16,
+        "line_spacing": 1.75,
+    },
     "template": {},
 }
 
@@ -86,6 +98,12 @@ PROFILE_METADATA: dict[str, dict[str, str]] = {
         "fontsize": "11pt",
         "linestretch": "1.25",
     },
+    "government": {
+        "mainfont": "Times New Roman",
+        "CJKmainfont": "FangSong",
+        "fontsize": "16pt",
+        "linestretch": "1.75",
+    },
 }
 
 # ── Bundled template mapping ─────────────────────────────────
@@ -107,9 +125,13 @@ TEMPLATE_MAP: dict[str, dict[str, str]] = {
         "english": "reference_english_business.docx",
         "chinese": "reference_chinese_business.docx",
     },
+    "government": {
+        "english": "reference_english_government.docx",
+        "chinese": "reference_chinese_government.docx",
+    },
 }
 
-VALID_PROFILES = {"template", "academic", "business", "technical"}
+VALID_PROFILES = {"template", "academic", "business", "technical", "government"}
 
 # Style name aliases used by some reference.docx templates
 NORMAL_STYLE_NAMES = ("Normal", "a", "a1", "Text", "BodyText", "Body Text",
@@ -378,7 +400,6 @@ def _set_font(run_or_style, font_name: str) -> None:
     rPr = run_or_style._element.get_or_add_rPr()
     rFonts = rPr.find(qn("w:rFonts"))
     if rFonts is None:
-        from lxml import etree
         rFonts = etree.SubElement(rPr, qn("w:rFonts"))
     rFonts.set(qn("w:ascii"), font_name)
     rFonts.set(qn("w:hAnsi"), font_name)
@@ -390,7 +411,6 @@ def _set_font_size(run_or_style, size_pt: float) -> None:
     rPr = run_or_style._element.get_or_add_rPr()
     sz = rPr.find(qn("w:sz"))
     if sz is None:
-        from lxml import etree
         sz = etree.SubElement(rPr, qn("w:sz"))
     half_pts = str(int(round(size_pt * 2)))
     sz.set(qn("w:val"), half_pts)
@@ -402,7 +422,6 @@ def _set_line_spacing(paragraph_format, spacing: float) -> None:
     pPr = paragraph_format._element.get_or_add_pPr()
     spacing_el = pPr.find(qn("w:spacing"))
     if spacing_el is None:
-        from lxml import etree
         spacing_el = etree.SubElement(pPr, qn("w:spacing"))
     spacing_el.set(qn("w:line"), str(line_value))
     spacing_el.set(qn("w:lineRule"), "auto")
@@ -413,7 +432,6 @@ def _set_shading(paragraph_format, fill_color: str) -> None:
     pPr = paragraph_format._element.get_or_add_pPr()
     shd = pPr.find(qn("w:shd"))
     if shd is None:
-        from lxml import etree
         shd = etree.SubElement(pPr, qn("w:shd"))
     shd.set(qn("w:val"), "clear")
     shd.set(qn("w:color"), "auto")
@@ -425,13 +443,13 @@ def _set_font_color(run_or_style, color_hex: str) -> None:
     rPr = run_or_style._element.get_or_add_rPr()
     color = rPr.find(qn("w:color"))
     if color is None:
-        from lxml import etree
         color = etree.SubElement(rPr, qn("w:color"))
     color.set(qn("w:val"), color_hex)
 
 
-def _try_apply_to_style_names(doc: Document, names: tuple[str, ...], font, size) -> None:
-    """Apply font and size to all matching style names, ignoring missing ones."""
+def _apply_to_styles(doc: Document, names: tuple[str, ...], *, font=None, size=None,
+                     color=None, line_spacing=None) -> None:
+    """Apply font, size, color, and line_spacing to matching style names, ignoring missing ones."""
     for name in names:
         try:
             style = doc.styles[name]
@@ -439,6 +457,10 @@ def _try_apply_to_style_names(doc: Document, names: tuple[str, ...], font, size)
                 _set_font(style, font)
             if size:
                 _set_font_size(style, size)
+            if color:
+                _set_font_color(style, color)
+            if line_spacing:
+                _set_line_spacing(style.paragraph_format, line_spacing)
         except KeyError:
             pass
 
@@ -460,23 +482,17 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> No
     h3_size = parse_pt(params.get("heading3_size_pt")) or profile.get("heading3_size_pt")
 
     # Normal style + aliases (BodyText, Compact, etc.)
-    normal_names = list(NORMAL_STYLE_NAMES)
-    for name in normal_names:
-        try:
-            style = doc.styles[name]
-            if body_font:
-                _set_font(style, body_font)
-            if body_size:
-                _set_font_size(style, body_size)
-            if line_spacing:
-                _set_line_spacing(style.paragraph_format, line_spacing)
-        except KeyError:
-            pass
+    effective_color = "000000" if style_profile != "template" else None
+    _apply_to_styles(doc, NORMAL_STYLE_NAMES, font=body_font, size=body_size,
+                     color=effective_color, line_spacing=line_spacing)
 
     # Heading styles + aliases
-    _try_apply_to_style_names(doc, HEADING_ALIASES["Heading 1"], h1_font, h1_size)
-    _try_apply_to_style_names(doc, HEADING_ALIASES["Heading 2"], h2_font, h2_size)
-    _try_apply_to_style_names(doc, HEADING_ALIASES["Heading 3"], h3_font, h3_size)
+    _apply_to_styles(doc, HEADING_ALIASES["Heading 1"], font=h1_font, size=h1_size,
+                     color=effective_color)
+    _apply_to_styles(doc, HEADING_ALIASES["Heading 2"], font=h2_font, size=h2_size,
+                     color=effective_color)
+    _apply_to_styles(doc, HEADING_ALIASES["Heading 3"], font=h3_font, size=h3_size,
+                     color=effective_color)
 
     # Technical profile: code styles
     if style_profile == "technical":
@@ -485,7 +501,7 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> No
                 cs = doc.styles[code_style_name]
                 _set_font(cs, "Consolas")
                 _set_font_size(cs, 10)
-                _set_font_color(cs, "1F2937")
+                _set_font_color(cs, "000000")
                 _set_shading(cs.paragraph_format, "F3F4F6")
             except KeyError:
                 pass

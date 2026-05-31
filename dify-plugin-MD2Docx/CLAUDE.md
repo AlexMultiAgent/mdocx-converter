@@ -1,7 +1,5 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code when working with the Dify plugin in this subdirectory.
-
 This plugin lives in the `dify-plugin-MD2Docx/` directory of the [mdocx-converter](https://github.com/AlexMultiAgent/mdocx-converter) monorepo. The sibling `VSC-plugin-MD2Docx-Converter/` directory contains the original VS Code extension this plugin is ported from.
 
 ## Commands

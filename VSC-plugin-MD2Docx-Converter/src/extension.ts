@@ -791,31 +791,36 @@ interface DocxStyleOverride {
 
 function buildDocxStyleOverrides(settings: ExportSettings): DocxStyleOverride[] {
     const profileDefaults = getProfileDocxDefaults(settings.styleProfile);
+    const effectiveColor = settings.styleProfile === 'template' ? undefined : '000000';
     const overrides: DocxStyleOverride[] = [
         {
             styleId: 'Normal',
             aliases: ['a', 'a1', 'Text', 'BodyText', 'Body Text', 'FirstParagraph', 'Compact'],
             font: settings.bodyFont || profileDefaults.bodyFont,
             sizePt: settings.bodySizePt ?? profileDefaults.bodySizePt,
-            lineSpacing: settings.lineSpacing ?? profileDefaults.lineSpacing
+            lineSpacing: settings.lineSpacing ?? profileDefaults.lineSpacing,
+            color: effectiveColor
         },
         {
             styleId: 'Heading1',
             aliases: ['1'],
             font: settings.heading1Font || profileDefaults.heading1Font,
-            sizePt: settings.heading1SizePt ?? profileDefaults.heading1SizePt
+            sizePt: settings.heading1SizePt ?? profileDefaults.heading1SizePt,
+            color: effectiveColor
         },
         {
             styleId: 'Heading2',
             aliases: ['2', '21'],
             font: settings.heading2Font || profileDefaults.heading2Font,
-            sizePt: settings.heading2SizePt ?? profileDefaults.heading2SizePt
+            sizePt: settings.heading2SizePt ?? profileDefaults.heading2SizePt,
+            color: effectiveColor
         },
         {
             styleId: 'Heading3',
             aliases: ['3', '31'],
             font: settings.heading3Font || profileDefaults.heading3Font,
-            sizePt: settings.heading3SizePt ?? profileDefaults.heading3SizePt
+            sizePt: settings.heading3SizePt ?? profileDefaults.heading3SizePt,
+            color: effectiveColor
         }
     ];
 
@@ -834,14 +839,14 @@ function buildTechnicalCodeStyleOverrides(): DocxStyleOverride[] {
             font: 'Consolas',
             sizePt: 10,
             lineSpacing: 1.05,
-            color: '1F2937',
+            color: '000000',
             shadingFill: 'F3F4F6'
         },
         {
             styleId: 'VerbatimChar',
             font: 'Consolas',
             sizePt: 10,
-            color: '1F2937'
+            color: '000000'
         }
     ];
 }

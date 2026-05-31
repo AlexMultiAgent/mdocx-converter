@@ -8,3 +8,5 @@ dify-plugin-MD2Docx/dist/
 dify-plugin-MD2Docx/*.difypkg
 **/__pycache__/
 *.pyc
+.claude/
+docs/
