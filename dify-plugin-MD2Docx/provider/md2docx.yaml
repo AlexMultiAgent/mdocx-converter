@@ -1,3 +1,6 @@
+# Note: Dify 1.4+ allows the provider declaration to override manifest.yaml fields.
+# The label and description below intentionally mirror manifest.yaml for consistency
+# when the plugin is listed in Dify's tool selector vs. plugin marketplace.
 identity:
   author: "alexmultiagent"
   name: "md2docx"

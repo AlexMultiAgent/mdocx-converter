@@ -10,3 +10,4 @@ dify-plugin-MD2Docx/*.difypkg
 *.pyc
 .claude/
 docs/
+.offline-markdown-preview/

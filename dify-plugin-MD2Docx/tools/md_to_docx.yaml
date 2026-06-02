@@ -55,8 +55,12 @@ parameters:
           zh_Hans: "商业报告"
       - value: "government"
         label:
-          en_US: "Government Official Document"
+          en_US: "Official"
           zh_Hans: "公务公文"
+      - value: "thesis"
+        label:
+          en_US: "Thesis (GB/T 7713)"
+          zh_Hans: "学位论文 (GB/T 7713)"
       - value: "template"
         label:
           en_US: "Template Only (no overrides)"
@@ -137,6 +141,7 @@ parameters:
     human_description:
       en_US: "Override body font size in points. Set 0 to use profile default."
       zh_Hans: "覆盖正文字号。设 0 使用预设默认值。"
+    default: 0
     form: form
 
   - name: line_spacing
@@ -148,6 +153,7 @@ parameters:
     human_description:
       en_US: "Line spacing multiplier (e.g., 1.0, 1.25, 1.5, 2.0). Set 0 to use profile default."
       zh_Hans: "行距倍数（如 1.0、1.25、1.5、2.0）。设 0 使用预设默认值。"
+    default: 0
     form: form
 
   - name: margin_top_mm
@@ -159,6 +165,7 @@ parameters:
     human_description:
       en_US: "Top page margin in millimeters. Set 0 for default."
       zh_Hans: "上边距，单位毫米。设 0 使用默认值。"
+    default: 0
     form: form
 
   - name: margin_bottom_mm
@@ -167,6 +174,7 @@ parameters:
     label:
       en_US: "Bottom Margin (mm)"
       zh_Hans: "下边距 (mm)"
+    default: 0
     form: form
 
   - name: margin_left_mm
@@ -175,6 +183,7 @@ parameters:
     label:
       en_US: "Left Margin (mm)"
       zh_Hans: "左边距 (mm)"
+    default: 0
     form: form
 
   - name: margin_right_mm
@@ -183,6 +192,7 @@ parameters:
     label:
       en_US: "Right Margin (mm)"
       zh_Hans: "右边距 (mm)"
+    default: 0
     form: form
 
   - name: heading1_font
@@ -199,6 +209,7 @@ parameters:
     label:
       en_US: "Heading 1 Size (pt)"
       zh_Hans: "一级标题字号 (pt)"
+    default: 0
     form: form
 
   - name: heading2_font
@@ -215,6 +226,7 @@ parameters:
     label:
       en_US: "Heading 2 Size (pt)"
       zh_Hans: "二级标题字号 (pt)"
+    default: 0
     form: form
 
   - name: heading3_font
@@ -231,4 +243,5 @@ parameters:
     label:
       en_US: "Heading 3 Size (pt)"
       zh_Hans: "三级标题字号 (pt)"
+    default: 0
     form: form

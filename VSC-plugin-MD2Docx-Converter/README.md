@@ -1,5 +1,8 @@
 # MD2Docx Converter
 
+[![VS Code](https://img.shields.io/badge/VS%20Code-Marketplace-007ACC?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=alexmultiagent.mdocx-converter)
+[![Dify](https://img.shields.io/badge/Dify-Plugin-1c64f2?logo=dify)](https://marketplace.dify.ai/plugin/alexmultiagent/md2docx)
+
 ![MD2Docx Converter banner](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/assets/banner.png)
 
 Export Markdown files to DOCX from VS Code with:

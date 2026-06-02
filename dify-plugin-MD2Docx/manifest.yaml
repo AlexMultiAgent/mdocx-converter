@@ -2,7 +2,7 @@ version: 0.0.1
 type: plugin
 author: "alexmultiagent"
 name: "md2docx"
-created_at: "2026-05-29T00:00:00.000000Z"
+created_at: "2026-06-02T00:00:00.000000Z"
 
 label:
   en_US: "md2docx - Markdown to DOCX"
@@ -11,11 +11,11 @@ label:
 description:
   en_US: >
     Convert Markdown to polished DOCX with built-in Chinese/English templates.
-    Supports academic paper, technical document, and business report style presets,
+    Supports academic paper, technical document, business report, official document, and thesis style presets,
     Mermaid diagram rendering, and fine-grained font/margin/spacing control.
   zh_Hans: >
     将 Markdown 转换为精美 DOCX 文档，内置中英文模板。
-    支持学术论文、技术文档、商业报告三种样式预设，
+    支持学术论文、技术文档、商业报告、公务公文、学位论文五种样式预设，
     Mermaid 图表渲染，以及字体/页边距/行距的精细控制。
 
 icon: "icon.svg"
@@ -45,3 +45,11 @@ meta:
   minimum_dify_version: "1.4.0"
 
 privacy: "./PRIVACY.md"
+
+# ── Package & network notes ──────────────────────────────────────────────────
+# Approx .difypkg size: ~3-5 MB (8 reference.docx templates, ~30 KB Python source)
+# ⚠️ Network: On first invocation, pypandoc auto-downloads the Pandoc binary
+# (~50MB compressed, ~150MB extracted) from GitHub Releases. This is a one-time
+# download cached for subsequent calls. In restricted-network environments
+# (air-gapped, firewall, proxy), pre-install pandoc on the runner or ensure
+# outbound access to github.com. See PRIVACY.md and README.md for details.

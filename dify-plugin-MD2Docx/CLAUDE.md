@@ -5,16 +5,17 @@ This plugin lives in the `dify-plugin-MD2Docx/` directory of the [mdocx-converte
 ## Commands
 
 ```bash
-pip install -r requirements.txt                                # install dependencies
+pip install -r requirements.txt                                # install runtime deps
+pip install -r requirements-dev.txt                            # install dev deps (pytest, dify_plugin)
 python -c "import ast; ast.parse(open('src/md2docx.py').read()); print('Syntax OK')"  # syntax check
-python tests/smoke_test.py                                     # run smoke test (needs pandoc)
+pytest tests/ -v                                               # run test suite
 ```
 
 There is no formal test suite — only `tests/smoke_test.py`.
 
 ## Architecture
 
-This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + a single Python file: `src/md2docx.py` (~555 lines).
+This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + a single Python file: `src/md2docx.py` (~703 lines).
 
 ### Conversion pipeline
 
@@ -24,7 +25,7 @@ markdown_content
   ├─ 1. Language detection: sample first 20K chars → count CJK vs Latin → auto/en/zh
   │
   ├─ 2. Template resolution:
-  │     custom_template (uploaded file) > built-in 6 ref.docx (profile × language)
+  │     custom_template (uploaded file) > built-in 8 ref.docx (profile × language)
   │
   ├─ 3. Mermaid preprocessing (if enabled):
   │     regex ```mermaid blocks → Mermaid Ink API → PNG bytes → temp file
@@ -52,7 +53,7 @@ dify-plugin-MD2Docx/
 ├── requirements.txt           # pypandoc, python-docx, requests, lxml
 ├── PRIVACY.md                 # Mermaid Ink API & Pandoc download disclosure
 ├── icon.svg
-├── multi-templates/           # 6 reference.docx (copied from VSC plugin)
+├── multi-templates/           # 8 reference.docx (copied from VSC plugin)
 ├── provider/
 │   └── md2docx.yaml           # Tool Provider declaration
 ├── tools/
@@ -64,7 +65,7 @@ dify-plugin-MD2Docx/
 
 ### Tool parameters (19 total)
 
-**Core (5):** `markdown_content` (req, llm), `title` (opt, llm), `style_profile` (select, form), `reference_language` (select, form), `custom_template` (file, form)
+**Core (5):** `markdown_content` (req, llm), `title` (opt, llm), `style_profile` (select, form; 6 options: academic/thesis/technical/business/government/template), `reference_language` (select, form), `custom_template` (file, form)
 
 **Extended (1):** `mermaid_enabled` (boolean, form, default: true)
 
@@ -75,7 +76,7 @@ dify-plugin-MD2Docx/
 1. Custom uploaded `.docx` (if provided via `custom_template` parameter)
 2. Built-in template from `multi-templates/` selected by `style_profile` × `reference_language`
 
-Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic and `template` profiles share the same academic reference files. Technical and business each have their own English/Chinese pair.
+Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`, and `thesis` profiles share the same academic reference files. Technical, business, and government each have their own English/Chinese pair.
 
 ### Language auto-detection
 
@@ -93,9 +94,11 @@ Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic and `templat
 - Page margins — via `section.top_margin` etc. in python-docx
 
 **Layer 3 — Profile defaults** (`PROFILE_DEFAULTS`): Hardcoded per profile:
-- `academic`: SimSun body 12pt, SimHei headings, 1.5 line spacing
-- `business`: Arial body 11pt, Arial headings, 1.3 line spacing
-- `technical`: Arial body 11pt, Arial headings, 1.25 line spacing, Consolas code
+- `academic`: SimSun body 12pt, SimHei headings 16/14/12pt, 1.5x, margins 25.4mm
+- `thesis`: SimSun body 12pt, SimHei headings 22/16/14pt (GB/T 7713), 1.5x, margins 30mm
+- `business`: Arial body 11pt, Arial headings 18/14/12pt, 1.5x, margins 25.4mm
+- `technical`: Arial body 11pt, Arial headings 16/14/12pt, 1.35x, Consolas code, margins 19mm
+- `government`: FangSong body 16pt, SimHei/KaiTi/FangSong headings 16pt, 1.75x, margins 37/35/28/26mm (GB/T 9704)
 - `template`: no defaults (rely on reference.docx entirely)
 
 ### Key design decisions

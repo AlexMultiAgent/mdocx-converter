@@ -10,6 +10,7 @@ import io
 import shutil
 import tempfile
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Any
 
 import requests
@@ -38,6 +39,10 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "heading3_font": "SimHei",
         "heading3_size_pt": 12,
         "line_spacing": 1.5,
+        "margin_top_mm": 25.4,
+        "margin_bottom_mm": 25.4,
+        "margin_left_mm": 25.4,
+        "margin_right_mm": 25.4,
     },
     "business": {
         "body_font": "Arial",
@@ -48,7 +53,11 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "heading2_size_pt": 14,
         "heading3_font": "Arial",
         "heading3_size_pt": 12,
-        "line_spacing": 1.3,
+        "line_spacing": 1.5,
+        "margin_top_mm": 25.4,
+        "margin_bottom_mm": 25.4,
+        "margin_left_mm": 25.4,
+        "margin_right_mm": 25.4,
     },
     "technical": {
         "body_font": "Arial",
@@ -59,7 +68,11 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "heading2_size_pt": 14,
         "heading3_font": "Arial",
         "heading3_size_pt": 12,
-        "line_spacing": 1.25,
+        "line_spacing": 1.35,
+        "margin_top_mm": 19,
+        "margin_bottom_mm": 19,
+        "margin_left_mm": 19,
+        "margin_right_mm": 19,
     },
     "government": {
         "body_font": "FangSong",
@@ -71,6 +84,25 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "heading3_font": "FangSong",
         "heading3_size_pt": 16,
         "line_spacing": 1.75,
+        "margin_top_mm": 37,
+        "margin_bottom_mm": 35,
+        "margin_left_mm": 28,
+        "margin_right_mm": 26,
+    },
+    "thesis": {
+        "body_font": "SimSun",
+        "body_size_pt": 12,
+        "heading1_font": "SimHei",
+        "heading1_size_pt": 22,
+        "heading2_font": "SimHei",
+        "heading2_size_pt": 16,
+        "heading3_font": "SimHei",
+        "heading3_size_pt": 14,
+        "line_spacing": 1.5,
+        "margin_top_mm": 30,
+        "margin_bottom_mm": 30,
+        "margin_left_mm": 30,
+        "margin_right_mm": 30,
     },
     "template": {},
 }
@@ -89,20 +121,26 @@ PROFILE_METADATA: dict[str, dict[str, str]] = {
         "mainfont": "Arial",
         "CJKmainfont": "Microsoft YaHei",
         "fontsize": "11pt",
-        "linestretch": "1.3",
+        "linestretch": "1.5",
     },
     "technical": {
         "mainfont": "Arial",
         "CJKmainfont": "Microsoft YaHei",
         "monofont": "Consolas",
         "fontsize": "11pt",
-        "linestretch": "1.25",
+        "linestretch": "1.35",
     },
     "government": {
         "mainfont": "Times New Roman",
         "CJKmainfont": "FangSong",
         "fontsize": "16pt",
         "linestretch": "1.75",
+    },
+    "thesis": {
+        "mainfont": "Times New Roman",
+        "CJKmainfont": "SimSun",
+        "fontsize": "12pt",
+        "linestretch": "1.5",
     },
 }
 
@@ -129,9 +167,13 @@ TEMPLATE_MAP: dict[str, dict[str, str]] = {
         "english": "reference_english_government.docx",
         "chinese": "reference_chinese_government.docx",
     },
+    "thesis": {
+        "english": "reference_english_academic.docx",
+        "chinese": "reference_chinese_academic.docx",
+    },
 }
 
-VALID_PROFILES = {"template", "academic", "business", "technical", "government"}
+VALID_PROFILES = {"template", "academic", "business", "technical", "government", "thesis"}
 
 # Style name aliases used by some reference.docx templates
 NORMAL_STYLE_NAMES = ("Normal", "a", "a1", "Text", "BodyText", "Body Text",
@@ -275,31 +317,67 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True) -> tuple[str, i
     temp_dir = tempfile.mkdtemp(prefix="mermaid-")
     errors: list[str] = []
 
-    parts = []
+    # Collect diagram texts and interleaving text segments
+    diagrams: list[tuple[int, str]] = []  # (index, diagram_text)
+    segments: list[tuple[int, int, str]] = []  # (start, end, is_mermaid_block)
     last_end = 0
-    count = 0
-
     for i, match in enumerate(matches, 1):
-        diagram = match.group(1).strip()
-        start = match.start()
+        # Text before this match
+        if match.start() > last_end:
+            segments.append((last_end, match.start(), False))
+        # The mermaid block itself
+        diagrams.append((i, match.group(1).strip()))
+        segments.append((match.start(), match.end(), True))
+        last_end = match.end()
+    # Text after last match
+    if last_end < len(markdown_text):
+        segments.append((last_end, len(markdown_text), False))
 
-        parts.append(markdown_text[last_end:start])
+    # Render all diagrams in parallel
+    results: dict[int, str | None] = {}  # index → png_path or None (failed)
 
+    def _render_one(index: int, diagram: str) -> tuple[int, str | None]:
         try:
             png_bytes = render_mermaid_via_api(diagram)
-            png_path = os.path.join(temp_dir, f"diagram-{i}.png")
+            png_path = os.path.join(temp_dir, f"diagram-{index}.png")
             with open(png_path, "wb") as f:
                 f.write(png_bytes)
-            # Wrap path in angle brackets to handle paths with spaces on Windows
-            parts.append(f"![Mermaid Diagram {i}](<{png_path}>)\n\n")
-            count += 1
+            return index, png_path
         except Exception as e:
-            errors.append(f"Diagram {i}: {e}")
-            parts.append(match.group(0) + "\n\n")
+            errors.append(f"Diagram {index}: {e}")
+            return index, None
 
-        last_end = match.end()
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {
+            executor.submit(_render_one, idx, diagram): idx
+            for idx, diagram in diagrams
+        }
+        for future in as_completed(futures):
+            idx, png_path = future.result()
+            results[idx] = png_path
 
-    parts.append(markdown_text[last_end:])
+    # Assemble output preserving original order
+    parts: list[str] = []
+    count = 0
+    diagram_iter = iter(diagrams)
+    current_diagram = next(diagram_iter, None)
+    diag_idx = 0
+
+    for start, end, is_mermaid in segments:
+        if is_mermaid:
+            if current_diagram is not None:
+                idx = current_diagram[0]
+                original_text = markdown_text[start:end]
+                png_path = results.get(idx)
+                if png_path is not None:
+                    parts.append(f"![Mermaid Diagram {idx}](<{png_path}>)\n\n")
+                    count += 1
+                else:
+                    parts.append(original_text + "\n\n")
+                current_diagram = next(diagram_iter, None)
+        else:
+            parts.append(markdown_text[start:end])
+
     return "".join(parts), count, temp_dir, errors
 
 
@@ -506,11 +584,11 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> No
             except KeyError:
                 pass
 
-    # Page margins
-    margin_top = parse_mm(params.get("margin_top_mm"))
-    margin_bottom = parse_mm(params.get("margin_bottom_mm"))
-    margin_left = parse_mm(params.get("margin_left_mm"))
-    margin_right = parse_mm(params.get("margin_right_mm"))
+    # Page margins: user override > profile default > skip
+    margin_top = parse_mm(params.get("margin_top_mm")) or profile.get("margin_top_mm")
+    margin_bottom = parse_mm(params.get("margin_bottom_mm")) or profile.get("margin_bottom_mm")
+    margin_left = parse_mm(params.get("margin_left_mm")) or profile.get("margin_left_mm")
+    margin_right = parse_mm(params.get("margin_right_mm")) or profile.get("margin_right_mm")
 
     if any([margin_top, margin_bottom, margin_left, margin_right]):
         for section in doc.sections:
@@ -551,24 +629,29 @@ class Md2DocxTool(Tool):
     ) -> Generator[ToolInvokeMessage, None, None]:
         custom_template_path = None
         mermaid_dir = ""
+        stage = "start"
 
         try:
             markdown_content = parameters.get("markdown_content") or ""
             if not markdown_content.strip():
+                yield self.create_json_message({"status": "error", "stage": "validation", "message": "markdown_content is empty"})
                 yield self.create_text_message(
                     "Error: markdown_content is empty. Please provide Markdown text to convert."
                 )
                 return
 
+            stage = "validation"
             title = sanitize_filename(parameters.get("title") or "Document")
             style_profile = normalize_profile(parameters.get("style_profile"))
             language_setting = parameters.get("reference_language", "auto")
             mermaid_enabled = _coerce_bool(parameters.get("mermaid_enabled", True))
 
             # Resolve language
+            stage = "language_detection"
             reference_language = resolve_language(language_setting, markdown_content)
 
             # Resolve template
+            stage = "template_resolution"
             custom_template = parameters.get("custom_template")
             if custom_template:
                 fd, custom_template_path = tempfile.mkstemp(suffix=".docx")
@@ -591,6 +674,7 @@ class Md2DocxTool(Tool):
             )
 
             # Mermaid preprocessing
+            stage = "mermaid_preprocessing"
             processed_md, mermaid_count, mermaid_dir, mermaid_errors = preprocess_mermaid(
                 markdown_content, enabled=mermaid_enabled
             )
@@ -604,12 +688,14 @@ class Md2DocxTool(Tool):
             )
 
             # Convert via pandoc
+            stage = "pandoc_conversion"
             source_dir = os.path.dirname(reference_docx)
             docx_io = convert_via_pandoc(
                 processed_md, reference_docx, source_dir, mermaid_dir, metadata
             )
 
             # Apply style overrides
+            stage = "style_overrides"
             doc = Document(docx_io)
             apply_style_overrides(doc, style_profile, parameters)
 
@@ -634,6 +720,9 @@ class Md2DocxTool(Tool):
                 )
 
             yield self.create_text_message("\n".join(summary_parts))
+            if mermaid_errors:
+                yield self.create_json_message({"warning": mermaid_errors})
+            yield self.create_json_message({"status": "success", "stage": "complete", "file": f"{title}.docx", "size_kb": round(size_kb, 1)})
             yield self.create_blob_message(
                 blob=docx_bytes,
                 meta={
@@ -643,8 +732,9 @@ class Md2DocxTool(Tool):
             )
 
         except Exception as e:
+            yield self.create_json_message({"status": "error", "stage": stage, "message": str(e)})
             yield self.create_text_message(
-                f"md2docx conversion failed: {e}"
+                f"md2docx conversion failed at stage '{stage}': {e}"
             )
 
         finally:
