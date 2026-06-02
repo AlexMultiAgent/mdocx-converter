@@ -11,11 +11,11 @@ python -c "import ast; ast.parse(open('src/md2docx.py').read()); print('Syntax O
 pytest tests/ -v                                               # run test suite
 ```
 
-There is no formal test suite — only `tests/smoke_test.py`.
+Tests live in `tests/`: `smoke_test.py` (pure functions), `test_invoke.py` (Dify Tool entry with mocked deps), `test_docx_output.py` (end-to-end pandoc conversion). `conftest.py` auto-skips when `dify_plugin` is missing.
 
 ## Architecture
 
-This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + a single Python file: `src/md2docx.py` (~703 lines).
+This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + a single Python file: `src/md2docx.py` (~744 lines).
 
 ### Conversion pipeline
 
@@ -28,7 +28,7 @@ markdown_content
   │     custom_template (uploaded file) > built-in 8 ref.docx (profile × language)
   │
   ├─ 3. Mermaid preprocessing (if enabled):
-  │     regex ```mermaid blocks → Mermaid Ink API → PNG bytes → temp file
+  │     regex ```mermaid blocks → Mermaid Ink API (parallel, 4 workers) → PNG bytes → temp file
   │     Replace blocks with ![diagram](temp.png) in markdown
   │     Falls back to preserving original code block if API fails
   │
@@ -39,7 +39,7 @@ markdown_content
   ├─ 5. DOCX style overrides:
   │     python-docx opens generated .docx
   │     Modify Normal, Heading1-3 styles (font, size, line spacing) via lxml
-  │     Technical profile: SourceCode + VerbatimChar (Consolas 10pt, color #1F2937)
+  │     Technical profile: SourceCode + VerbatimChar (Consolas 10pt, color #000000, shading #F3F4F6)
   │     Page margins via section properties
   │
   └─ 6. Return: text_message + blob_message(docx_bytes)
@@ -53,7 +53,7 @@ dify-plugin-MD2Docx/
 ├── requirements.txt           # pypandoc, python-docx, requests, lxml
 ├── PRIVACY.md                 # Mermaid Ink API & Pandoc download disclosure
 ├── icon.svg
-├── multi-templates/           # 8 reference.docx (copied from VSC plugin)
+├── multi-templates/           # 8 reference.docx (6 shared with VSC plugin + 2 government-only)
 ├── provider/
 │   └── md2docx.yaml           # Tool Provider declaration
 ├── tools/

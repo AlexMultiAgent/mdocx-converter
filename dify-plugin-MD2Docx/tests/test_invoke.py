@@ -217,6 +217,17 @@ class TestMd2DocxToolInvoke:
         assert len(warning_jsons) == 1
         assert "Connection timeout" in str(warning_jsons[0].data["warning"])
 
+    def test_thesis_profile(self):
+        """thesis profile should produce a blob."""
+        tool = self._make_tool()
+        messages = list(tool._invoke({
+            "markdown_content": "# 摘要\n\n本文...",
+            "style_profile": "thesis",
+        }))
+
+        blob_msgs = [m for m in messages if m.type == "blob"]
+        assert len(blob_msgs) == 1
+
     def test_success_yields_structured_json(self):
         """Successful conversion should yield success json with file info."""
         tool = self._make_tool()

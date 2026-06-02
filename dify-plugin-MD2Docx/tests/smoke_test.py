@@ -38,6 +38,7 @@ class TestLanguageDetection:
 class TestNormalizeProfile:
     def test_valid_profiles(self):
         assert normalize_profile("academic") == "academic"
+        assert normalize_profile("thesis") == "thesis"
         assert normalize_profile("technical") == "technical"
         assert normalize_profile("business") == "business"
         assert normalize_profile("government") == "government"
@@ -63,7 +64,7 @@ class TestTemplateResolution:
 
     def test_all_profiles_have_templates(self):
         plugin_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        for profile in ["academic", "technical", "business", "government", "template"]:
+        for profile in ["academic", "thesis", "technical", "business", "government", "template"]:
             for lang in ["english", "chinese"]:
                 path = resolve_template(profile, lang, None, plugin_root)
                 assert os.path.exists(path), f"Missing: profile={profile}, lang={lang}"

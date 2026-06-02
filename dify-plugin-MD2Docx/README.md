@@ -28,7 +28,7 @@ dify-plugin package .
 
 | Profile | Body Font | Body Size | Headings | Line Spacing | Margins (mm) | 适用标准 |
 |---------|-----------|-----------|----------|-------------|-------------|---------|
-| **academic** | SimSun | 12pt | SimHei 16/14/12pt | 1.5 | 25.4 | CSSCI 期刊通用 |
+| **academic** | SimSun | 12pt | SimHei 16/14/12pt | 1.5 | 25.4 | 学术写作 / CSSCI 期刊（学位论文请用 `thesis`） |
 | **thesis** | SimSun | 12pt | SimHei 22/16/14pt | 1.5 | 30 | GB/T 7713 学位论文 |
 | **technical** | Arial | 11pt | Arial 16/14/12pt | 1.35 | 19 | 技术博客 / API 文档 |
 | **business** | Arial | 11pt | Arial 18/14/12pt | 1.5 | 25.4 | 商务报告 / 内部备忘录 |
@@ -39,7 +39,7 @@ All profile defaults can be overridden per invocation via the Advanced parameter
 
 ### 如何选择 style profile？
 
-- **投稿到 IEEE/ACM/Springer** → 暂不支持直接投稿，请使用官方模板上传为 `custom_template`
+- **投稿到 IEEE/ACM/Springer** → 请下载官方 `.dotx` 模板，通过 `custom_template` 参数上传
 - **国内学位论文（GB/T 7713）** → `thesis` profile（H1 二号 22pt、四周 30mm）
 - **国内 CSSCI 期刊投稿** → `academic` profile 默认值即可
 - **政府公文（GB/T 9704）** → `government` profile
@@ -104,7 +104,7 @@ Once downloaded, pandoc is cached and no further network access is needed for pa
 
 ## Dify `.env` Configuration
 
-For self-hosted Dify deployments, configure the pip mirror source in `docker/.env` to match your region. This plugin's Python dependencies (~5 packages) are installed at plugin init time and benefit from a nearby mirror.
+For self-hosted Dify deployments, configure the pip mirror source in `docker/.env` to match your region. This plugin's Python dependencies (~4 packages) are installed at plugin init time and benefit from a nearby mirror.
 
 ### `PIP_MIRROR_URL`
 
@@ -155,8 +155,8 @@ See [PRIVACY.md](./PRIVACY.md) for full details.
 
 ```bash
 pip install -r requirements.txt
-python -c "import ast; ast.parse(open('src/md2docx.py').read()); print('Syntax OK')"
-python tests/smoke_test.py
+pip install -r requirements-dev.txt
+pytest tests/ -v
 ```
 
 Part of the [mdocx-converter](https://github.com/AlexMultiAgent/mdocx-converter) monorepo.
