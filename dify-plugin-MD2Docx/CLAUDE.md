@@ -53,7 +53,7 @@ dify-plugin-MD2Docx/
 ├── requirements.txt           # pypandoc, python-docx, requests, lxml
 ├── PRIVACY.md                 # Mermaid Ink API & Pandoc download disclosure
 ├── icon.svg
-├── multi-templates/           # 8 reference.docx (6 shared with VSC plugin + 2 government-only)
+├── multi-templates/           # 8 reference.docx (6 shared with VSC plugin + 2 official-only)
 ├── provider/
 │   └── md2docx.yaml           # Tool Provider declaration
 ├── tools/
@@ -65,7 +65,7 @@ dify-plugin-MD2Docx/
 
 ### Tool parameters (19 total)
 
-**Core (5):** `markdown_content` (req, llm), `title` (opt, llm), `style_profile` (select, form; 6 options: academic/thesis/technical/business/government/template), `reference_language` (select, form), `custom_template` (file, form)
+**Core (5):** `markdown_content` (req, llm), `title` (opt, llm), `style_profile` (select, form; 6 options: academic/thesis/technical/business/official/template), `reference_language` (select, form), `custom_template` (file, form)
 
 **Extended (1):** `mermaid_enabled` (boolean, form, default: true)
 
@@ -76,7 +76,7 @@ dify-plugin-MD2Docx/
 1. Custom uploaded `.docx` (if provided via `custom_template` parameter)
 2. Built-in template from `multi-templates/` selected by `style_profile` × `reference_language`
 
-Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`, and `thesis` profiles share the same academic reference files. Technical, business, and government each have their own English/Chinese pair.
+Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`, and `thesis` profiles share the same academic reference files. Technical, business, and official each have their own English/Chinese pair.
 
 ### Language auto-detection
 
@@ -98,7 +98,7 @@ Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`,
 - `thesis`: SimSun body 12pt, SimHei headings 22/16/14pt (GB/T 7713), 1.5x, margins 30mm
 - `business`: Arial body 11pt, Arial headings 18/14/12pt, 1.5x, margins 25.4mm
 - `technical`: Arial body 11pt, Arial headings 16/14/12pt, 1.35x, Consolas code, margins 19mm
-- `government`: FangSong body 16pt, SimHei/KaiTi/FangSong headings 16pt, 1.75x, margins 37/35/28/26mm (GB/T 9704)
+- `official`: FangSong body 16pt, SimHei/KaiTi/FangSong headings 16pt, 1.75x, margins 37/35/28/26mm (GB/T 9704)
 - `template`: no defaults (rely on reference.docx entirely)
 
 ### Key design decisions

@@ -41,7 +41,7 @@ class TestNormalizeProfile:
         assert normalize_profile("thesis") == "thesis"
         assert normalize_profile("technical") == "technical"
         assert normalize_profile("business") == "business"
-        assert normalize_profile("government") == "government"
+        assert normalize_profile("official") == "official"
         assert normalize_profile("template") == "template"
 
     def test_none_falls_back_to_template(self):
@@ -64,7 +64,7 @@ class TestTemplateResolution:
 
     def test_all_profiles_have_templates(self):
         plugin_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        for profile in ["academic", "thesis", "technical", "business", "government", "template"]:
+        for profile in ["academic", "thesis", "technical", "business", "official", "template"]:
             for lang in ["english", "chinese"]:
                 path = resolve_template(profile, lang, None, plugin_root)
                 assert os.path.exists(path), f"Missing: profile={profile}, lang={lang}"

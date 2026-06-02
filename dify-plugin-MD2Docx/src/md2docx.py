@@ -74,7 +74,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "margin_left_mm": 19,
         "margin_right_mm": 19,
     },
-    "government": {
+    "official": {
         "body_font": "FangSong",
         "body_size_pt": 16,
         "heading1_font": "SimHei",
@@ -130,7 +130,7 @@ PROFILE_METADATA: dict[str, dict[str, str]] = {
         "fontsize": "11pt",
         "linestretch": "1.35",
     },
-    "government": {
+    "official": {
         "mainfont": "Times New Roman",
         "CJKmainfont": "FangSong",
         "fontsize": "16pt",
@@ -163,9 +163,9 @@ TEMPLATE_MAP: dict[str, dict[str, str]] = {
         "english": "reference_english_business.docx",
         "chinese": "reference_chinese_business.docx",
     },
-    "government": {
-        "english": "reference_english_government.docx",
-        "chinese": "reference_chinese_government.docx",
+    "official": {
+        "english": "reference_english_official.docx",
+        "chinese": "reference_chinese_official.docx",
     },
     "thesis": {
         "english": "reference_english_academic.docx",
@@ -173,7 +173,7 @@ TEMPLATE_MAP: dict[str, dict[str, str]] = {
     },
 }
 
-VALID_PROFILES = {"template", "academic", "business", "technical", "government", "thesis"}
+VALID_PROFILES = {"template", "academic", "business", "technical", "official", "thesis"}
 
 # Style name aliases used by some reference.docx templates
 NORMAL_STYLE_NAMES = ("Normal", "a", "a1", "Text", "BodyText", "Body Text",

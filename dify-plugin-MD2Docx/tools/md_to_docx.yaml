@@ -53,7 +53,7 @@ parameters:
         label:
           en_US: "Business Report"
           zh_Hans: "商业报告"
-      - value: "government"
+      - value: "official"
         label:
           en_US: "Official"
           zh_Hans: "公务公文"

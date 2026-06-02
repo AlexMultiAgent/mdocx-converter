@@ -32,7 +32,7 @@ dify-plugin package .
 | **thesis** | SimSun | 12pt | SimHei 22/16/14pt | 1.5 | 30 | GB/T 7713 学位论文 |
 | **technical** | Arial | 11pt | Arial 16/14/12pt | 1.35 | 19 | 技术博客 / API 文档 |
 | **business** | Arial | 11pt | Arial 18/14/12pt | 1.5 | 25.4 | 商务报告 / 内部备忘录 |
-| **government** | FangSong | 16pt | SimHei (H1) / KaiTi (H2) / FangSong (H3) 16pt | 1.75 | 37/35/28/26 | GB/T 9704-2012 |
+| **official** | FangSong | 16pt | SimHei (H1) / KaiTi (H2) / FangSong (H3) 16pt | 1.75 | 37/35/28/26 | GB/T 9704-2012 |
 | **template** | (from reference docx) | — | — | — | — | 完全自定义 |
 
 All profile defaults can be overridden per invocation via the Advanced parameters.
@@ -42,7 +42,7 @@ All profile defaults can be overridden per invocation via the Advanced parameter
 - **投稿到 IEEE/ACM/Springer** → 请下载官方 `.dotx` 模板，通过 `custom_template` 参数上传
 - **国内学位论文（GB/T 7713）** → `thesis` profile（H1 二号 22pt、四周 30mm）
 - **国内 CSSCI 期刊投稿** → `academic` profile 默认值即可
-- **政府公文（GB/T 9704）** → `government` profile
+- **政府公文（GB/T 9704）** → `official` profile
 - **现代商务文档 / PPT 风格报告** → `business` profile
 - **技术博客 / 现代 API 文档** → `technical` profile
 - **完全自定义** → `template` profile + 上传 `custom_template`
@@ -55,7 +55,7 @@ All profile defaults can be overridden per invocation via the Advanced parameter
 |---|-----------|------|----------|---------|-------------|
 | 1 | `markdown_content` | string | ✅ | — | Markdown text to convert (GFM, tables, images, Mermaid) |
 | 2 | `title` | string | — | `"Document"` | Output filename (without `.docx`) |
-| 3 | `style_profile` | select | — | `"academic"` | One of: `academic`, `thesis`, `technical`, `business`, `government`, `template` |
+| 3 | `style_profile` | select | — | `"academic"` | One of: `academic`, `thesis`, `technical`, `business`, `official`, `template` |
 | 4 | `reference_language` | select | — | `"auto"` | Template language: `auto`, `english`, `chinese` |
 | 5 | `custom_template` | file | — | — | Upload a custom `reference.docx` to override built-in template |
 
