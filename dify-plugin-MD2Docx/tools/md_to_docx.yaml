@@ -275,4 +275,4 @@ parameters:
 
 extra:
   python:
-    source: tools/md_to_docx.py
+    source: src/md2docx.py
