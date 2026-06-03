@@ -47,7 +47,7 @@ meta:
 privacy: "./PRIVACY.md"
 
 # ── Package & network notes ──────────────────────────────────────────────────
-# Approx .difypkg size: ~3-5 MB (8 reference.docx templates, ~30 KB Python source)
+# Approx .difypkg size: ~230 KB (8 reference.docx templates, ~30 KB Python source)
 # ⚠️ Network: On first invocation, pypandoc auto-downloads the Pandoc binary
 # (~50MB compressed, ~150MB extracted) from GitHub Releases. This is a one-time
 # download cached for subsequent calls. In restricted-network environments
