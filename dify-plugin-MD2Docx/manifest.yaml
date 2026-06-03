@@ -18,7 +18,7 @@ description:
     支持学术论文、技术文档、商业报告、公务公文、学位论文五种样式预设，
     Mermaid 图表渲染，以及字体/页边距/行距的精细控制。
 
-icon: "icon.svg"
+icon: "_assets/icon.svg"
 
 resource:
   memory: 536870912
