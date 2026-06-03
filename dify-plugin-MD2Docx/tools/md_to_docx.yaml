@@ -272,3 +272,7 @@ parameters:
       zh_Hans: "覆盖三级标题字号。设 0 使用预设默认值。"
     default: 0
     form: form
+
+extra:
+  python:
+    source: tools/md_to_docx.py
