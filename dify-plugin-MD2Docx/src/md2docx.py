@@ -11,8 +11,13 @@ import shutil
 import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, Any
+from typing import Optional, Any, Generator
 
+# ── Dify SDK (must import first — triggers gevent monkey-patch) ──
+from dify_plugin import Tool
+from dify_plugin.entities.tool import ToolInvokeMessage
+
+# ── Third-party imports (safe now — gevent has patched stdlib) ──
 import requests
 import pypandoc
 from docx import Document
@@ -603,10 +608,6 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> No
 
 
 # ── Dify Tool entry point ────────────────────────────────────
-
-from typing import Generator
-from dify_plugin import Tool
-from dify_plugin.entities.tool import ToolInvokeMessage
 
 # Characters that can appear in "falsy" string representations
 _FALSY_STRINGS = frozenset({"false", "0", "no", "off", "disabled", "n", ""})
