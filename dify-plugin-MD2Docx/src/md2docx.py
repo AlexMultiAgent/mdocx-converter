@@ -19,12 +19,6 @@ from typing import Optional, Any, Generator
 from dify_plugin import Tool
 from dify_plugin.entities.tool import ToolInvokeMessage
 
-# ── Bundled pandoc binary (skip GitHub download in restricted networks) ──
-_PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_PANDOC_BIN = os.path.join(_PLUGIN_ROOT, "_assets", "bin", "pandoc")
-if os.path.isfile(_PANDOC_BIN):
-    os.environ["PYPANDOC_PANDOC"] = _PANDOC_BIN
-
 # ── Third-party imports (safe now — gevent has patched stdlib) ──
 import requests
 import pypandoc
@@ -447,10 +441,15 @@ _pandoc_lock = threading.Lock()
 
 
 def _ensure_pandoc() -> None:
-    """Check for pandoc availability. Uses bundled binary if present, falls
-    back to pypandoc auto-download (requires GitHub access, ~50 MB).
-    """
-    pypandoc.get_pandoc_version()
+    """Check for pandoc; download on first use via pypandoc (thread-safe)."""
+    try:
+        pypandoc.get_pandoc_version()
+    except OSError:
+        with _pandoc_lock:
+            try:
+                pypandoc.get_pandoc_version()
+            except OSError:
+                pypandoc.download_pandoc()
 
 
 def build_pandoc_metadata(

@@ -3,4 +3,3 @@ __pycache__/
 *.difypkg
 .env
 .pytest_cache/
-_assets/bin/pandoc
