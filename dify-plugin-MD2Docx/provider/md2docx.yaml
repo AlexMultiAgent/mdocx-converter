@@ -20,4 +20,4 @@ tools:
 
 extra:
   python:
-    source: "src/md2docx.py"
+    source: "provider/md2docx.py"
