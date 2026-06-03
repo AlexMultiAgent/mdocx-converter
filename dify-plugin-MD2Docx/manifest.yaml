@@ -42,7 +42,7 @@ meta:
     language: "python"
     version: "3.12"
     entrypoint: "src.md2docx"
-  minimum_dify_version: "1.4.0"
+  minimum_dify_version: "1.9.0"
 
 privacy: "./PRIVACY.md"
 
