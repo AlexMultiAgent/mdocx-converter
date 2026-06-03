@@ -210,6 +210,9 @@ parameters:
     label:
       en_US: "Heading 1 Font"
       zh_Hans: "一级标题字体"
+    human_description:
+      en_US: "Override heading 1 font. Leave empty to use profile default."
+      zh_Hans: "覆盖一级标题字体。留空使用预设默认值。"
     form: form
 
   - name: heading1_size_pt
@@ -218,6 +221,9 @@ parameters:
     label:
       en_US: "Heading 1 Size (pt)"
       zh_Hans: "一级标题字号 (pt)"
+    human_description:
+      en_US: "Override heading 1 font size in points. Set 0 to use profile default."
+      zh_Hans: "覆盖一级标题字号。设 0 使用预设默认值。"
     default: 0
     form: form
 
@@ -227,6 +233,9 @@ parameters:
     label:
       en_US: "Heading 2 Font"
       zh_Hans: "二级标题字体"
+    human_description:
+      en_US: "Override heading 2 font. Leave empty to use profile default."
+      zh_Hans: "覆盖二级标题字体。留空使用预设默认值。"
     form: form
 
   - name: heading2_size_pt
@@ -235,6 +244,9 @@ parameters:
     label:
       en_US: "Heading 2 Size (pt)"
       zh_Hans: "二级标题字号 (pt)"
+    human_description:
+      en_US: "Override heading 2 font size in points. Set 0 to use profile default."
+      zh_Hans: "覆盖二级标题字号。设 0 使用预设默认值。"
     default: 0
     form: form
 
@@ -244,6 +256,9 @@ parameters:
     label:
       en_US: "Heading 3 Font"
       zh_Hans: "三级标题字体"
+    human_description:
+      en_US: "Override heading 3 font. Leave empty to use profile default."
+      zh_Hans: "覆盖三级标题字体。留空使用预设默认值。"
     form: form
 
   - name: heading3_size_pt
@@ -252,5 +267,8 @@ parameters:
     label:
       en_US: "Heading 3 Size (pt)"
       zh_Hans: "三级标题字号 (pt)"
+    human_description:
+      en_US: "Override heading 3 font size in points. Set 0 to use profile default."
+      zh_Hans: "覆盖三级标题字号。设 0 使用预设默认值。"
     default: 0
     form: form
