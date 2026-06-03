@@ -10,7 +10,6 @@ identity:
   description:
     en_US: "Convert Markdown to polished DOCX with templates, Mermaid, and style presets."
     zh_Hans: "将 Markdown 转换为精美 DOCX，支持模板、Mermaid 和样式预设。"
-  icon: "icon.svg"
   tags:
     - "markdown"
     - "docx"
