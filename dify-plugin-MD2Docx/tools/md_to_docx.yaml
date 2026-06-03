@@ -9,7 +9,10 @@ description:
   human:
     en_US: "Convert Markdown text to a Microsoft Word DOCX document with style presets, templates, and Mermaid rendering."
     zh_Hans: "将 Markdown 文本转换为 Word DOCX 文档，支持样式预设、模板和 Mermaid 渲染。"
-  llm: "call this tool to convert markdown text to a docx word document with formatting"
+  llm: >
+    Convert Markdown text to a formatted Microsoft Word DOCX document. Supports style profiles (academic/thesis/technical/business/official/template),
+    automatic Chinese/English language detection, Mermaid diagram rendering to images, and fine-grained control over fonts, sizes, spacing, and margins.
+    Use when the user requests a Word document export from Markdown content.
 
 parameters:
   - name: markdown_content

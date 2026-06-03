@@ -25,6 +25,14 @@ resource:
   permission:
     tool:
       enabled: true
+    model:
+      enabled: false
+    node:
+      enabled: false
+    endpoint:
+      enabled: false
+    app:
+      enabled: false
     storage:
       enabled: true
       size: 104857600

@@ -4,6 +4,7 @@
 identity:
   author: "alexmultiagent"
   name: "md2docx"
+  icon: "icon.svg"
   label:
     en_US: "md2docx - Markdown to Word"
     zh_Hans: "md2docx - Markdown 转 Word"
