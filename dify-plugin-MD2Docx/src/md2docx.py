@@ -743,3 +743,12 @@ class Md2DocxTool(Tool):
                 os.unlink(custom_template_path)
             if mermaid_dir and os.path.isdir(mermaid_dir):
                 shutil.rmtree(mermaid_dir, ignore_errors=True)
+
+
+# ── Plugin runner ───────────────────────────────────────────────
+
+from dify_plugin import Plugin, DifyPluginEnv
+
+if __name__ == "__main__":
+    plugin = Plugin(DifyPluginEnv(MAX_REQUEST_TIMEOUT=120))
+    plugin.run()
