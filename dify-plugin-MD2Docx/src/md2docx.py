@@ -441,15 +441,25 @@ _pandoc_lock = threading.Lock()
 
 
 def _ensure_pandoc() -> None:
-    """Check for pandoc; download on first use via pypandoc (thread-safe)."""
+    """Check for pandoc. With pypandoc-binary the binary is pre-installed."""
+    pypandoc.get_pandoc_version()
+
+
+def _warmup_pandoc() -> None:
+    """Warm up pandoc by converting a trivial Markdown string.
+    This pre-loads the pandoc binary into memory, speeding up the first real
+    conversion. Only runs when loaded in the Dify plugin environment.
+    """
     try:
-        pypandoc.get_pandoc_version()
-    except OSError:
-        with _pandoc_lock:
-            try:
-                pypandoc.get_pandoc_version()
-            except OSError:
-                pypandoc.download_pandoc()
+        pypandoc.convert_text("# Warmup", "docx", format="markdown")
+    except Exception:
+        pass  # Best-effort; failures here are not fatal
+
+
+# Warm pandoc on import when running inside the Dify plugin daemon.
+# The daemon sets this env var to '1' before loading plugin code.
+if os.environ.get("LOAD_FROM_DIFY_PLUGIN") == "1":
+    _warmup_pandoc()
 
 
 def build_pandoc_metadata(
