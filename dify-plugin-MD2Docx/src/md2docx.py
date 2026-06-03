@@ -7,15 +7,23 @@ Ported from mdocx-converter VS Code extension.
 import os
 import re
 import io
+import time
 import shutil
 import tempfile
+import zipfile
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from typing import Optional, Any, Generator
 
 # ── Dify SDK (must import first — triggers gevent monkey-patch) ──
 from dify_plugin import Tool
 from dify_plugin.entities.tool import ToolInvokeMessage
+
+# ── Bundled pandoc binary (skip GitHub download in restricted networks) ──
+_PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PANDOC_BIN = os.path.join(_PLUGIN_ROOT, "_assets", "bin", "pandoc")
+if os.path.isfile(_PANDOC_BIN):
+    os.environ["PYPANDOC_PANDOC"] = _PANDOC_BIN
 
 # ── Third-party imports (safe now — gevent has patched stdlib) ──
 import requests
@@ -25,10 +33,26 @@ from docx.shared import Cm
 from docx.oxml.ns import qn
 from lxml import etree
 
+# ── Tunables ────────────────────────────────────────────────
+
+# Maximum size of markdown_content (UTF-8 bytes). Larger inputs are rejected
+# with a structured error to prevent OOM in the Dify plugin sandbox.
+MAX_MARKDOWN_BYTES = 5 * 1024 * 1024  # 5 MB
+
+# Total wall-clock budget for Mermaid rendering across all diagrams. Diagrams
+# still running after this are cancelled and reported as timed-out.
+MERMAID_TOTAL_BUDGET_SECONDS = 120
+
+# Per-attempt timeout for a single Mermaid Ink request.
+MERMAID_REQUEST_TIMEOUT_SECONDS = 30
+
+# Number of retry attempts for a single Mermaid Ink request (1 initial + N retries).
+MERMAID_MAX_ATTEMPTS = 3
+
 # ── Regex ───────────────────────────────────────────────────
 
 MERMAID_BLOCK_RE = re.compile(r"```mermaid[^\n]*\r?\n([\s\S]*?)```", re.IGNORECASE)
-CJK_CHAR_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
+CJK_CHAR_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 LATIN_CHAR_RE = re.compile(r"[A-Za-z]")
 
 # ── Profile defaults (ported from getProfileDocxDefaults) ───
@@ -292,18 +316,48 @@ def sanitize_filename(name: str) -> str:
 # ── Mermaid preprocessing ────────────────────────────────────
 
 MERMAID_INK_URL = "https://mermaid.ink/img"
+PLUGIN_USER_AGENT = "md2docx-dify-plugin/0.0.1 (+https://github.com/AlexMultiAgent/mdocx-converter)"
 
 
 def render_mermaid_via_api(diagram: str) -> bytes:
-    """Render a Mermaid diagram via the Mermaid Ink API. Returns PNG bytes."""
+    """Render a Mermaid diagram via the Mermaid Ink API. Returns PNG bytes.
+
+    Raises requests.RequestException on HTTP / network errors.
+    """
     resp = requests.post(
         MERMAID_INK_URL,
         json={"code": diagram},
-        headers={"Content-Type": "application/json"},
-        timeout=30,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": PLUGIN_USER_AGENT,
+        },
+        timeout=MERMAID_REQUEST_TIMEOUT_SECONDS,
     )
     resp.raise_for_status()
     return resp.content
+
+
+def _render_one_with_retry(index: int, diagram: str, temp_dir: str,
+                            errors: list[str]) -> tuple[int, str | None]:
+    """Render one Mermaid diagram with exponential-backoff retries.
+
+    On final failure, records the error in `errors` and returns (index, None).
+    """
+    last_err: Exception | None = None
+    for attempt in range(MERMAID_MAX_ATTEMPTS):
+        try:
+            png_bytes = render_mermaid_via_api(diagram)
+            png_path = os.path.join(temp_dir, f"diagram-{index}.png")
+            with open(png_path, "wb") as f:
+                f.write(png_bytes)
+            return index, png_path
+        except Exception as e:  # requests.RequestException, OSError, etc.
+            last_err = e
+            if attempt < MERMAID_MAX_ATTEMPTS - 1:
+                # 1s, 2s, 4s, ...
+                time.sleep(1 * (2 ** attempt))
+    errors.append(f"Diagram {index}: {last_err}")
+    return index, None
 
 
 def preprocess_mermaid(markdown_text: str, enabled: bool = True) -> tuple[str, int, str, list[str]]:
@@ -311,6 +365,9 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True) -> tuple[str, i
 
     Returns (processed_markdown, mermaid_count, temp_dir, errors).
     Caller must clean up temp_dir via shutil.rmtree after pandoc conversion.
+
+    Total wall-clock time is bounded by MERMAID_TOTAL_BUDGET_SECONDS. Diagrams
+    still running after the budget are cancelled and reported as failed.
     """
     if not enabled:
         return markdown_text, 0, "", []
@@ -322,64 +379,62 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True) -> tuple[str, i
     temp_dir = tempfile.mkdtemp(prefix="mermaid-")
     errors: list[str] = []
 
-    # Collect diagram texts and interleaving text segments
-    diagrams: list[tuple[int, str]] = []  # (index, diagram_text)
-    segments: list[tuple[int, int, str]] = []  # (start, end, is_mermaid_block)
+    # Build segments interleaving non-mermaid text with mermaid-block markers.
+    # The diagram index in the 4th slot is 0 for non-mermaid segments.
+    segments: list[tuple[int, int, bool, int]] = []
     last_end = 0
     for i, match in enumerate(matches, 1):
-        # Text before this match
         if match.start() > last_end:
-            segments.append((last_end, match.start(), False))
-        # The mermaid block itself
-        diagrams.append((i, match.group(1).strip()))
-        segments.append((match.start(), match.end(), True))
+            segments.append((last_end, match.start(), False, 0))
+        segments.append((match.start(), match.end(), True, i))
         last_end = match.end()
-    # Text after last match
     if last_end < len(markdown_text):
-        segments.append((last_end, len(markdown_text), False))
+        segments.append((last_end, len(markdown_text), False, 0))
 
-    # Render all diagrams in parallel
-    results: dict[int, str | None] = {}  # index → png_path or None (failed)
-
-    def _render_one(index: int, diagram: str) -> tuple[int, str | None]:
-        try:
-            png_bytes = render_mermaid_via_api(diagram)
-            png_path = os.path.join(temp_dir, f"diagram-{index}.png")
-            with open(png_path, "wb") as f:
-                f.write(png_bytes)
-            return index, png_path
-        except Exception as e:
-            errors.append(f"Diagram {index}: {e}")
-            return index, None
+    # Render all diagrams in parallel with retry + total budget
+    results: dict[int, str | None] = {}
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {
-            executor.submit(_render_one, idx, diagram): idx
-            for idx, diagram in diagrams
+            executor.submit(
+                _render_one_with_retry, idx, match.group(1).strip(), temp_dir, errors
+            ): idx
+            for idx, match in enumerate(matches, 1)
         }
-        for future in as_completed(futures):
-            idx, png_path = future.result()
-            results[idx] = png_path
+        try:
+            for future in as_completed(futures, timeout=MERMAID_TOTAL_BUDGET_SECONDS):
+                idx = futures[future]
+                try:
+                    _, png_path = future.result()
+                except Exception as e:
+                    errors.append(f"Diagram {idx}: {e}")
+                    png_path = None
+                results[idx] = png_path
+        except FuturesTimeoutError:
+            pass
+
+        # Cancel and report any stragglers that did not complete in time
+        for future, idx in list(futures.items()):
+            if not future.done():
+                future.cancel()
+                if idx not in results:
+                    errors.append(
+                        f"Diagram {idx}: timed out after {MERMAID_TOTAL_BUDGET_SECONDS}s total budget"
+                    )
+                    results[idx] = None
 
     # Assemble output preserving original order
     parts: list[str] = []
     count = 0
-    diagram_iter = iter(diagrams)
-    current_diagram = next(diagram_iter, None)
-    diag_idx = 0
-
-    for start, end, is_mermaid in segments:
+    for start, end, is_mermaid, idx in segments:
         if is_mermaid:
-            if current_diagram is not None:
-                idx = current_diagram[0]
-                original_text = markdown_text[start:end]
-                png_path = results.get(idx)
-                if png_path is not None:
-                    parts.append(f"![Mermaid Diagram {idx}](<{png_path}>)\n\n")
-                    count += 1
-                else:
-                    parts.append(original_text + "\n\n")
-                current_diagram = next(diagram_iter, None)
+            original_text = markdown_text[start:end]
+            png_path = results.get(idx)
+            if png_path is not None:
+                parts.append(f"![Mermaid Diagram {idx}](<{png_path}>)\n\n")
+                count += 1
+            else:
+                parts.append(original_text + "\n\n")
         else:
             parts.append(markdown_text[start:end])
 
@@ -392,16 +447,10 @@ _pandoc_lock = threading.Lock()
 
 
 def _ensure_pandoc() -> None:
-    """Check for pandoc; download on first use via pypandoc (thread-safe)."""
-    try:
-        pypandoc.get_pandoc_version()
-    except OSError:
-        with _pandoc_lock:
-            # Double-check inside lock — another thread may have finished downloading
-            try:
-                pypandoc.get_pandoc_version()
-            except OSError:
-                pypandoc.download_pandoc()
+    """Check for pandoc availability. Uses bundled binary if present, falls
+    back to pypandoc auto-download (requires GitHub access, ~50 MB).
+    """
+    pypandoc.get_pandoc_version()
 
 
 def build_pandoc_metadata(
@@ -429,7 +478,14 @@ def _map_pandoc_error(message: str) -> str:
     msg_lower = message.lower()
     if any(kw in msg_lower for kw in ("permission denied", "access is denied", "eperm", "eacces")):
         return "Pandoc could not write the output file. Close the target DOCX in Word and try again."
-    if any(kw in msg_lower for kw in ("cannot decode image", "image", "could not fetch resource", "not found")):
+    # Image-related errors: use specific phrases (not bare "image") to avoid
+    # false positives on other pandoc messages that mention "image format" etc.
+    if any(kw in msg_lower for kw in (
+        "cannot decode image",
+        "could not fetch resource",
+        "could not find image",
+        "image not found",
+    )):
         return "Pandoc could not resolve one or more images. Check that all image paths in the Markdown are valid and accessible."
     if any(kw in msg_lower for kw in ("unknown reader", "unknown extension", "mermaid")):
         return "Pandoc encountered syntax it could not handle. Check for unsupported Markdown constructs or malformed Mermaid blocks."
@@ -445,7 +501,12 @@ def convert_via_pandoc(
     mermaid_dir: str,
     metadata: dict[str, str],
 ) -> io.BytesIO:
-    """Run pandoc to convert markdown to DOCX. Returns BytesIO of the docx content."""
+    """Run pandoc to convert markdown to DOCX. Returns BytesIO of the docx content.
+
+    pypandoc requires `outputfile=<path>` for binary targets like docx (it
+    cannot return the bytes directly). We write to a private temp file and
+    read it back into a BytesIO.
+    """
     _ensure_pandoc()
 
     # Combine reference-docx dir and mermaid temp dir in resource-path
@@ -463,17 +524,87 @@ def convert_via_pandoc(
     for key, value in metadata.items():
         extra_args.extend(["--metadata", f"{key}={value}"])
 
+    fd, out_path = tempfile.mkstemp(suffix=".docx", prefix="pandoc-")
+    os.close(fd)
     try:
-        output = pypandoc.convert_text(
-            markdown_text,
-            "docx",
-            format="gfm+raw_html",
-            extra_args=extra_args,
-        )
-    except Exception as e:
-        raise RuntimeError(_map_pandoc_error(str(e))) from e
+        try:
+            pypandoc.convert_text(
+                markdown_text,
+                "docx",
+                format="gfm+raw_html",
+                extra_args=extra_args,
+                outputfile=out_path,
+            )
+        except Exception as e:
+            raise RuntimeError(_map_pandoc_error(str(e))) from e
 
-    return io.BytesIO(output)
+        with open(out_path, "rb") as f:
+            raw_bytes = f.read()
+        # Strip dangling image/oleObject relationships from the pandoc output
+        # so that downstream python-docx consumers can open the document
+        # without choking on references inherited from the reference template.
+        return io.BytesIO(_strip_dangling_image_rels(raw_bytes))
+    finally:
+        try:
+            os.unlink(out_path)
+        except OSError:
+            pass
+
+
+# ── DOCX post-processing ──────────────────────────────────────────
+
+def _strip_dangling_image_rels(docx_bytes):
+    """Remove image/oleObject relationships from word/_rels/document.xml.rels
+    that have no corresponding part in the zip.
+
+    Some bundled reference templates declare image relationships whose target
+    files are missing. Pandoc copies those relationships into its output and
+    python-docx then refuses to open the document. This function cleans them
+    up so the produced DOCX is openable.
+
+    Returns the cleaned bytes (input returned unchanged on any read/write error).
+    """
+    try:
+        with zipfile.ZipFile(io.BytesIO(docx_bytes)) as zin:
+            names = set(zin.namelist())
+            rels_path = "word/_rels/document.xml.rels"
+            if rels_path not in names:
+                return docx_bytes
+            rels_xml = zin.read(rels_path).decode("utf-8")
+            root = etree.fromstring(rels_xml.encode("utf-8"))
+            removed = 0
+            for rel in list(root):
+                rtype = rel.get("Type", "")
+                if not rtype.endswith("/image") and not rtype.endswith("/oleObject"):
+                    continue
+                target = rel.get("Target", "")
+                if not target:
+                    continue
+                # Targets in document.xml.rels are relative to word/, so
+                # "media/image1.wmf" resolves to "word/media/image1.wmf".
+                normalized = target.replace("\\", "/").lstrip("/")
+                if normalized.startswith("word/"):
+                    part_name = normalized
+                else:
+                    part_name = "word/" + normalized
+                if part_name not in names:
+                    root.remove(rel)
+                    removed += 1
+            if removed == 0:
+                return docx_bytes
+            new_rels = etree.tostring(
+                root, xml_declaration=True, encoding="UTF-8", standalone=True
+            )
+            out_buf = io.BytesIO()
+            with zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    data = zin.read(item.filename)
+                    if item.filename == rels_path:
+                        data = new_rels
+                    zout.writestr(item, data)
+            return out_buf.getvalue()
+    except (zipfile.BadZipFile, etree.XMLSyntaxError, KeyError, OSError):
+        return docx_bytes
 
 
 # ── DOCX style overrides ─────────────────────────────────────
@@ -531,11 +662,15 @@ def _set_font_color(run_or_style, color_hex: str) -> None:
 
 
 def _apply_to_styles(doc: Document, names: tuple[str, ...], *, font=None, size=None,
-                     color=None, line_spacing=None) -> None:
-    """Apply font, size, color, and line_spacing to matching style names, ignoring missing ones."""
+                     color=None, line_spacing=None) -> bool:
+    """Apply font/size/color/line_spacing to matching style names. Returns True
+    if at least one style was found and modified.
+    """
+    matched = False
     for name in names:
         try:
             style = doc.styles[name]
+            matched = True
             if font:
                 _set_font(style, font)
             if size:
@@ -546,11 +681,18 @@ def _apply_to_styles(doc: Document, names: tuple[str, ...], *, font=None, size=N
                 _set_line_spacing(style.paragraph_format, line_spacing)
         except KeyError:
             pass
+    return matched
 
 
-def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> None:
-    """Apply font/size/spacing overrides to Normal and Heading styles."""
+def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> list[str]:
+    """Apply font/size/spacing overrides to Normal and Heading styles.
+
+    Returns a list of human-readable warnings when a non-template profile
+    requests overrides but the reference document does not contain the
+    expected style names. Empty list on full success.
+    """
     profile = PROFILE_DEFAULTS.get(style_profile, {})
+    warnings: list[str] = []
 
     # Resolve effective values: user param > profile default > None (skip)
     body_font = params.get("body_font") or profile.get("body_font")
@@ -566,28 +708,51 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> No
 
     # Normal style + aliases (BodyText, Compact, etc.)
     effective_color = "000000" if style_profile != "template" else None
-    _apply_to_styles(doc, NORMAL_STYLE_NAMES, font=body_font, size=body_size,
-                     color=effective_color, line_spacing=line_spacing)
+    if not _apply_to_styles(doc, NORMAL_STYLE_NAMES, font=body_font, size=body_size,
+                             color=effective_color, line_spacing=line_spacing):
+        if style_profile != "template":
+            warnings.append(
+                f"None of the body style names {NORMAL_STYLE_NAMES} were found in the "
+                f"reference template; body font/size/spacing overrides were not applied."
+            )
 
     # Heading styles + aliases
-    _apply_to_styles(doc, HEADING_ALIASES["Heading 1"], font=h1_font, size=h1_size,
-                     color=effective_color)
-    _apply_to_styles(doc, HEADING_ALIASES["Heading 2"], font=h2_font, size=h2_size,
-                     color=effective_color)
-    _apply_to_styles(doc, HEADING_ALIASES["Heading 3"], font=h3_font, size=h3_size,
-                     color=effective_color)
+    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 1"], font=h1_font, size=h1_size,
+                             color=effective_color):
+        if style_profile != "template":
+            warnings.append(
+                f"Heading 1 style not found in reference template; heading 1 overrides were not applied."
+            )
+    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 2"], font=h2_font, size=h2_size,
+                             color=effective_color):
+        if style_profile != "template":
+            warnings.append(
+                f"Heading 2 style not found in reference template; heading 2 overrides were not applied."
+            )
+    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 3"], font=h3_font, size=h3_size,
+                             color=effective_color):
+        if style_profile != "template":
+            warnings.append(
+                f"Heading 3 style not found in reference template; heading 3 overrides were not applied."
+            )
 
     # Technical profile: code styles
     if style_profile == "technical":
+        any_code_style = False
         for code_style_name in CODE_STYLE_NAMES:
             try:
                 cs = doc.styles[code_style_name]
+                any_code_style = True
                 _set_font(cs, "Consolas")
                 _set_font_size(cs, 10)
                 _set_font_color(cs, "000000")
                 _set_shading(cs.paragraph_format, "F3F4F6")
             except KeyError:
                 pass
+        if not any_code_style:
+            warnings.append(
+                f"Technical profile: no code style ({CODE_STYLE_NAMES}) found in reference template."
+            )
 
     # Page margins: user override > profile default > skip
     margin_top = parse_mm(params.get("margin_top_mm")) or profile.get("margin_top_mm")
@@ -605,6 +770,8 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> No
                 section.left_margin = Cm(margin_left / 10)
             if margin_right:
                 section.right_margin = Cm(margin_right / 10)
+
+    return warnings
 
 
 # ── Dify Tool entry point ────────────────────────────────────
@@ -631,6 +798,7 @@ class Md2DocxTool(Tool):
         custom_template_path = None
         mermaid_dir = ""
         stage = "start"
+        warnings: list[str] = []
 
         try:
             markdown_content = parameters.get("markdown_content") or ""
@@ -639,6 +807,18 @@ class Md2DocxTool(Tool):
                 yield self.create_text_message(
                     "Error: markdown_content is empty. Please provide Markdown text to convert."
                 )
+                return
+
+            # Reject oversized inputs to avoid OOM in the Dify plugin sandbox.
+            markdown_bytes_len = len(markdown_content.encode("utf-8"))
+            if markdown_bytes_len > MAX_MARKDOWN_BYTES:
+                size_mb = MAX_MARKDOWN_BYTES // (1024 * 1024)
+                msg = (
+                    f"markdown_content is {markdown_bytes_len} bytes, exceeds the "
+                    f"{size_mb}MB limit. Split the document or raise the limit."
+                )
+                yield self.create_json_message({"status": "error", "stage": "validation", "message": msg})
+                yield self.create_text_message(f"Error: {msg}")
                 return
 
             stage = "validation"
@@ -655,19 +835,39 @@ class Md2DocxTool(Tool):
             stage = "template_resolution"
             custom_template = parameters.get("custom_template")
             if custom_template:
-                fd, custom_template_path = tempfile.mkstemp(suffix=".docx")
+                fd, custom_template_path = tempfile.mkstemp(suffix=".docx", prefix="custom-template-")
                 os.close(fd)
-                if isinstance(custom_template, bytes):
-                    with open(custom_template_path, "wb") as f:
-                        f.write(custom_template)
-                elif isinstance(custom_template, str):
-                    # Docx is binary — encode string and write as bytes
-                    with open(custom_template_path, "wb") as f:
-                        f.write(custom_template.encode("utf-8", errors="surrogateescape"))
-                else:
-                    # Unexpected type (e.g. file-like object) — skip silently
-                    os.unlink(custom_template_path)
+                try:
+                    if isinstance(custom_template, (bytes, bytearray)):
+                        with open(custom_template_path, "wb") as f:
+                            f.write(custom_template)
+                    elif isinstance(custom_template, str):
+                        # DOCX is a binary zip; a plain str cannot be safely
+                        # decoded back to its original bytes. Reject it with
+                        # a clear warning rather than silently producing a
+                        # corrupted file.
+                        os.unlink(custom_template_path)
+                        custom_template_path = None
+                        warnings.append(
+                            "custom_template: received a string, expected raw bytes. "
+                            "The custom template was ignored; the built-in template is used."
+                        )
+                    else:
+                        os.unlink(custom_template_path)
+                        custom_template_path = None
+                        warnings.append(
+                            f"custom_template: unsupported type {type(custom_template).__name__}; "
+                            "the custom template was ignored."
+                        )
+                except Exception as e:
+                    # Clean up partial file and continue without custom template
+                    if os.path.exists(custom_template_path):
+                        try:
+                            os.unlink(custom_template_path)
+                        except OSError:
+                            pass
                     custom_template_path = None
+                    warnings.append(f"custom_template: failed to write temp file ({e}); ignored.")
 
             plugin_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             reference_docx = resolve_template(
@@ -679,6 +879,7 @@ class Md2DocxTool(Tool):
             processed_md, mermaid_count, mermaid_dir, mermaid_errors = preprocess_mermaid(
                 markdown_content, enabled=mermaid_enabled
             )
+            warnings.extend(mermaid_errors)
 
             # Pandoc metadata
             metadata = build_pandoc_metadata(
@@ -698,13 +899,14 @@ class Md2DocxTool(Tool):
             # Apply style overrides
             stage = "style_overrides"
             doc = Document(docx_io)
-            apply_style_overrides(doc, style_profile, parameters)
+            style_warnings = apply_style_overrides(doc, style_profile, parameters)
+            warnings.extend(style_warnings)
 
-            # Save to BytesIO
+            # Save to BytesIO (and strip any dangling media rels that python-docx
+            # may have re-introduced on round-trip)
             output_io = io.BytesIO()
             doc.save(output_io)
-            output_io.seek(0)
-            docx_bytes = output_io.read()
+            docx_bytes = _strip_dangling_image_rels(output_io.getvalue())
 
             # Messages
             size_kb = len(docx_bytes) / 1024
@@ -721,8 +923,8 @@ class Md2DocxTool(Tool):
                 )
 
             yield self.create_text_message("\n".join(summary_parts))
-            if mermaid_errors:
-                yield self.create_json_message({"warning": mermaid_errors})
+            if warnings:
+                yield self.create_json_message({"warning": warnings})
             yield self.create_json_message({"status": "success", "stage": "complete", "file": f"{title}.docx", "size_kb": round(size_kb, 1)})
             yield self.create_blob_message(
                 blob=docx_bytes,
@@ -740,7 +942,10 @@ class Md2DocxTool(Tool):
 
         finally:
             if custom_template_path and os.path.exists(custom_template_path):
-                os.unlink(custom_template_path)
+                try:
+                    os.unlink(custom_template_path)
+                except OSError:
+                    pass
             if mermaid_dir and os.path.isdir(mermaid_dir):
                 shutil.rmtree(mermaid_dir, ignore_errors=True)
 
@@ -750,5 +955,7 @@ class Md2DocxTool(Tool):
 from dify_plugin import Plugin, DifyPluginEnv
 
 if __name__ == "__main__":
+    # MAX_REQUEST_TIMEOUT is unused by this plugin (no HTTP endpoint exposed),
+    # but we keep DifyPluginEnv() explicit so the runner boots deterministically.
     plugin = Plugin(DifyPluginEnv(MAX_REQUEST_TIMEOUT=120))
     plugin.run()

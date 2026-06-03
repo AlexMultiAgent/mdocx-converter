@@ -96,7 +96,7 @@ class TestMd2DocxToolInvoke:
         )
         monkeypatch.setattr(
             "md2docx.apply_style_overrides",
-            lambda doc, profile, params: None
+            lambda doc, profile, params: []
         )
         monkeypatch.setattr(
             "md2docx.preprocess_mermaid",
@@ -241,3 +241,125 @@ class TestMd2DocxToolInvoke:
         assert len(success_jsons) == 1
         assert success_jsons[0].data["file"] == "TestReport.docx"
         assert "size_kb" in success_jsons[0].data
+
+class TestMd2DocxToolInvokeEdgeCases:
+    """Edge-case tests for security and validation paths."""
+
+    @pytest.fixture(autouse=True)
+    def mock_externals(self, monkeypatch):
+        """Mock all external dependencies for edge cases."""
+        monkeypatch.setattr("md2docx._ensure_pandoc", lambda: None)
+        monkeypatch.setattr(
+            "md2docx.convert_via_pandoc",
+            lambda *a, **kw: io.BytesIO(b"fake-docx-content")
+        )
+        monkeypatch.setattr(
+            "md2docx.Document",
+            lambda *a, **kw: _FakeDocument()
+        )
+        monkeypatch.setattr(
+            "md2docx.apply_style_overrides",
+            lambda doc, profile, params: []
+        )
+        monkeypatch.setattr(
+            "md2docx.preprocess_mermaid",
+            lambda markdown_text, enabled=True: (markdown_text, 0, "", [])
+        )
+
+    def _make_tool(self):
+        """Create a Md2DocxTool with fake runtime/session and base methods injected."""
+        from md2docx import Md2DocxTool, MAX_MARKDOWN_BYTES
+        tool = Md2DocxTool.__new__(Md2DocxTool)
+        fake = FakeTool()
+        tool.create_text_message = fake.create_text_message
+        tool.create_json_message = fake.create_json_message
+        tool.create_blob_message = fake.create_blob_message
+        return tool, MAX_MARKDOWN_BYTES
+
+    def test_oversized_markdown_rejected(self):
+        """Input larger than MAX_MARKDOWN_BYTES is rejected with structured error."""
+        tool, limit = self._make_tool()
+        big = 'x' * (limit + 1)
+        messages = list(tool._invoke({"markdown_content": big}))
+
+        json_msgs = [m for m in messages if m.type == 'json']
+        text_msgs = [m for m in messages if m.type == 'text']
+        blob_msgs = [m for m in messages if m.type == 'blob']
+
+        assert len(blob_msgs) == 0, "No DOCX should be produced for oversize input"
+        assert len(json_msgs) == 1
+        assert json_msgs[0].data['status'] == 'error'
+        assert json_msgs[0].data['stage'] == 'validation'
+        assert 'exceeds' in json_msgs[0].data['message'].lower()
+        assert len(text_msgs) == 1
+        assert 'limit' in text_msgs[0].data.lower()
+
+    def test_oversized_markdown_exactly_at_limit_accepted(self):
+        """Input at exactly the size limit is accepted (boundary check)."""
+        tool, limit = self._make_tool()
+        # Build content whose UTF-8 byte length is exactly the limit.
+        # The implementation measures len(s.encode("utf-8")).
+        # Use ASCII so 1 char == 1 byte.
+        big = 'x' * limit
+        messages = list(tool._invoke({"markdown_content": big}))
+        blob_msgs = [m for m in messages if m.type == 'blob']
+        assert len(blob_msgs) == 1
+
+    def test_custom_template_str_rejected_with_warning(self):
+        """custom_template=str must be rejected with a warning, not silently corrupted."""
+        tool, _ = self._make_tool()
+        messages = list(tool._invoke({
+            "markdown_content": "# Hi\n",
+            "custom_template": "not-bytes",
+        }))
+
+        blob_msgs = [m for m in messages if m.type == 'blob']
+        warning_msgs = [m for m in messages if m.type == 'json' and 'warning' in m.data]
+        # Should still produce a docx (using built-in template), and warn.
+        assert len(blob_msgs) == 1
+        assert len(warning_msgs) == 1
+        assert 'string' in str(warning_msgs[0].data['warning']).lower()
+
+    def test_custom_template_unsupported_type_rejected_with_warning(self):
+        """custom_template with an unsupported type is rejected with a warning."""
+        tool, _ = self._make_tool()
+        messages = list(tool._invoke({
+            "markdown_content": "# Hi\n",
+            "custom_template": {"key": "value"},
+        }))
+
+        warning_msgs = [m for m in messages if m.type == 'json' and 'warning' in m.data]
+        assert len(warning_msgs) == 1
+        assert 'unsupported type' in str(warning_msgs[0].data['warning']).lower()
+
+    def test_style_override_warnings_yielded(self, monkeypatch):
+        """When apply_style_overrides returns warnings, they are propagated as JSON."""
+        monkeypatch.setattr(
+            "md2docx.apply_style_overrides",
+            lambda doc, profile, params: ["Heading 1 style not found"],
+        )
+        tool, _ = self._make_tool()
+        messages = list(tool._invoke({"markdown_content": "# Hi\n"}))
+        warning_msgs = [m for m in messages if m.type == 'json' and 'warning' in m.data]
+        assert len(warning_msgs) == 1
+        assert 'Heading 1' in str(warning_msgs[0].data['warning'])
+
+    def test_mermaid_and_style_warnings_combined(self, monkeypatch):
+        """Mermaid errors and style warnings are merged into a single warning JSON."""
+        monkeypatch.setattr(
+            "md2docx.preprocess_mermaid",
+            lambda md, enabled=True: (md, 0, "", ["Diagram 1: timeout"]),
+        )
+        monkeypatch.setattr(
+            "md2docx.apply_style_overrides",
+            lambda doc, profile, params: ["Heading 2 not found"],
+        )
+        tool, _ = self._make_tool()
+        messages = list(tool._invoke({
+            "markdown_content": "# Hi\n```mermaid\ngraph TD; A-->B\n```\n",
+        }))
+        warning_msgs = [m for m in messages if m.type == 'json' and 'warning' in m.data]
+        assert len(warning_msgs) == 1
+        joined = ' | '.join(warning_msgs[0].data['warning'])
+        assert 'Diagram 1' in joined
+        assert 'Heading 2' in joined

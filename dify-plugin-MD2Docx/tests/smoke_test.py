@@ -83,13 +83,19 @@ graph TD
 Some text after.
 """
 
-    def test_enabled_renders_or_preserves(self, md_with_mermaid):
+    def test_enabled_renders_or_preserves(self, md_with_mermaid, monkeypatch):
+        # Mock the Mermaid Ink API so this test is hermetic and fast.
+        from md2docx import preprocess_mermaid
+        monkeypatch.setattr(
+            "md2docx.render_mermaid_via_api",
+            lambda diagram: b"\x89PNG\r\n\x1a\n" + b"\x00" * 16,
+        )
+        monkeypatch.setattr("md2docx.time.sleep", lambda s: None)
         processed, count, temp_dir, errors = preprocess_mermaid(md_with_mermaid, enabled=True)
         try:
-            if count == 1:
-                assert "Mermaid Diagram" in processed
-            else:
-                assert "```mermaid" in processed
+            assert count == 1
+            assert "Mermaid Diagram" in processed
+            assert errors == []
         finally:
             if temp_dir and os.path.isdir(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)

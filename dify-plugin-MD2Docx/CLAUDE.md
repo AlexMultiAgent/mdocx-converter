@@ -108,6 +108,10 @@ Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`,
 - **python-docx + lxml**: Style overrides use python-docx for high-level access + lxml for raw XML manipulation when needed (fonts, spacing, shading, colors)
 - **User overrides > Profile defaults**: Every style parameter can be overridden individually; `0` or empty means "use profile default"
 - **Script style**: Avoiding `from __future__ import annotations` to maintain compatibility
+- **Safety guards**: `markdown_content` is capped at 5 MB (`MAX_MARKDOWN_BYTES`) to prevent OOM in the Dify plugin sandbox
+- **Mermaid resilience**: 3 attempts per diagram (1s/2s backoff), 120s total budget, and a per-attempt 30s timeout
+- **Pandoc output cleanup**: `_strip_dangling_image_rels` removes image/oleObject relationships inherited from reference templates whose target files are missing, so python-docx can always open the produced DOCX
+- **custom_template safety**: A `str` value for `custom_template` is rejected with a clear warning instead of being written as a corrupted binary
 
 ## Differences from VS Code extension
 
