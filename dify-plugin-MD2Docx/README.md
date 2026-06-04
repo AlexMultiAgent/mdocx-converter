@@ -37,6 +37,8 @@ dify-plugin package .
 
 All profile defaults can be overridden per invocation via the Advanced parameters.
 
+> **关于模板**：`official`（中文）和 `thesis`（中文）分别对应 GB/T 9704-2012 和 GB/T 7713，各有中文模板文件。对应的英文模板文件作为兼容性配套存在，无特定英文公文/学位论文标准依据。
+
 ### 如何选择 style profile？
 
 - **投稿到 IEEE/ACM/Springer** → 请下载官方 `.dotx` 模板，通过 `custom_template` 参数上传

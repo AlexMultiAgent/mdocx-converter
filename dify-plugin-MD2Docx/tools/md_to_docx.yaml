@@ -59,7 +59,7 @@ parameters:
       - value: "official"
         label:
           en_US: "Official"
-          zh_Hans: "公务公文"
+          zh_Hans: "公务公文 (GB/T 9704)"
       - value: "thesis"
         label:
           en_US: "Thesis (GB/T 7713)"
