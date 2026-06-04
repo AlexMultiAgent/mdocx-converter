@@ -448,12 +448,18 @@ def _ensure_pandoc() -> None:
 def _warmup_pandoc() -> None:
     """Warm up pandoc by converting a trivial Markdown string.
     This pre-loads the pandoc binary into memory, speeding up the first real
-    conversion. Only runs when loaded in the Dify plugin environment.
+    conversion. Runs in a daemon thread with a 30s timeout to prevent
+    plugin startup hangs on slow or broken pandoc installations.
     """
-    try:
-        pypandoc.convert_text("# Warmup", "docx", format="markdown")
-    except Exception:
-        pass  # Best-effort; failures here are not fatal
+    def _run_warmup():
+        try:
+            pypandoc.convert_text("# Warmup", "docx", format="markdown")
+        except Exception:
+            pass  # Best-effort; warmup failures are not fatal
+
+    t = threading.Thread(target=_run_warmup, daemon=True)
+    t.start()
+    t.join(timeout=30)
 
 
 # Warm pandoc on import when running inside the Dify plugin daemon.
