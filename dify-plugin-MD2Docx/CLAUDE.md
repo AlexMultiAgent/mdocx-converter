@@ -34,7 +34,7 @@ markdown_content
   │
   ├─ 4. Pandoc conversion:
   │     pypandoc.convert_text() with --reference-doc and --metadata
-  │     pypandoc.download_pandoc() auto-downloads pandoc binary on first use (~50MB)
+  │     pypandoc-binary provides pandoc at pip install time (no runtime download)
   │
   ├─ 5. DOCX style overrides:
   │     python-docx opens generated .docx
@@ -50,11 +50,14 @@ markdown_content
 ```
 dify-plugin-MD2Docx/
 ├── manifest.yaml              # Plugin metadata, runtime config
-├── requirements.txt           # pypandoc, python-docx, requests, lxml
+├── requirements.txt           # pypandoc-binary, python-docx, requests, lxml
 ├── PRIVACY.md                 # Mermaid Ink API & Pandoc download disclosure
-├── icon.svg
-├── multi-templates/           # 8 reference.docx (6 shared with VSC plugin + 2 official-only)
+├── icon.svg                   # CLI requires root-level copy (also in _assets/)
+├── _assets/
+│   └── icon.svg               # Canonical icon location
+├── multi-templates/           # 8 reference.docx (6 shared with VSC plugin + 2 official)
 ├── provider/
+│   ├── md2docx.py             # Md2DocxProvider (ToolProvider)
 │   └── md2docx.yaml           # Tool Provider declaration
 ├── tools/
 │   └── md_to_docx.yaml        # Tool parameter schema (19 parameters)
@@ -103,7 +106,8 @@ Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`,
 
 ### Key design decisions
 
-- **pypandoc + auto-download**: `pypandoc.download_pandoc()` downloads pandoc at runtime (~50MB), does NOT count toward the plugin package size limit
+- **pypandoc-binary**: pandoc binary bundled in the pip package, installed at plugin init — no runtime download, no network dependency for conversion
+- **_warmup_pandoc()**: pre-loads pandoc on plugin startup (when `LOAD_FROM_DIFY_PLUGIN=1`) for fast first invocation
 - **Mermaid Ink API**: Free public HTTP service for Mermaid rendering. No auth, no rate limiting. Users can disable via `mermaid_enabled: false`
 - **python-docx + lxml**: Style overrides use python-docx for high-level access + lxml for raw XML manipulation when needed (fonts, spacing, shading, colors)
 - **User overrides > Profile defaults**: Every style parameter can be overridden individually; `0` or empty means "use profile default"
