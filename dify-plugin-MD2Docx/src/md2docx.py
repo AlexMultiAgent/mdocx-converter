@@ -954,7 +954,12 @@ class Md2DocxTool(Tool):
 from dify_plugin import Plugin, DifyPluginEnv
 
 if __name__ == "__main__":
-    # MAX_REQUEST_TIMEOUT is unused by this plugin (no HTTP endpoint exposed),
-    # but we keep DifyPluginEnv() explicit so the runner boots deterministically.
-    plugin = Plugin(DifyPluginEnv(MAX_REQUEST_TIMEOUT=120))
-    plugin.run()
+    import sys as _sys
+    print("[md2docx] Plugin booting via stdio transport", file=_sys.stderr, flush=True)
+    try:
+        plugin = Plugin(DifyPluginEnv(MAX_REQUEST_TIMEOUT=120))
+        print("[md2docx] Plugin initialized, starting event loop", file=_sys.stderr, flush=True)
+        plugin.run()
+    except Exception as _e:
+        print(f"[md2docx] FATAL: {_e}", file=_sys.stderr, flush=True)
+        raise
