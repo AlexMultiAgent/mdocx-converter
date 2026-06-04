@@ -954,12 +954,15 @@ class Md2DocxTool(Tool):
 from dify_plugin import Plugin, DifyPluginEnv
 
 if __name__ == "__main__":
-    import sys as _sys
-    print("[md2docx] Plugin booting via stdio transport", file=_sys.stderr, flush=True)
+    import time as _time
+    _log = lambda msg: open("/tmp/md2docx_debug.log", "a").write(
+        f"{_time.strftime('%H:%M:%S')} {msg}\n"
+    )
+    _log("booting")
     try:
         plugin = Plugin(DifyPluginEnv(MAX_REQUEST_TIMEOUT=120))
-        print("[md2docx] Plugin initialized, starting event loop", file=_sys.stderr, flush=True)
+        _log("initialized, entering run()")
         plugin.run()
     except Exception as _e:
-        print(f"[md2docx] FATAL: {_e}", file=_sys.stderr, flush=True)
+        _log(f"FATAL: {_e}")
         raise
