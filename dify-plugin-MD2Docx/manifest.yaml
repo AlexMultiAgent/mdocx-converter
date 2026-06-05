@@ -3,6 +3,10 @@ type: plugin
 author: "alexmultiagent"
 name: "md2docx"
 created_at: "2026-06-02T00:00:00.000000Z"
+repo: "https://github.com/AlexMultiAgent/mdocx-converter"
+tags:
+  - "productivity"
+  - "utilities"
 
 label:
   en_US: "md2docx - Markdown to DOCX"
@@ -49,7 +53,7 @@ meta:
   runner:
     language: "python"
     version: "3.12"
-    entrypoint: "src.md2docx"
+    entrypoint: "main"
   minimum_dify_version: "1.14.0"
 
 privacy: "./PRIVACY.md"

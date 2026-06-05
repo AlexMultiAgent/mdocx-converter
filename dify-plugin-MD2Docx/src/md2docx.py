@@ -947,22 +947,3 @@ class Md2DocxTool(Tool):
                     pass
             if mermaid_dir and os.path.isdir(mermaid_dir):
                 shutil.rmtree(mermaid_dir, ignore_errors=True)
-
-
-# ── Plugin runner ───────────────────────────────────────────────
-
-from dify_plugin import Plugin, DifyPluginEnv
-
-if __name__ == "__main__":
-    import time as _time
-    _log = lambda msg: open("/tmp/md2docx_debug.log", "a").write(
-        f"{_time.strftime('%H:%M:%S')} {msg}\n"
-    )
-    _log("booting")
-    try:
-        plugin = Plugin(DifyPluginEnv(MAX_REQUEST_TIMEOUT=120))
-        _log("initialized, entering run()")
-        plugin.run()
-    except Exception as _e:
-        _log(f"FATAL: {_e}")
-        raise
