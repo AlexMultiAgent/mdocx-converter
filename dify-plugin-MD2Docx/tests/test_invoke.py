@@ -201,7 +201,7 @@ class TestMd2DocxToolInvoke:
         """When mermaid_errors is non-empty, a warning json should be yielded."""
         monkeypatch.setattr(
             "md2docx.preprocess_mermaid",
-            lambda markdown_text, enabled=True: (
+            lambda markdown_text, enabled=True, api_url=None: (
                 markdown_text, 0, "", ["Diagram 1: Connection timeout"]
             )
         )
