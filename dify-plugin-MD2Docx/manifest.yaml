@@ -1,4 +1,4 @@
-version: 0.0.3
+version: 0.0.1
 type: plugin
 author: "alexmultiagent"
 name: "md2docx"
@@ -46,7 +46,7 @@ plugins:
     - "provider/md2docx.yaml"
 
 meta:
-  version: "0.0.3"
+  version: "0.0.1"
   arch:
     - "amd64"
     - "arm64"
