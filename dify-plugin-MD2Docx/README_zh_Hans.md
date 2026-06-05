@@ -5,7 +5,7 @@
 
 在 Dify 工作流中将 Markdown 转为精美的 Word 文档。内置中英文模板、Mermaid 图表渲染、字体/行距/边距精细控制。无需 API 密钥。
 
-[English docs](../README.md) | [Marketplace](https://marketplace.dify.ai/plugin/alexmultiagent/md2docx)
+[English docs](https://github.com/AlexMultiAgent/mdocx-converter/blob/main/dify-plugin-MD2Docx/README.md) | [Marketplace](https://marketplace.dify.ai/plugin/alexmultiagent/md2docx)
 
 ## 工具列表
 
@@ -120,7 +120,7 @@ MERMAID_INK_URL=http://your-server:3000
 - **Pandoc**：随 `pypandoc-binary` 内置，无网络访问。
 - **临时文件**：每次转换后自动清理。
 
-完整说明：[../PRIVACY.md](../PRIVACY.md)
+完整说明：[PRIVACY.md](./PRIVACY.md)
 
 ## 部署调优
 
