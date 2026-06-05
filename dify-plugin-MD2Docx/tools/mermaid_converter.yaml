@@ -27,6 +27,35 @@ parameters:
     llm_description: "The mermaid diagram code to render as an image"
     form: llm
 
+  - name: output_format
+    type: select
+    required: false
+    default: "png"
+    options:
+      - value: "png"
+        label:
+          en_US: "PNG"
+          zh_Hans: "PNG"
+      - value: "jpg"
+        label:
+          en_US: "JPG"
+          zh_Hans: "JPG"
+      - value: "svg"
+        label:
+          en_US: "SVG"
+          zh_Hans: "SVG"
+      - value: "pdf"
+        label:
+          en_US: "PDF"
+          zh_Hans: "PDF"
+    label:
+      en_US: "Output Format"
+      zh_Hans: "输出格式"
+    human_description:
+      en_US: "Image format. PNG is the default."
+      zh_Hans: "图片格式。默认为 PNG。"
+    form: form
+
   - name: mermaid_api_url
     type: string
     required: false
