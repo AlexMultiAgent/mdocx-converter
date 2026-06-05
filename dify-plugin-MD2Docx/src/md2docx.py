@@ -12,7 +12,6 @@ import shutil
 import tempfile
 import zipfile
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from typing import Optional, Any, Generator
 
 # ── Dify SDK (must import first — triggers gevent monkey-patch) ──
@@ -385,37 +384,11 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True) -> tuple[str, i
     if last_end < len(markdown_text):
         segments.append((last_end, len(markdown_text), False, 0))
 
-    # Render all diagrams in parallel with retry + total budget
+    # Render diagrams sequentially with retry (safe in gevent-patched envs)
     results: dict[int, str | None] = {}
-
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {
-            executor.submit(
-                _render_one_with_retry, idx, match.group(1).strip(), temp_dir, errors
-            ): idx
-            for idx, match in enumerate(matches, 1)
-        }
-        try:
-            for future in as_completed(futures, timeout=MERMAID_TOTAL_BUDGET_SECONDS):
-                idx = futures[future]
-                try:
-                    _, png_path = future.result()
-                except Exception as e:
-                    errors.append(f"Diagram {idx}: {e}")
-                    png_path = None
-                results[idx] = png_path
-        except FuturesTimeoutError:
-            pass
-
-        # Cancel and report any stragglers that did not complete in time
-        for future, idx in list(futures.items()):
-            if not future.done():
-                future.cancel()
-                if idx not in results:
-                    errors.append(
-                        f"Diagram {idx}: timed out after {MERMAID_TOTAL_BUDGET_SECONDS}s total budget"
-                    )
-                    results[idx] = None
+    for idx, match in enumerate(matches, 1):
+        _, png_path = _render_one_with_retry(idx, match.group(1).strip(), temp_dir, errors)
+        results[idx] = png_path
 
     # Assemble output preserving original order
     parts: list[str] = []
