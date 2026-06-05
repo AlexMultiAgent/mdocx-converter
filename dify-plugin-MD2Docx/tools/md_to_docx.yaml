@@ -113,17 +113,6 @@ parameters:
       zh_Hans: "启用后，```mermaid 代码块会通过 Mermaid Ink API 渲染为图片。离线或注重隐私时可关闭。"
     form: form
 
-  - name: custom_template
-    type: file
-    required: false
-    label:
-      en_US: "Custom DOCX Template"
-      zh_Hans: "自定义 DOCX 模板"
-    human_description:
-      en_US: "Upload a custom reference.docx template. Overrides the built-in template when provided."
-      zh_Hans: "上传自定义 reference.docx 模板。提供后会覆盖内置模板。"
-    form: form
-
   - name: body_font
     type: string
     required: false

@@ -60,15 +60,17 @@ dify-plugin-MD2Docx/
 │   ├── md2docx.py             # Md2DocxProvider (ToolProvider)
 │   └── md2docx.yaml           # Tool Provider declaration
 ├── tools/
-│   └── md_to_docx.yaml        # Tool parameter schema (19 parameters)
+│   └── md_to_docx.yaml        # Tool parameter schema (18 parameters)
 └── src/
     ├── __init__.py
     └── md2docx.py              # Core conversion — all logic in one file
 ```
 
-### Tool parameters (19 total)
+### Tool parameters (18 total)
 
-**Core (5):** `markdown_content` (req, llm), `title` (opt, llm), `style_profile` (select, form; 6 options: academic/thesis/technical/business/official/template), `reference_language` (select, form), `custom_template` (file, form)
+**Core (4):** `markdown_content` (req, llm), `title` (opt, llm), `style_profile` (select, form; 6 options: academic/thesis/technical/business/official/template), `reference_language` (select, form)
+
+> A `custom_template` (`type: file`) param was REMOVED in v0.0.3. A `file`-type tool parameter makes a Dify **workflow** tool node hang in `get_workflow_tool_runtime()` and never dispatch (node stuck "running" until timeout, daemon never receives invoke). `file` params only work in Agent nodes. The `_invoke` code still tolerates a `custom_template` kwarg if present, but it is no longer exposed in the schema.
 
 **Extended (1):** `mermaid_enabled` (boolean, form, default: true)
 
