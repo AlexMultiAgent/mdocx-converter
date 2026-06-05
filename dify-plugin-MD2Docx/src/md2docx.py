@@ -928,9 +928,9 @@ class Md2DocxTool(Tool):
             yield self.create_blob_message(
                 blob=docx_bytes,
                 meta={
-                    "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    "file_name": f"{title}.docx",
                 },
-                save_as=f"{title}.docx",
             )
 
         except Exception as e:
