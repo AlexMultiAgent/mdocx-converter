@@ -44,7 +44,7 @@ MERMAID_MAX_ATTEMPTS = 3
 
 # ── Regex ───────────────────────────────────────────────────
 
-MERMAID_BLOCK_RE = re.compile(r"```mermaid[^\n]*\r?\n([\s\S]*?)```", re.IGNORECASE)
+MERMAID_BLOCK_RE = re.compile(r"(?m)^```mermaid[^\n]*\n([\s\S]*?)\n^```", re.IGNORECASE)
 CJK_CHAR_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 LATIN_CHAR_RE = re.compile(r"[A-Za-z]")
 
