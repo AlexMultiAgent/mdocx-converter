@@ -308,34 +308,36 @@ def sanitize_filename(name: str) -> str:
 
 # ── Mermaid preprocessing ────────────────────────────────────
 
-MERMAID_INK_URL = "https://mermaid.ink/img"
+MERMAID_INK_URL = os.environ.get("MERMAID_INK_URL", "https://mermaid.ink")
 PLUGIN_USER_AGENT = "md2docx-dify-plugin/0.0.1 (+https://github.com/AlexMultiAgent/mdocx-converter)"
 
 
 def _encode_mermaid_pako(diagram: str) -> str:
-    """Encode a Mermaid diagram using pako (raw deflate + base64url).
+    """Encode a Mermaid diagram in pako format for the mermaid.ink GET API.
 
-    Uses raw deflate (wbits=-15) to match JS pako.deflate() output exactly.
-    zlib.compress() adds a 2-byte header + 4-byte checksum that mermaid.ink
-    does not expect.
+    Wraps the diagram in {"code":"..."} JSON, deflates with zlib (level 9),
+    then base64url-encodes without padding. Matches the format produced by
+    the Mermaid Live Editor's share URL.
     """
     import base64
+    import json
     import zlib
-    co = zlib.compressobj(wbits=-15)
-    compressed = co.compress(diagram.encode("utf-8"))
-    compressed += co.flush()
-    return base64.urlsafe_b64encode(compressed).rstrip(b"=").decode("ascii")
+    payload = json.dumps({"code": diagram}, separators=(",", ":"))
+    compressed = zlib.compress(payload.encode("utf-8"), level=9)
+    return base64.urlsafe_b64encode(compressed).decode("ascii").rstrip("=")
 
 
 def render_mermaid_via_api(diagram: str) -> bytes:
     """Render a Mermaid diagram via the Mermaid Ink API. Returns PNG bytes.
 
-    Uses the current GET /img/pako:<zlib+base64url> endpoint.
+    Uses the GET /img/pako:<zlib+base64url> endpoint. The MERMAID_INK_URL
+    env var can override the default https://mermaid.ink for self-hosted
+    instances.
     Raises requests.RequestException on HTTP / network errors.
     """
     encoded = _encode_mermaid_pako(diagram)
     resp = requests.get(
-        f"{MERMAID_INK_URL}/pako:{encoded}",
+        f"{MERMAID_INK_URL}/img/pako:{encoded}",
         headers={"User-Agent": PLUGIN_USER_AGENT},
         timeout=MERMAID_REQUEST_TIMEOUT_SECONDS,
     )
