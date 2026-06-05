@@ -42,7 +42,7 @@ The package depends on `pypandoc-binary`, which bundles the Pandoc binary inside
 | `thesis`    | SimSun                | 12 pt     | SimHei 22 / 16 / 14 pt                         | 1.5          | 30                | Degree thesis (GB/T 7713)                        |
 | `technical` | Arial                 | 11 pt     | Arial 16 / 14 / 12 pt                          | 1.35         | 19                | Tech blogs, API docs                             |
 | `business`  | Arial                 | 11 pt     | Arial 18 / 14 / 12 pt                          | 1.5          | 25.4              | Business reports, internal memos                 |
-| `official`  | FangSong              | 16 pt     | SimHei (H1) / KaiTi (H2) / FangSong (H3) 16 pt | 1.75         | 37 / 35 / 28 / 26 | Government / official documents (GB/T 9704-2012) |
+| `official`  | FangSong              | 16 pt     | SimHei (H1) / KaiTi (H2) / FangSong (H3) 16 pt | 1.75         | 37 / 35 / 28 / 26 | Government / official documents (GB/T 9704) |
 | `template`  | (from reference DOCX) | —         | —                                              | —            | —                 | Pure template, no preset overrides               |
 
 All profile defaults can be overridden per call via the advanced parameters.

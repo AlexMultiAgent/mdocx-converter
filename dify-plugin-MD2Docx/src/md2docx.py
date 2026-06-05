@@ -313,10 +313,17 @@ PLUGIN_USER_AGENT = "md2docx-dify-plugin/0.0.1 (+https://github.com/AlexMultiAge
 
 
 def _encode_mermaid_pako(diagram: str) -> str:
-    """Encode a Mermaid diagram using pako (zlib + base64url)."""
+    """Encode a Mermaid diagram using pako (raw deflate + base64url).
+
+    Uses raw deflate (wbits=-15) to match JS pako.deflate() output exactly.
+    zlib.compress() adds a 2-byte header + 4-byte checksum that mermaid.ink
+    does not expect.
+    """
     import base64
     import zlib
-    compressed = zlib.compress(diagram.encode("utf-8"))
+    co = zlib.compressobj(wbits=-15)
+    compressed = co.compress(diagram.encode("utf-8"))
+    compressed += co.flush()
     return base64.urlsafe_b64encode(compressed).rstrip(b"=").decode("ascii")
 
 

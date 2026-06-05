@@ -15,11 +15,11 @@ label:
 description:
   en_US: >
     Convert Markdown to polished DOCX with built-in Chinese/English templates.
-    Supports academic paper, technical document, business report, official document, and thesis style presets,
+    Supports technical document, business report, official document, academic paper, and thesis style presets,
     Mermaid diagram rendering, and fine-grained font/margin/spacing control.
   zh_Hans: >
     将 Markdown 转换为精美 DOCX 文档，内置中英文模板。
-    支持学术论文、技术文档、商业报告、公务公文、学位论文五种样式预设，
+    支持技术文档、商业报告、公务公文、学术论文、学位论文五种样式预设，
     Mermaid 图表渲染，以及字体/页边距/行距的精细控制。
 
 icon: "icon.svg"
