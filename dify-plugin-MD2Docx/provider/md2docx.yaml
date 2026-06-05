@@ -18,6 +18,7 @@ identity:
 tools:
   - "tools/md_to_docx.yaml"
   - "tools/md_to_docx_advanced.yaml"
+  - "tools/mermaid_converter.yaml"
 
 extra:
   python:

@@ -64,6 +64,66 @@ parameters:
       zh_Hans: "基础样式预设。下方参数可逐个覆盖。"
     form: form
 
+  - name: title
+    type: string
+    required: false
+    label:
+      en_US: "Document Title"
+      zh_Hans: "文档标题"
+    human_description:
+      en_US: "Title for the output DOCX file. Defaults to 'Document'."
+      zh_Hans: "输出 DOCX 文件的标题。默认为 'Document'。"
+    llm_description: "The title or filename for the output document"
+    form: llm
+
+  - name: reference_language
+    type: select
+    required: false
+    default: "auto"
+    options:
+      - value: "auto"
+        label:
+          en_US: "Auto-detect"
+          zh_Hans: "自动检测"
+      - value: "english"
+        label:
+          en_US: "English"
+          zh_Hans: "英文"
+      - value: "chinese"
+        label:
+          en_US: "Chinese"
+          zh_Hans: "中文"
+    label:
+      en_US: "Reference Language"
+      zh_Hans: "模板语言"
+    human_description:
+      en_US: "Template language. Auto-detect by default."
+      zh_Hans: "模板语言。默认自动检测。"
+    form: form
+
+  - name: mermaid_enabled
+    type: boolean
+    required: false
+    default: true
+    label:
+      en_US: "Render Mermaid Diagrams"
+      zh_Hans: "渲染 Mermaid 图表"
+    human_description:
+      en_US: "Render ```mermaid blocks to images. Disable for offline use."
+      zh_Hans: "渲染 ```mermaid 代码块为图片。离线时可关闭。"
+    form: form
+
+  - name: mermaid_api_url
+    type: string
+    required: false
+    label:
+      en_US: "Mermaid API URL"
+      zh_Hans: "Mermaid API 地址"
+    human_description:
+      en_US: "Self-hosted Mermaid Ink URL. Leave empty for the public service."
+      zh_Hans: "自部署 Mermaid Ink 地址。留空使用公共服务。"
+    form: form
+
   - name: body_font
     type: string
     required: false

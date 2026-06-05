@@ -938,3 +938,34 @@ class Md2DocxTool(Tool):
                     pass
             if mermaid_dir and os.path.isdir(mermaid_dir):
                 shutil.rmtree(mermaid_dir, ignore_errors=True)
+
+
+# ── Mermaid Converter (standalone tool) ──────────────────────────
+
+
+class MermaidConverterTool(Tool):
+    """Dify Tool: render Mermaid diagram code to PNG."""
+
+    def _invoke(self, parameters: dict) -> Generator[ToolInvokeMessage, None, None]:
+        code = (parameters.get("mermaid_code") or "").strip()
+        if not code:
+            yield self.create_text_message("Error: mermaid_code is required")
+            return
+
+        # Strip code fences if present
+        if code.startswith("```"):
+            code = re.sub(r"^```mermaid\s*", "", code)
+            code = re.sub(r"```$", "", code).strip()
+
+        api_url = parameters.get("mermaid_api_url") or None
+
+        try:
+            png_bytes = render_mermaid_via_api(code, api_url=api_url)
+        except Exception as e:
+            yield self.create_text_message(f"Mermaid rendering failed: {e}")
+            return
+
+        yield self.create_blob_message(
+            blob=png_bytes,
+            meta={"mime_type": "image/png", "file_name": "diagram.png"},
+        )
