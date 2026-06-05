@@ -100,7 +100,7 @@ class TestMd2DocxToolInvoke:
         )
         monkeypatch.setattr(
             "md2docx.preprocess_mermaid",
-            lambda markdown_text, enabled=True: (markdown_text, 0, "", [])
+            lambda markdown_text, enabled=True, api_url=None: (markdown_text, 0, "", [])
         )
 
     def _make_tool(self):
@@ -263,7 +263,7 @@ class TestMd2DocxToolInvokeEdgeCases:
         )
         monkeypatch.setattr(
             "md2docx.preprocess_mermaid",
-            lambda markdown_text, enabled=True: (markdown_text, 0, "", [])
+            lambda markdown_text, enabled=True, api_url=None: (markdown_text, 0, "", [])
         )
 
     def _make_tool(self):

@@ -113,6 +113,17 @@ parameters:
       zh_Hans: "启用后，```mermaid 代码块会通过 Mermaid Ink API 渲染为图片。离线或注重隐私时可关闭。"
     form: form
 
+  - name: mermaid_api_url
+    type: string
+    required: false
+    label:
+      en_US: "Mermaid API URL"
+      zh_Hans: "Mermaid API 地址"
+    human_description:
+      en_US: "Custom Mermaid Ink API base URL for self-hosted instances. Leave empty to use the public https://mermaid.ink service."
+      zh_Hans: "自定义 Mermaid Ink API 地址，用于自部署实例。留空则使用公共 https://mermaid.ink 服务。"
+    form: form
+
   - name: body_font
     type: string
     required: false

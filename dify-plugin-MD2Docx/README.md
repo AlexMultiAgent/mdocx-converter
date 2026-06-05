@@ -47,7 +47,7 @@ The package depends on `pypandoc-binary`, which bundles the Pandoc binary inside
 
 All profile defaults can be overridden per call via the advanced parameters.
 
-## Parameters (18 total)
+## Parameters (19 total)
 
 ### Core
 
@@ -60,31 +60,58 @@ All profile defaults can be overridden per call via the advanced parameters.
 
 ### Extended
 
-| #   | Parameter         | Type    | Required | Default | Description                                            |
-| --- | ----------------- | ------- | -------- | ------- | ------------------------------------------------------ |
-| 5   | `mermaid_enabled` | boolean | no       | `true`  | Render `` ```mermaid `` blocks via the Mermaid Ink API |
+| #   | Parameter           | Type    | Required | Default                | Description                                                  |
+| --- | ------------------- | ------- | -------- | ---------------------- | ------------------------------------------------------------ |
+| 5   | `mermaid_enabled`   | boolean | no       | `true`                 | Render `` ```mermaid `` blocks via the Mermaid Ink API     |
+| 6   | `mermaid_api_url`   | string  | no       | `https://mermaid.ink`  | Base URL for a self-hosted Mermaid Ink instance              |
 
 ### Advanced (style overrides)
 
 | #   | Parameter          | Type   | Required | Default             | Description                                                  |
 | --- | ------------------ | ------ | -------- | ------------------- | ------------------------------------------------------------ |
-| 6   | `body_font`        | string | no       | profile default     | Body text font name                                          |
-| 7   | `body_size_pt`     | number | no       | 0 (profile default) | Body font size in points. `0` = default                      |
-| 8   | `line_spacing`     | number | no       | 0                   | Line spacing multiplier (1.0, 1.25, 1.5, 2.0). `0` = default |
-| 9   | `margin_top_mm`    | number | no       | 0                   | Top page margin in mm. `0` = default                         |
-| 10  | `margin_bottom_mm` | number | no       | 0                   | Bottom page margin in mm. `0` = default                      |
-| 11  | `margin_left_mm`   | number | no       | 0                   | Left page margin in mm. `0` = default                        |
-| 12  | `margin_right_mm`  | number | no       | 0                   | Right page margin in mm. `0` = default                       |
-| 13  | `heading1_font`    | string | no       | profile default     | Heading 1 font name                                          |
-| 14  | `heading1_size_pt` | number | no       | 0                   | Heading 1 font size in points. `0` = default                 |
-| 15  | `heading2_font`    | string | no       | profile default     | Heading 2 font name                                          |
-| 16  | `heading2_size_pt` | number | no       | 0                   | Heading 2 font size in points. `0` = default                 |
-| 17  | `heading3_font`    | string | no       | profile default     | Heading 3 font name                                          |
-| 18  | `heading3_size_pt` | number | no       | 0                   | Heading 3 font size in points. `0` = default                 |
+| 7   | `body_font`        | string | no       | profile default     | Body text font name                                          |
+| 8   | `body_size_pt`     | number | no       | 0 (profile default) | Body font size in points. `0` = default                      |
+| 9   | `line_spacing`     | number | no       | 0                   | Line spacing multiplier (1.0, 1.25, 1.5, 2.0). `0` = default |
+| 10  | `margin_top_mm`    | number | no       | 0                   | Top page margin in mm. `0` = default                         |
+| 11  | `margin_bottom_mm` | number | no       | 0                   | Bottom page margin in mm. `0` = default                      |
+| 12  | `margin_left_mm`   | number | no       | 0                   | Left page margin in mm. `0` = default                        |
+| 13  | `margin_right_mm`  | number | no       | 0                   | Right page margin in mm. `0` = default                       |
+| 14  | `heading1_font`    | string | no       | profile default     | Heading 1 font name                                          |
+| 15  | `heading1_size_pt` | number | no       | 0                   | Heading 1 font size in points. `0` = default                 |
+| 16  | `heading2_font`    | string | no       | profile default     | Heading 2 font name                                          |
+| 17  | `heading2_size_pt` | number | no       | 0                   | Heading 2 font size in points. `0` = default                 |
+| 18  | `heading3_font`    | string | no       | profile default     | Heading 3 font name                                          |
+| 19  | `heading3_size_pt` | number | no       | 0                   | Heading 3 font size in points. `0` = default                 |
+
+## Self-hosted Mermaid (recommended for restricted networks)
+
+The public `mermaid.ink` may be slow or unreachable from some regions. Deploy your own instance on the same server as Dify:
+
+```bash
+docker run -d --restart unless-stopped -p 3000:3000 ghcr.io/jihchi/mermaid.ink
+```
+
+If Dify is deployed via `docker compose`, add to `docker-compose.yaml`:
+
+```yaml
+mermaid_ink:
+  image: ghcr.io/jihchi/mermaid.ink
+  restart: unless-stopped
+  ports:
+    - "3000:3000"
+```
+
+Then set the `mermaid_api_url` tool parameter to `http://<host>:3000` (use `http://mermaid_ink:3000` for compose internal networking).
+
+If using Dify's `.env`, add:
+
+```ini
+MERMAID_INK_URL=http://your-server:3000
+```
 
 ## Network and privacy
 
-- **Mermaid Ink** (`https://mermaid.ink/img`): when `mermaid_enabled=true`, each `` ```mermaid `` code block is sent to this public service for rendering. The block source code is the only payload. Set `mermaid_enabled=false` to disable.
+- **Mermaid Ink** (`https://mermaid.ink`): when `mermaid_enabled=true`, each `` ```mermaid `` code block is sent to this service for PNG rendering. The block source code is the only payload. Set `mermaid_enabled=false` to disable, or use `mermaid_api_url` for a self-hosted instance.
 - **Pandoc**: bundled inside the `pypandoc-binary` pip wheel, so no GitHub download is needed at first run. No user data is transmitted.
 - **Temporary files**: Mermaid PNGs and any uploaded template are written to the plugin sandbox temp dir and cleaned up after each conversion. On Windows the path may contain the OS username.
 

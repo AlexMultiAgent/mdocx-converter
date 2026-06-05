@@ -327,17 +327,17 @@ def _encode_mermaid_pako(diagram: str) -> str:
     return base64.urlsafe_b64encode(compressed).decode("ascii").rstrip("=")
 
 
-def render_mermaid_via_api(diagram: str) -> bytes:
+def render_mermaid_via_api(diagram: str, api_url: str | None = None) -> bytes:
     """Render a Mermaid diagram via the Mermaid Ink API. Returns PNG bytes.
 
-    Uses the GET /img/pako:<zlib+base64url> endpoint. The MERMAID_INK_URL
-    env var can override the default https://mermaid.ink for self-hosted
-    instances.
+    Uses the GET /img/pako:<zlib+base64url> endpoint. If api_url is provided
+    it overrides the default (supporting self-hosted instances).
     Raises requests.RequestException on HTTP / network errors.
     """
+    base_url = api_url or MERMAID_INK_URL
     encoded = _encode_mermaid_pako(diagram)
     resp = requests.get(
-        f"{MERMAID_INK_URL}/img/pako:{encoded}",
+        f"{base_url}/img/pako:{encoded}",
         headers={"User-Agent": PLUGIN_USER_AGENT},
         timeout=MERMAID_REQUEST_TIMEOUT_SECONDS,
     )
@@ -346,7 +346,8 @@ def render_mermaid_via_api(diagram: str) -> bytes:
 
 
 def _render_one_with_retry(index: int, diagram: str, temp_dir: str,
-                            errors: list[str]) -> tuple[int, str | None]:
+                            errors: list[str],
+                            api_url: str | None = None) -> tuple[int, str | None]:
     """Render one Mermaid diagram with exponential-backoff retries.
 
     On final failure, records the error in `errors` and returns (index, None).
@@ -354,7 +355,7 @@ def _render_one_with_retry(index: int, diagram: str, temp_dir: str,
     last_err: Exception | None = None
     for attempt in range(MERMAID_MAX_ATTEMPTS):
         try:
-            png_bytes = render_mermaid_via_api(diagram)
+            png_bytes = render_mermaid_via_api(diagram, api_url=api_url)
             png_path = os.path.join(temp_dir, f"diagram-{index}.png")
             with open(png_path, "wb") as f:
                 f.write(png_bytes)
@@ -368,7 +369,8 @@ def _render_one_with_retry(index: int, diagram: str, temp_dir: str,
     return index, None
 
 
-def preprocess_mermaid(markdown_text: str, enabled: bool = True) -> tuple[str, int, str, list[str]]:
+def preprocess_mermaid(markdown_text: str, enabled: bool = True,
+                       api_url: str | None = None) -> tuple[str, int, str, list[str]]:
     """Extract ```mermaid blocks, render to PNGs via API, replace with image refs.
 
     Returns (processed_markdown, mermaid_count, temp_dir, errors).
@@ -402,7 +404,7 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True) -> tuple[str, i
     # Render diagrams sequentially with retry (safe in gevent-patched envs)
     results: dict[int, str | None] = {}
     for idx, match in enumerate(matches, 1):
-        _, png_path = _render_one_with_retry(idx, match.group(1).strip(), temp_dir, errors)
+        _, png_path = _render_one_with_retry(idx, match.group(1).strip(), temp_dir, errors, api_url=api_url)
         results[idx] = png_path
 
     # Assemble output preserving original order
@@ -863,8 +865,9 @@ class Md2DocxTool(Tool):
 
             # Mermaid preprocessing
             stage = "mermaid_preprocessing"
+            mermaid_api_url = parameters.get("mermaid_api_url") or None
             processed_md, mermaid_count, mermaid_dir, mermaid_errors = preprocess_mermaid(
-                markdown_content, enabled=mermaid_enabled
+                markdown_content, enabled=mermaid_enabled, api_url=mermaid_api_url
             )
             warnings.extend(mermaid_errors)
 
