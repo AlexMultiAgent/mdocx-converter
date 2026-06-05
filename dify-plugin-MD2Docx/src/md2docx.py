@@ -312,18 +312,24 @@ MERMAID_INK_URL = "https://mermaid.ink/img"
 PLUGIN_USER_AGENT = "md2docx-dify-plugin/0.0.1 (+https://github.com/AlexMultiAgent/mdocx-converter)"
 
 
+def _encode_mermaid_pako(diagram: str) -> str:
+    """Encode a Mermaid diagram using pako (zlib + base64url)."""
+    import base64
+    import zlib
+    compressed = zlib.compress(diagram.encode("utf-8"))
+    return base64.urlsafe_b64encode(compressed).rstrip(b"=").decode("ascii")
+
+
 def render_mermaid_via_api(diagram: str) -> bytes:
     """Render a Mermaid diagram via the Mermaid Ink API. Returns PNG bytes.
 
+    Uses the current GET /img/pako:<zlib+base64url> endpoint.
     Raises requests.RequestException on HTTP / network errors.
     """
-    resp = requests.post(
-        MERMAID_INK_URL,
-        json={"code": diagram},
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": PLUGIN_USER_AGENT,
-        },
+    encoded = _encode_mermaid_pako(diagram)
+    resp = requests.get(
+        f"{MERMAID_INK_URL}/pako:{encoded}",
+        headers={"User-Agent": PLUGIN_USER_AGENT},
         timeout=MERMAID_REQUEST_TIMEOUT_SECONDS,
     )
     resp.raise_for_status()
