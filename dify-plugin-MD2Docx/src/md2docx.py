@@ -944,10 +944,7 @@ class Md2DocxTool(Tool):
 
 
 class MermaidConverterTool(Tool):
-    """Dify Tool: render Mermaid diagram code to image (PNG/JPG/SVG/PDF)."""
-
-    _ENDPOINTS = {"png": "img", "jpg": "img", "svg": "svg", "pdf": "pdf"}
-    _MIME = {"png": "image/png", "jpg": "image/jpeg", "svg": "image/svg+xml", "pdf": "application/pdf"}
+    """Dify Tool: render Mermaid diagram code to a PNG image."""
 
     def _invoke(self, parameters: dict) -> Generator[ToolInvokeMessage, None, None]:
         code = (parameters.get("mermaid_code") or "").strip()
@@ -955,31 +952,20 @@ class MermaidConverterTool(Tool):
             yield self.create_text_message("Error: mermaid_code is required")
             return
 
-        fmt = (parameters.get("output_format") or "png").lower()
-        if fmt not in self._ENDPOINTS:
-            yield self.create_text_message(f"Error: unsupported format '{fmt}'. Use png, jpg, svg, or pdf.")
-            return
-
         # Strip code fences if present
         if code.startswith("```"):
             code = re.sub(r"^```mermaid\s*", "", code)
             code = re.sub(r"```$", "", code).strip()
 
-        api_url = parameters.get("mermaid_api_url") or MERMAID_INK_URL
-        encoded = _encode_mermaid_pako(code)
-        endpoint = self._ENDPOINTS[fmt]
-        url = f"{api_url}/{endpoint}/pako:{encoded}"
-        if fmt == "jpg":
-            url += "?type=jpeg"
+        api_url = parameters.get("mermaid_api_url") or None
 
         try:
-            resp = requests.get(url, headers={"User-Agent": PLUGIN_USER_AGENT}, timeout=MERMAID_REQUEST_TIMEOUT_SECONDS)
-            resp.raise_for_status()
+            png_bytes = render_mermaid_via_api(code, api_url=api_url)
         except Exception as e:
             yield self.create_text_message(f"Mermaid rendering failed: {e}")
             return
 
         yield self.create_blob_message(
-            blob=resp.content,
-            meta={"mime_type": self._MIME[fmt], "file_name": f"diagram.{fmt}"},
+            blob=png_bytes,
+            meta={"mime_type": "image/png", "file_name": "diagram.png"},
         )
