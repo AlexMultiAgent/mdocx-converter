@@ -130,3 +130,53 @@ Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`,
 | Output | Write to filesystem | Return blob to Dify |
 | Settings | VS Code settings UI | Tool parameters |
 | Code style override | Direct XML for SourceCode/VerbatimChar | python-docx style API |
+
+## Deployment tuning (self-hosted Dify)
+
+This section is for operators running self-hosted Dify. The Marketplace README is kept minimal and points here for the deep details.
+
+### pip mirror for plugin env (`docker/.env`)
+
+The plugin's Python dependencies are installed at plugin init time by the daemon. A nearby mirror makes the first install noticeably faster and avoids PyPI rate limits in CI.
+
+```ini
+# ð¨ð© China â Aliyun (recommended)
+PIP_MIRROR_URL=https://mirrors.aliyun.com/pypi/simple/
+
+# ð All other regions â leave empty; pip uses https://pypi.org/simple/ automatically
+# PIP_MIRROR_URL=
+```
+
+If you set an HTTP mirror (rare), also add it to `PIP_TRUSTED_HOST`:
+
+```ini
+PIP_TRUSTED_HOST=mirrors.aliyun.com
+```
+
+After editing `docker/.env`: `docker compose down && docker compose up -d`.
+
+Verify the env reached the daemons:
+
+```bash
+docker exec docker-plugin_daemon-1 env | grep PIP_MIRROR_URL
+docker exec docker-sandbox-1        env | grep PIP_MIRROR_URL
+```
+
+### Sandbox timeouts (optional)
+
+The plugin loads ~5 packages (`dify_plugin`, `pypandoc-binary`, `python-docx`, `requests`, `lxml`) on first install. In slow networks bump the init timeout:
+
+```ini
+PLUGIN_PYTHON_ENV_INIT_TIMEOUT=720   # default 120s
+PLUGIN_MAX_EXECUTION_TIMEOUT=1800    # default 600s
+```
+
+### Pandoc availability
+
+`pypandoc-binary` ships the pandoc binary inside the pip wheel, so no GitHub download is needed. If the runner is air-gapped, the binary is extracted under the plugin's venv (`sys.prefix/bin/pandoc` or `Scripts\pandoc.exe` on Windows) and is found automatically. No `PYPANDOC_PANDOC` env var is required.
+
+If you ever see a `FileNotFoundError` for `pandoc`, check that the wheel installed correctly:
+
+```bash
+python -c "import pypandoc; print(pypandoc.get_pandoc_version())"
+

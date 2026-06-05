@@ -9,8 +9,8 @@ tags:
   - "utilities"
 
 label:
-  en_US: "md2docx - Markdown to DOCX"
-  zh_Hans: "md2docx - Markdown 转 Word"
+  en_US: "md2docx"
+  zh_Hans: "md2docx"
 
 description:
   en_US: >

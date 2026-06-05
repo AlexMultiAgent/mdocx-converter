@@ -3,155 +3,92 @@
 [![Dify](https://img.shields.io/badge/Dify-Plugin-1c64f2?logo=dify)](https://marketplace.dify.ai/plugin/alexmultiagent/md2docx)
 [![VS Code](https://img.shields.io/badge/VS%20Code-Extension-007ACC?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=alexmultiagent.mdocx-converter)
 
-Convert Markdown to polished Microsoft Word documents in Dify workflows. Built-in Chinese/English templates, Mermaid diagram rendering, and fine-grained style control.
+Convert Markdown to polished Microsoft Word documents inside Dify workflows. Built-in Chinese/English templates, Mermaid diagram rendering, and fine-grained font/spacing/margin control. No external API key required.
+
+[Chinese documentation](./readme/README_zh_Hans.md) | Marketplace listing: https://marketplace.dify.ai/plugin/alexmultiagent/md2docx
 
 ## Installation
 
-### From Dify Marketplace
+### From the Dify Marketplace
 
-1. Open your Dify workspace → **Plugins** → **Marketplace**
-2. Search for "md2docx"
-3. Click **Install**
+1. In your Dify workspace, open **Plugins** → **Marketplace**.
+2. Search for **md2docx**.
+3. Click **Install**.
 
-### From local `.difypkg`
+### From a local `.difypkg`
 
 ```bash
-# Build the plugin package
+# In a clean Python environment
 pip install dify-plugin-cli
-dify-plugin package .
-
-# Install the generated .difypkg in Dify
-# Plugins → Local → Upload
+dify-plugin plugin package .
+# Then in Dify: Plugins → Local → Upload → select the .difypkg
 ```
+
+The package depends on `pypandoc-binary`, which bundles the Pandoc binary inside the pip wheel. The first invocation needs no GitHub download.
+
+## Features
+
+- **6 style profiles** mapped to 12 built-in reference DOCX templates (2 languages × 6 profiles), including presets for `academic`, `thesis` (GB/T 7713), `technical`, `business`, `official` (GB/T 9704-2012), and `template` (use your own reference only).
+- **Mermaid rendering** via the public Mermaid Ink API — `` ```mermaid `` blocks are converted to PNG and embedded in the output. Disable with `mermaid_enabled=false` for offline or privacy-sensitive content.
+- **Fine-grained style overrides**: 13 advanced parameters let you override body/heading fonts, sizes, line spacing, and four margins per call.
+- **CJK-first**: automatic Chinese/English detection, full SimSun / SimHei / FangSong / KaiTi / Microsoft YaHei defaults.
+- **DOCX post-processing**: dangling image relationships from reference templates are stripped so every output opens cleanly in Word and python-docx.
 
 ## Style Profiles
 
-| Profile | Body Font | Body Size | Headings | Line Spacing | Margins (mm) | 适用标准 |
-|---------|-----------|-----------|----------|-------------|-------------|---------|
-| **academic** | SimSun | 12pt | SimHei 16/14/12pt | 1.5 | 25.4 | 学术写作 / CSSCI 期刊（学位论文请用 `thesis`） |
-| **thesis** | SimSun | 12pt | SimHei 22/16/14pt | 1.5 | 30 | GB/T 7713 学位论文 |
-| **technical** | Arial | 11pt | Arial 16/14/12pt | 1.35 | 19 | 技术博客 / API 文档 |
-| **business** | Arial | 11pt | Arial 18/14/12pt | 1.5 | 25.4 | 商务报告 / 内部备忘录 |
-| **official** | FangSong | 16pt | SimHei (H1) / KaiTi (H2) / FangSong (H3) 16pt | 1.75 | 37/35/28/26 | GB/T 9704-2012 |
-| **template** | (from reference docx) | — | — | — | — | 完全自定义 |
+| Profile      | Body Font | Body Size | Headings                       | Line Spacing | Margins (mm)         | Standard / Use case                              |
+|--------------|-----------|-----------|--------------------------------|--------------|----------------------|--------------------------------------------------|
+| `academic`   | SimSun    | 12 pt     | SimHei 16 / 14 / 12 pt         | 1.5          | 25.4                 | Academic writing, CSSCI submissions               |
+| `thesis`     | SimSun    | 12 pt     | SimHei 22 / 16 / 14 pt         | 1.5          | 30                   | Degree thesis (GB/T 7713)                        |
+| `technical`  | Arial     | 11 pt     | Arial 16 / 14 / 12 pt          | 1.35         | 19                   | Tech blogs, API docs                              |
+| `business`   | Arial     | 11 pt     | Arial 18 / 14 / 12 pt          | 1.5          | 25.4                 | Business reports, internal memos                  |
+| `official`   | FangSong  | 16 pt     | SimHei (H1) / KaiTi (H2) / FangSong (H3) 16 pt | 1.75 | 37 / 35 / 28 / 26 | Government / official documents (GB/T 9704-2012) |
+| `template`   | (from reference DOCX) | — | —                              | —          | —                  | Pure template, no preset overrides                |
 
-All profile defaults can be overridden per invocation via the Advanced parameters.
+All profile defaults can be overridden per call via the advanced parameters.
 
-> **关于模板**：`official`（中文）和 `thesis`（中文）分别对应 GB/T 9704-2012 和 GB/T 7713，各有中文模板文件。对应的英文模板文件作为兼容性配套存在，无特定英文公文/学位论文标准依据。
+## Parameters (18 total)
 
-### 如何选择 style profile？
+### Core
 
-- **投稿到 IEEE/ACM/Springer** → 请下载官方 `.dotx` 模板，通过 `custom_template` 参数上传
-- **国内学位论文（GB/T 7713）** → `thesis` profile（H1 二号 22pt、四周 30mm）
-- **国内 CSSCI 期刊投稿** → `academic` profile 默认值即可
-- **政府公文（GB/T 9704）** → `official` profile
-- **现代商务文档 / PPT 风格报告** → `business` profile
-- **技术博客 / 现代 API 文档** → `technical` profile
-- **完全自定义** → `template` profile + 上传 `custom_template`
+| #  | Parameter          | Type   | Required | Default      | Description                                                  |
+|----|--------------------|--------|----------|--------------|--------------------------------------------------------------|
+| 1  | `markdown_content` | string | yes      | —           | The Markdown text to convert (max 5 MB; GFM, tables, images, Mermaid) |
+| 2  | `title`            | string | no       | `"Document"` | Output filename without `.docx`                             |
+| 3  | `style_profile`    | select | no       | `academic`   | One of: `academic`, `thesis`, `technical`, `business`, `official`, `template` |
+| 4  | `reference_language` | select | no     | `auto`       | Template language: `auto`, `english`, `chinese` (samples the first 20K characters) |
 
-## Parameter Reference (19 total)
+### Extended
 
-### Core Parameters
+| #  | Parameter         | Type    | Required | Default | Description                                              |
+|----|-------------------|---------|----------|---------|----------------------------------------------------------|
+| 5  | `mermaid_enabled` | boolean | no       | `true`  | Render `` ```mermaid `` blocks via the Mermaid Ink API |
 
-| # | Parameter | Type | Required | Default | Description |
-|---|-----------|------|----------|---------|-------------|
-| 1 | `markdown_content` | string | ✅ | — | Markdown text to convert (GFM, tables, images, Mermaid) |
-| 2 | `title` | string | — | `"Document"` | Output filename (without `.docx`) |
-| 3 | `style_profile` | select | — | `"academic"` | One of: `academic`, `thesis`, `technical`, `business`, `official`, `template` |
-| 4 | `reference_language` | select | — | `"auto"` | Template language: `auto`, `english`, `chinese` |
-| 5 | `custom_template` | file | — | — | Upload a custom `reference.docx` to override built-in template |
+### Advanced (style overrides)
 
-### Extended Parameters
+| #  | Parameter           | Type   | Required | Default       | Description                                |
+|----|---------------------|--------|----------|---------------|--------------------------------------------|
+| 6  | `body_font`         | string | no       | profile default | Body text font name                     |
+| 7  | `body_size_pt`      | number | no       | 0 (profile default) | Body font size in points. `0` = default |
+| 8  | `line_spacing`      | number | no       | 0             | Line spacing multiplier (1.0, 1.25, 1.5, 2.0). `0` = default |
+| 9  | `margin_top_mm`     | number | no       | 0             | Top page margin in mm. `0` = default      |
+| 10 | `margin_bottom_mm`  | number | no       | 0             | Bottom page margin in mm. `0` = default   |
+| 11 | `margin_left_mm`    | number | no       | 0             | Left page margin in mm. `0` = default     |
+| 12 | `margin_right_mm`   | number | no       | 0             | Right page margin in mm. `0` = default    |
+| 13 | `heading1_font`     | string | no       | profile default | Heading 1 font name                      |
+| 14 | `heading1_size_pt`  | number | no       | 0             | Heading 1 font size in points. `0` = default |
+| 15 | `heading2_font`     | string | no       | profile default | Heading 2 font name                      |
+| 16 | `heading2_size_pt`  | number | no       | 0             | Heading 2 font size in points. `0` = default |
+| 17 | `heading3_font`     | string | no       | profile default | Heading 3 font name                      |
+| 18 | `heading3_size_pt`  | number | no       | 0             | Heading 3 font size in points. `0` = default |
 
-| # | Parameter | Type | Required | Default | Description |
-|---|-----------|------|----------|---------|-------------|
-| 6 | `mermaid_enabled` | boolean | — | `true` | Render ` ```mermaid` blocks via Mermaid Ink API |
+## Network and privacy
 
-### Advanced Parameters (Style Overrides)
+- **Mermaid Ink** (`https://mermaid.ink/img`): when `mermaid_enabled=true`, each `` ```mermaid `` code block is sent to this public service for rendering. The block source code is the only payload. Set `mermaid_enabled=false` to disable.
+- **Pandoc**: bundled inside the `pypandoc-binary` pip wheel, so no GitHub download is needed at first run. No user data is transmitted.
+- **Temporary files**: Mermaid PNGs and any uploaded template are written to the plugin sandbox temp dir and cleaned up after each conversion. On Windows the path may contain the OS username.
 
-| # | Parameter | Type | Required | Default | Description |
-|---|-----------|------|----------|---------|-------------|
-| 7 | `body_font` | string | — | profile default | Body text font name |
-| 8 | `body_size_pt` | number | — | profile default | Body font size (pt). Set 0 for default |
-| 9 | `line_spacing` | number | — | profile default | Line spacing multiplier (1.0, 1.5, 2.0, etc.) |
-| 10 | `margin_top_mm` | number | — | profile default | Top page margin in mm |
-| 11 | `margin_bottom_mm` | number | — | profile default | Bottom page margin in mm |
-| 12 | `margin_left_mm` | number | — | profile default | Left page margin in mm |
-| 13 | `margin_right_mm` | number | — | profile default | Right page margin in mm |
-| 14 | `heading1_font` | string | — | profile default | Heading 1 font name |
-| 15 | `heading1_size_pt` | number | — | profile default | Heading 1 font size (pt) |
-| 16 | `heading2_font` | string | — | profile default | Heading 2 font name |
-| 17 | `heading2_size_pt` | number | — | profile default | Heading 2 font size (pt) |
-| 18 | `heading3_font` | string | — | profile default | Heading 3 font name |
-| 19 | `heading3_size_pt` | number | — | profile default | Heading 3 font size (pt) |
-
-## Network Requirements
-
-On first invocation, `pypandoc` automatically downloads the **Pandoc** binary from GitHub Releases:
-
-| Detail | Value |
-|--------|-------|
-| Download size | ~50 MB (compressed) |
-| Extracted size | ~150 MB |
-| Download URL | `https://github.com/jgm/pandoc/releases` |
-| Frequency | Once, cached for subsequent calls |
-
-**⚠️ Restricted environments:** In air-gapped, firewalled, or proxy-restricted deployments, this download may fail. Mitigations:
-
-- **Pre-install pandoc** on the Dify runner (`apt install pandoc` / `brew install pandoc`)
-- **Ensure outbound access** to `github.com` and `github-releases.githubusercontent.com`
-- **Test first run** in a non-production environment to verify connectivity
-
-Once downloaded, pandoc is cached and no further network access is needed for pandoc itself.
-
-## Dify `.env` Configuration
-
-For self-hosted Dify deployments, configure the pip mirror source in `docker/.env` to match your region. This plugin's Python dependencies (~4 packages) are installed at plugin init time and benefit from a nearby mirror.
-
-### `PIP_MIRROR_URL`
-
-```ini
-# 🇨🇳 China — 阿里云镜像（推荐）
-PIP_MIRROR_URL=https://mirrors.aliyun.com/pypi/simple/
-
-# 🌍 All other locations — 保持默认（留空或不设置，pip 自动走 PyPI 官方源）
-# PIP_MIRROR_URL=
-```
-
-**Select according to your region:**
-- **China** → `PIP_MIRROR_URL=https://mirrors.aliyun.com/pypi/simple/`
-- **All other locations** → leave empty / not set (pip uses `https://pypi.org/simple/` by default)
-
-### Related sandbox settings
-
-```ini
-# Increase timeouts if installing over slow connections
-PLUGIN_PYTHON_ENV_INIT_TIMEOUT=720       # Python env init timeout (seconds, default: 120)
-PLUGIN_MAX_EXECUTION_TIMEOUT=1800        # Max plugin execution timeout (seconds, default: 600)
-
-# Trust custom mirrors if using HTTP (HTTPS mirrors don't need this)
-PIP_TRUSTED_HOST=mirrors.aliyun.com
-```
-
-After changing `.env`, restart Dify:
-```bash
-docker compose down && docker compose up -d
-```
-
-Verify the setting took effect:
-```bash
-docker exec -it docker-plugin_daemon-1 env | grep PIP_MIRROR_URL
-docker exec -it docker-sandbox-1 env | grep PIP_MIRROR_URL
-```
-
-## Privacy
-
-This plugin may make external network requests:
-
-- **Mermaid Ink API** (`mermaid.ink`): When `mermaid_enabled` is `true`, Mermaid code blocks are sent to this public service for rendering. Set `mermaid_enabled: false` to disable.
-- **Pandoc Download**: See [Network Requirements](#network-requirements) above.
-
-See [PRIVACY.md](./PRIVACY.md) for full details.
+Full privacy policy: [PRIVACY.md](./PRIVACY.md).
 
 ## Development
 
@@ -161,4 +98,4 @@ pip install -r requirements-dev.txt
 pytest tests/ -v
 ```
 
-Part of the [mdocx-converter](https://github.com/AlexMultiAgent/mdocx-converter) monorepo.
+Repository: https://github.com/AlexMultiAgent/mdocx-converter (part of the mdocx-converter monorepo).

@@ -6,8 +6,8 @@ identity:
   name: "md2docx"
   icon: "icon.svg"
   label:
-    en_US: "md2docx - Markdown to Word"
-    zh_Hans: "md2docx - Markdown 转 Word"
+    en_US: "md2docx"
+    zh_Hans: "md2docx"
   description:
     en_US: "Convert Markdown to polished DOCX with templates, Mermaid, and style presets."
     zh_Hans: "将 Markdown 转换为精美 DOCX，支持模板、Mermaid 和样式预设。"
