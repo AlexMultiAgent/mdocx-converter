@@ -35,7 +35,7 @@ The package depends on `pypandoc-binary`, which bundles Pandoc inside the pip wh
 
 ## Features
 
-- **6 style profiles** with built-in reference DOCX templates (Chinese + English × 6): `technical`, `business`, `official` (GB/T 9704-2012), `academic`, `thesis` (GB/T 7713), and `template`.
+- **6 style profiles** with built-in reference DOCX templates (Chinese + English × 6): `technical`, `business`, `official` (GB/T 9704), `academic`, `thesis` (GB/T 7713), and `template`.
 - **Mermaid rendering** via Mermaid Ink API. Inline in DOCX or standalone via the `Mermaid to Image` tool.
 - **Fine-grained overrides**: 13 advanced parameters for body/heading fonts, sizes, line spacing, and margins.
 - **CJK-first**: automatic Chinese/English detection with SimSun / SimHei / FangSong / KaiTi defaults.

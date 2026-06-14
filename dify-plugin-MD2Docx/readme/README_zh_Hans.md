@@ -35,7 +35,7 @@ dify-plugin plugin package .
 
 ## 功能
 
-- **6 种样式预设**，内置中英文参考模板（2 语言 × 6 样式）：`technical`（技术文档）、`business`（商业报告）、`official`（GB/T 9704-2012 公文）、`academic`（学术论文）、`thesis`（GB/T 7713 学位论文）、`template`（完全自定义）。
+- **6 种样式预设**，内置中英文参考模板（2 语言 × 6 样式）：`technical`（技术文档）、`business`（商业报告）、`official`（GB/T 9704 公文）、`academic`（学术论文）、`thesis`（GB/T 7713 学位论文）、`template`（完全自定义）。
 - **Mermaid 渲染**：通过 Mermaid Ink API 将代码块转为 PNG。可在 DOCX 内嵌，也可通过独立 `Mermaid to Image` 工具单独渲染。
 - **13 项样式覆盖**：正文/标题字体、字号、行距、四边距均可逐项覆盖。
 - **中文优先**：自动中英文检测，SimSun / SimHei / FangSong / KaiTi 全覆盖。
@@ -47,7 +47,7 @@ dify-plugin plugin package .
 |------|---------|------|---------|------|-----------|---------|
 | `technical` | Arial | 11 pt | Arial 16/14/12 pt | 1.35 | 19 | 技术博客 / API 文档 |
 | `business` | Arial | 11 pt | Arial 18/14/12 pt | 1.5 | 25.4 | 商务报告 / 内部备忘录 |
-| `official` | FangSong | 16 pt | SimHei/KaiTi/FangSong 16 pt | 1.75 | 37/35/28/26 | GB/T 9704-2012 |
+| `official` | FangSong | 16 pt | SimHei/KaiTi/FangSong 16 pt | 1.75 | 37/35/28/26 | GB/T 9704 |
 | `academic` | SimSun | 12 pt | SimHei 16/14/12 pt | 1.5 | 25.4 | CSSCI 期刊 / 学术写作 |
 | `thesis` | SimSun | 12 pt | SimHei 22/16/14 pt | 1.5 | 30 | GB/T 7713 |
 | `template` | 参考文件决定 | — | — | — | — | 完全自定义 |
