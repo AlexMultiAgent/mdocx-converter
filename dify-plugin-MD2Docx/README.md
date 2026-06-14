@@ -9,11 +9,11 @@ Convert Markdown to polished Word documents inside Dify workflows. Built-in Chin
 
 ## Tools
 
-| Tool | Params | Use case |
-|------|--------|----------|
-| **Markdown to DOCX** | 6 | Everyday conversion — pick a profile and go |
-| **Markdown to DOCX (Advanced)** | 19 | Full control over fonts, sizes, margins |
-| **Mermaid to Image** | 2 | Render a standalone Mermaid diagram to PNG |
+| Tool                            | Params | Use case                                    |
+| ------------------------------- | ------ | ------------------------------------------- |
+| **Markdown to DOCX**            | 6      | Everyday conversion — pick a profile and go |
+| **Markdown to DOCX (Advanced)** | 19     | Full control over fonts, sizes, margins     |
+| **Mermaid to Image**            | 2      | Render a standalone Mermaid diagram to PNG  |
 
 ## Installation
 
@@ -43,14 +43,14 @@ The package depends on `pypandoc-binary`, which bundles Pandoc inside the pip wh
 
 ## Style Profiles
 
-| Profile | Body Font | Body Size | Headings | Line Spacing | Margins (mm) | Standard |
-|---------|-----------|-----------|----------|-------------|---------------|----------|
-| `technical` | Arial | 11 pt | Arial 16 / 14 / 12 pt | 1.35 | 19 | Tech blogs, API docs |
-| `business` | Arial | 11 pt | Arial 18 / 14 / 12 pt | 1.5 | 25.4 | Business reports, memos |
-| `official` | FangSong | 16 pt | SimHei / KaiTi / FangSong 16 pt | 1.75 | 37/35/28/26 | GB/T 9704-2012 |
-| `academic` | SimSun | 12 pt | SimHei 16 / 14 / 12 pt | 1.5 | 25.4 | Academic writing, CSSCI |
-| `thesis` | SimSun | 12 pt | SimHei 22 / 16 / 14 pt | 1.5 | 30 | GB/T 7713 |
-| `template` | (from reference) | — | — | — | — | Fully custom |
+| Profile     | Body Font        | Body Size | Headings                        | Line Spacing | Margins (mm) | Standard                              |
+| ----------- | ---------------- | --------- | ------------------------------- | ------------ | ------------ | ------------------------------------- |
+| `technical` | Arial            | 11 pt     | Arial 16 / 14 / 12 pt           | 1.35         | 19           | Tech blogs, API docs                  |
+| `business`  | Arial            | 11 pt     | Arial 18 / 14 / 12 pt           | 1.5          | 25.4         | Business reports, memos               |
+| `official`  | FangSong         | 16 pt     | SimHei / KaiTi / FangSong 16 pt | 1.75         | 37/35/28/26  | GB/T 9704 |
+| `academic`  | SimSun           | 12 pt     | SimHei 16 / 14 / 12 pt          | 1.5          | 25.4         | Academic writing, CSSCI               |
+| `thesis`    | SimSun           | 12 pt     | SimHei 22 / 16 / 14 pt          | 1.5          | 30           | GB/T 7713                             |
+| `template`  | (from reference) | —         | —                               | —            | —            | Fully custom                          |
 
 > English `official` and `thesis` templates exist as compatibility companions; no specific English standard.
 
@@ -58,14 +58,14 @@ The package depends on `pypandoc-binary`, which bundles Pandoc inside the pip wh
 
 ### Markdown to DOCX (6)
 
-| # | Parameter | Type | Required | Default | Description |
-|---|-----------|------|----------|---------|-------------|
-| 1 | `markdown_content` | string | yes | — | The Markdown text (max 5 MB; GFM, tables, images, Mermaid) |
-| 2 | `title` | string | no | `"Document"` | Output filename without `.docx` |
-| 3 | `style_profile` | select | no | `academic` | Style preset (see table above) |
-| 4 | `reference_language` | select | no | `auto` | `auto` / `english` / `chinese` |
-| 5 | `mermaid_enabled` | boolean | no | `true` | Render Mermaid blocks to images |
-| 6 | `mermaid_api_url` | string | no | — | Self-hosted Mermaid Ink URL |
+| #   | Parameter            | Type    | Required | Default      | Description                                                |
+| --- | -------------------- | ------- | -------- | ------------ | ---------------------------------------------------------- |
+| 1   | `markdown_content`   | string  | yes      | —            | The Markdown text (max 5 MB; GFM, tables, images, Mermaid) |
+| 2   | `title`              | string  | no       | `"Document"` | Output filename without `.docx`                            |
+| 3   | `style_profile`      | select  | no       | `academic`   | Style preset (see table above)                             |
+| 4   | `reference_language` | select  | no       | `auto`       | `auto` / `english` / `chinese`                             |
+| 5   | `mermaid_enabled`    | boolean | no       | `true`       | Render Mermaid blocks to images                            |
+| 6   | `mermaid_api_url`    | string  | no       | —            | Self-hosted Mermaid Ink URL                                |
 
 ### Markdown to DOCX (Advanced)
 
@@ -73,10 +73,10 @@ All 6 core parameters above plus 13 style overrides: `body_font`, `body_size_pt`
 
 ### Mermaid to Image (2)
 
-| # | Parameter | Type | Required | Default | Description |
-|---|-----------|------|----------|---------|-------------|
-| 1 | `mermaid_code` | string | yes | — | Mermaid diagram syntax |
-| 2 | `mermaid_api_url` | string | no | — | Self-hosted Mermaid Ink URL |
+| #   | Parameter         | Type   | Required | Default | Description                 |
+| --- | ----------------- | ------ | -------- | ------- | --------------------------- |
+| 1   | `mermaid_code`    | string | yes      | —       | Mermaid diagram syntax      |
+| 2   | `mermaid_api_url` | string | no       | —       | Self-hosted Mermaid Ink URL |
 
 ## Self-hosted Mermaid
 
