@@ -5,7 +5,7 @@
 
 Convert Markdown to polished Word documents inside Dify workflows. Built-in Chinese/English templates, Mermaid diagram rendering, and fine-grained style control. No API key required.
 
-[Documentation in Chinese](https://github.com/AlexMultiAgent/mdocx-converter/blob/main/dify-plugin-MD2Docx/README_zh_Hans.md) | [Marketplace](https://marketplace.dify.ai/plugin/alexmultiagent/md2docx)
+[Documentation in Chinese](https://github.com/AlexMultiAgent/mdocx-converter/blob/main/dify-plugin-MD2Docx/readme/README_zh_Hans.md) | [Marketplace](https://marketplace.dify.ai/plugin/alexmultiagent/md2docx)
 
 ## Tools
 

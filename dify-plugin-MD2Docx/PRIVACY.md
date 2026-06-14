@@ -17,12 +17,19 @@ code fences, no file metadata.
 **To disable:** Set the `mermaid_enabled` parameter to `false`. Mermaid code
 blocks will be preserved as plain text code blocks in the DOCX output.
 
-## Pandoc Binary Download
+## Pandoc Binary
 
-On first use, this plugin uses `pypandoc` to download the Pandoc binary
-(~50MB) from the official Pandoc GitHub releases. This is a one-time download
-cached for subsequent invocations. No user data is transmitted during this
-process.
+The Pandoc binary is **bundled** inside the `pypandoc-binary` Python wheel
+and extracted into the plugin venv at install time. There is **no runtime
+download** from GitHub or any other host — the plugin never makes a network
+request for Pandoc.
+
+The binary is found automatically under the plugin venv at
+`sys.prefix/bin/pandoc` (or `Scripts\pandoc.exe` on Windows). No
+`PYPANDOC_PANDOC` environment variable is required.
+
+If your environment is air-gapped, no action is needed — the binary
+arrives with `pip install`.
 
 ## Temporary Files
 

@@ -1,12 +1,12 @@
-version: 0.0.1
+version: "0.0.1"
 type: plugin
 author: "alexmultiagent"
 name: "md2docx"
 created_at: "2026-06-02T00:00:00.000000Z"
 repo: "https://github.com/AlexMultiAgent/mdocx-converter"
 tags:
-  - "productivity"
   - "utilities"
+  - "productivity"
 
 label:
   en_US: "md2docx"
@@ -59,9 +59,9 @@ meta:
 privacy: "./PRIVACY.md"
 
 # ── Package & network notes ──────────────────────────────────────────────────
-# Approx .difypkg size: ~230 KB. First invocation downloads pandoc (~50 MB) from GitHub.
-# ⚠️ Network: On first invocation, pypandoc auto-downloads the Pandoc binary
-# (~50MB compressed, ~150MB extracted) from GitHub Releases. This is a one-time
-# download cached for subsequent calls. In restricted-network environments
-# (air-gapped, firewall, proxy), pre-install pandoc on the runner or ensure
-# outbound access to github.com. See PRIVACY.md and README.md for details.
+# Approx .difypkg size: ~230 KB. The Pandoc binary is **bundled** inside the
+# `pypandoc-binary` pip wheel and extracted into the plugin venv at install
+# time — there is NO runtime download from GitHub or any other host.
+# No outbound network access is required for Pandoc itself. Only Mermaid
+# preprocessing (when `mermaid_enabled: true`) calls https://mermaid.ink.
+# See PRIVACY.md and README.md for details.

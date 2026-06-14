@@ -1,5 +1,4 @@
 .gitignore
-README.md
 CLAUDE.md
 pytest.ini
 requirements-dev.txt
@@ -8,4 +7,3 @@ tests/
 __pycache__/
 *.pyc
 *.difypkg
-readme/

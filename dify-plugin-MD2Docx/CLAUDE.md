@@ -52,9 +52,8 @@ dify-plugin-MD2Docx/
 ├── manifest.yaml              # Plugin metadata, runtime config
 ├── requirements.txt           # pypandoc-binary, python-docx, requests, lxml
 ├── PRIVACY.md                 # Mermaid Ink API & Pandoc download disclosure
-├── icon.svg                   # CLI requires root-level copy (also in _assets/)
 ├── _assets/
-│   └── icon.svg               # Canonical icon location
+│   └── icon.svg               # Canonical icon location (manifest `icon:` points here)
 ├── multi-templates/           # 8 reference.docx (6 shared with VSC plugin + 2 official)
 ├── provider/
 │   ├── md2docx.py             # Md2DocxProvider (ToolProvider)
