@@ -40,4 +40,4 @@ parameters:
 
 extra:
   python:
-    source: src/md2docx.py
+    source: src/mermaid_converter.py

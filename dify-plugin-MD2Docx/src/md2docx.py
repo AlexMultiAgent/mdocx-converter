@@ -4,6 +4,7 @@ md2docx — Convert Markdown to DOCX with templates, Mermaid, and style presets.
 Ported from mdocx-converter VS Code extension.
 """
 
+import importlib.util
 import os
 import re
 import io
@@ -12,6 +13,7 @@ import shutil
 import tempfile
 import zipfile
 import threading
+from pathlib import Path
 from typing import Optional, Any, Generator
 
 # ── Dify SDK (must import first — triggers gevent monkey-patch) ──
@@ -25,6 +27,20 @@ from docx import Document
 from docx.shared import Cm
 from docx.oxml.ns import qn
 from lxml import etree
+
+# Load the shared Mermaid renderer from its sibling file. The Dify SDK loads
+# this module via `importlib.util.spec_from_file_location`, which sets
+# `__file__` but does NOT add the parent directory to `sys.path`, so a plain
+# `from _mermaid_render import ...` would fail at plugin launch.
+_RENDERER_PATH = Path(__file__).resolve().parent / "_mermaid_render.py"
+_spec = importlib.util.spec_from_file_location("_mermaid_render", _RENDERER_PATH)
+if _spec is None or _spec.loader is None:  # pragma: no cover - defensive
+    raise ImportError(f"Failed to load shared Mermaid renderer from {_RENDERER_PATH}")
+_mermaid_render = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mermaid_render)
+
+render_mermaid_via_api = _mermaid_render.render_mermaid_via_api
+MERMAID_INK_URL = _mermaid_render.MERMAID_INK_URL
 
 # ── Tunables ────────────────────────────────────────────────
 
@@ -308,41 +324,9 @@ def sanitize_filename(name: str) -> str:
 
 # ── Mermaid preprocessing ────────────────────────────────────
 
-MERMAID_INK_URL = os.environ.get("MERMAID_INK_URL", "https://mermaid.ink")
-PLUGIN_USER_AGENT = "md2docx-dify-plugin/0.0.1 (+https://github.com/AlexMultiAgent/mdocx-converter)"
-
-
-def _encode_mermaid_pako(diagram: str) -> str:
-    """Encode a Mermaid diagram in pako format for the mermaid.ink GET API.
-
-    Wraps the diagram in {"code":"..."} JSON, deflates with zlib (level 9),
-    then base64url-encodes without padding. Matches the format produced by
-    the Mermaid Live Editor's share URL.
-    """
-    import base64
-    import json
-    import zlib
-    payload = json.dumps({"code": diagram}, separators=(",", ":"))
-    compressed = zlib.compress(payload.encode("utf-8"), level=9)
-    return base64.urlsafe_b64encode(compressed).decode("ascii").rstrip("=")
-
-
-def render_mermaid_via_api(diagram: str, api_url: str | None = None) -> bytes:
-    """Render a Mermaid diagram via the Mermaid Ink API. Returns PNG bytes.
-
-    Uses the GET /img/pako:<zlib+base64url> endpoint. If api_url is provided
-    it overrides the default (supporting self-hosted instances).
-    Raises requests.RequestException on HTTP / network errors.
-    """
-    base_url = api_url or MERMAID_INK_URL
-    encoded = _encode_mermaid_pako(diagram)
-    resp = requests.get(
-        f"{base_url}/img/pako:{encoded}",
-        headers={"User-Agent": PLUGIN_USER_AGENT},
-        timeout=MERMAID_REQUEST_TIMEOUT_SECONDS,
-    )
-    resp.raise_for_status()
-    return resp.content
+# `render_mermaid_via_api` and `MERMAID_INK_URL` are re-exported at the top of
+# this module from the shared `src/_mermaid_render.py` file. See the loader
+# comment above for why a path-based import is needed.
 
 
 def _render_one_with_retry(index: int, diagram: str, temp_dir: str,
@@ -938,34 +922,3 @@ class Md2DocxTool(Tool):
                     pass
             if mermaid_dir and os.path.isdir(mermaid_dir):
                 shutil.rmtree(mermaid_dir, ignore_errors=True)
-
-
-# ── Mermaid Converter (standalone tool) ──────────────────────────
-
-
-class MermaidConverterTool(Tool):
-    """Dify Tool: render Mermaid diagram code to a PNG image."""
-
-    def _invoke(self, parameters: dict) -> Generator[ToolInvokeMessage, None, None]:
-        code = (parameters.get("mermaid_code") or "").strip()
-        if not code:
-            yield self.create_text_message("Error: mermaid_code is required")
-            return
-
-        # Strip code fences if present
-        if code.startswith("```"):
-            code = re.sub(r"^```mermaid\s*", "", code)
-            code = re.sub(r"```$", "", code).strip()
-
-        api_url = parameters.get("mermaid_api_url") or None
-
-        try:
-            png_bytes = render_mermaid_via_api(code, api_url=api_url)
-        except Exception as e:
-            yield self.create_text_message(f"Mermaid rendering failed: {e}")
-            return
-
-        yield self.create_blob_message(
-            blob=png_bytes,
-            meta={"mime_type": "image/png", "file_name": "diagram.png"},
-        )
