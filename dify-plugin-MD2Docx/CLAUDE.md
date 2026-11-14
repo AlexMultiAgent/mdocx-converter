@@ -17,7 +17,7 @@ Tests live in `tests/`: `smoke_test.py` (pure functions), `test_invoke.py` (Dify
 
 ## Architecture
 
-This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + three Python modules: `src/md2docx.py` (core conversion, ~1090 lines), `src/_mermaid_render.py` (shared Mermaid HTTP client), `src/mermaid_converter.py` (standalone Mermaid tool).
+This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + three Python modules: `src/md2docx.py` (core conversion, ~1220 lines), `src/_mermaid_render.py` (shared Mermaid HTTP client), `src/mermaid_converter.py` (standalone Mermaid tool).
 
 ### Conversion pipeline
 
@@ -57,8 +57,9 @@ dify-plugin-MD2Docx/
 ├── main.py                    # Plugin entry point
 ├── requirements.txt           # pypandoc-binary, python-docx, requests, lxml
 ├── PRIVACY.md                 # Mermaid Ink API & Pandoc download disclosure
+├── icon.svg                   # Referenced by manifest `icon:` — keep byte-identical to _assets/icon.svg
 ├── _assets/
-│   └── icon.svg               # Canonical icon location (manifest `icon:` points here)
+│   └── icon.svg               # Canonical icon location (the marketplace check resolves _assets/<icon>)
 ├── multi-templates/           # 8 reference.docx (6 shared with VSC plugin + 2 official)
 ├── provider/
 │   ├── md2docx.py             # Md2DocxProvider (ToolProvider)
@@ -82,7 +83,7 @@ dify-plugin-MD2Docx/
 
 **Mermaid to Image (2):** `mermaid_code` (req, llm), `mermaid_api_url` (string, form).
 
-> A `custom_template` (`type: file`) param was REMOVED in v0.0.3. A `file`-type tool parameter makes a Dify **workflow** tool node hang in `get_workflow_tool_runtime()` and never dispatch (node stuck "running" until timeout, daemon never receives invoke). `file` params only work in Agent nodes. The `_invoke` code still tolerates a `custom_template` kwarg if present, but it is no longer exposed in the schema.
+> A `custom_template` (`type: file`) param is **not exposed in any tool schema** — no published version has it. A `file`-type tool parameter makes a Dify **workflow** tool node hang in `get_workflow_tool_runtime()` and never dispatch (node stuck "running" until timeout, daemon never receives invoke). `file` params only work in Agent nodes. The `_invoke` code still tolerates a `custom_template` kwarg if present, but it is not in the schema.
 
 ### Dify output contract
 
@@ -96,7 +97,7 @@ Blob metadata is read with the key **`filename`** (not `file_name`), which the b
 
 ### Template resolution
 
-1. Custom uploaded `.docx` (if provided via `custom_template` parameter)
+1. Custom uploaded `.docx` (if a `custom_template` value is passed — the parameter is not exposed in the schema)
 2. Built-in template from `multi-templates/` selected by `style_profile` × `reference_language`
 
 Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`, and `thesis` profiles share the same academic reference files. Technical, business, and official each have their own English/Chinese pair.
@@ -109,7 +110,9 @@ Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`,
 
 ### Style system (three layers)
 
-**Layer 1 — Pandoc metadata** (`build_pandoc_metadata`): Sets `mainfont`, `CJKmainfont`, `fontsize`, `linestretch` via `--metadata`. These come from `PROFILE_METADATA` plus per-parameter overrides. A `body_font` override replaces `mainfont`; `CJKmainfont` only follows it when the override is itself a CJK font, so a Latin body font cannot take over the East Asian slot.
+**Layer 1 — Pandoc metadata** (`build_pandoc_metadata`): Sets `mainfont`, `CJKmainfont`, `fontsize`, `linestretch` via `--metadata`. These come from `PROFILE_METADATA` plus per-parameter overrides. A `body_font` override replaces **both** `mainfont` and `CJKmainfont` — the user named that font explicitly, so it fills both slots. The split East Asian slot only applies to Layer 2, where the preset defaults are in play.
+
+> ⚠️ **Layer 1 never reaches the output.** Pandoc's docx writer ignores `mainfont` / `CJKmainfont` / `fontsize` / `linestretch` once a `--reference-doc` is supplied: with any of the 8 bundled templates, `word/document.xml` and `word/styles.xml` come out **byte-identical** with and without the metadata — only `docProps/custom.xml` records it. The reference template's own `docDefaults` set the base font, so **Layer 2 is what actually formats the document**. Change Layer 2 when you change how a document looks, and keep `PROFILE_METADATA` and `PROFILE_DEFAULTS` in agreement so the two never disagree about a preset.
 
 **Layer 2 — DOCX XML overrides** (`apply_style_overrides`): After pandoc finishes, opens the .docx via `python-docx` and modifies styles using lxml for raw XML access:
 
@@ -165,6 +168,26 @@ Two rules the layer depends on:
 | Settings | VS Code settings UI | Tool parameters |
 | Code style override | Direct XML for SourceCode/VerbatimChar | python-docx style API |
 
+## Publishing to the Dify Marketplace
+
+The marketplace lives in `langgenius/dify-plugins`; the fork is `AlexMultiAgent/dify-plugins`. The flow: commit and push the source here first, then commit the built `.difypkg` to `AlexMultiAgent/md2docx/MD2Docx.difypkg` on a branch of the fork, and open a PR against `langgenius/dify-plugins:main`. **A version-update PR changes exactly one `.difypkg` file.**
+
+### The pre-check CI rejects the PR unless
+
+- `manifest.yaml` has **`contact`** — a valid email address.
+- `manifest.yaml` has a top-level **`network.domains`** list covering every host the plugin can reach (currently just `mermaid.ink`; the scanner also matches URLs quoted in a tool YAML's `human_description`).
+- `requirements.txt` pins **`dify_plugin>=0.9.0`**.
+- The PR body has a **`## Local validation`** section and a **`## Security and privacy notes`** section. The latter may not read "None/N/A" when the scanner found filesystem or network capabilities — disclose the temporary-file writes and the outbound host.
+- The PR body is **English only** (CJK outside code blocks is rejected) and carries the info fields Author / Plugin name / Version / Source repository / Contact, both submission-type checkboxes, and a risk level.
+
+The validators live in `langgenius/dify-marketplace-toolkit` under `toolkit/checks/*.py` — read them there for the exact rules.
+
+### Packaging without the CLI
+
+`dify-plugin-cli` is not on PyPI, so `dify-plugin plugin package` is unavailable. The `.difypkg` is a plain zip: walk this directory, drop what `.difyignore` excludes, **keep `.difyignore` itself**, sort the entries by ASCII path, and write them with `ZIP_DEFLATED` and no directory entries. Verify by unzipping the artifact and re-running the checks against the extracted tree (manifest fields, `_assets/<icon>`, each tool YAML's `extra.python.source`, and the SDK's `load_single_subclass_from_source`).
+
+The daemon rejects a package whose **uncompressed** size exceeds `MAX_PLUGIN_PACKAGE_SIZE` (50 MB by default, `internal/types/app/default.go` in `dify-plugin-daemon`). The current package is ~250 KB compressed / ~320 KB uncompressed — never vendor the Pandoc binary into it.
+
 ## Deployment tuning (self-hosted Dify)
 
 This section is for operators running self-hosted Dify. The Marketplace README is kept minimal and points here for the deep details.
@@ -174,10 +197,10 @@ This section is for operators running self-hosted Dify. The Marketplace README i
 The plugin's Python dependencies are installed at plugin init time by the daemon. A nearby mirror makes the first install noticeably faster and avoids PyPI rate limits in CI.
 
 ```ini
-# ð¨ð© China â Aliyun (recommended)
+# 🇨🇳 China — Aliyun (recommended)
 PIP_MIRROR_URL=https://mirrors.aliyun.com/pypi/simple/
 
-# ð All other regions â leave empty; pip uses https://pypi.org/simple/ automatically
+# 🌐 All other regions — leave empty; pip uses https://pypi.org/simple/ automatically
 # PIP_MIRROR_URL=
 ```
 
@@ -213,4 +236,4 @@ If you ever see a `FileNotFoundError` for `pandoc`, check that the wheel install
 
 ```bash
 python -c "import pypandoc; print(pypandoc.get_pandoc_version())"
-
+```

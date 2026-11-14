@@ -10,7 +10,7 @@ Monorepo for **MD2Docx Converter** — tools that export Markdown to Word docume
 | `VSC-plugin-MD2Docx-Converter/` | VS Code extension — right-click `.md` → export DOCX |
 | `dify-plugin-MD2Docx/` | Dify Tool plugin — `md_to_docx` in Dify workflows |
 
-Each subdirectory has its own `CLAUDE.md` with architecture details and build commands.
+Each subdirectory has its own `CLAUDE.md` with architecture details and build commands. `AGENTS.md` at the repo root is the gotcha cheat sheet — read it before changing either plugin.
 
 ## Build & test
 
@@ -27,9 +27,16 @@ pip install -r requirements.txt            # runtime deps (pypandoc-binary bundl
 pip install -r requirements-dev.txt        # dev deps (pytest, dify_plugin for local testing)
 python -c "import ast; ast.parse(open('src/md2docx.py', encoding='utf-8').read()); print('Syntax OK')"
 pytest tests/ -v                           # run test suite (pandoc provided by pypandoc-binary)
-# Packaging
-dify-plugin plugin package . -o MD2Docx.difypkg   # ~250 KB .difypkg
 ```
+
+`CI` runs on every push and pull request: the Dify plugin's pytest suite plus `scripts/sync-templates.sh --check` (see `.github/workflows/ci.yml`).
+
+The Dify `.difypkg` cannot be built with the `dify-plugin` CLI — it is not on PyPI. The package is a plain zip of the plugin directory honouring `.difyignore`; see "Publishing to the Dify Marketplace" in `dify-plugin-MD2Docx/CLAUDE.md` for the recipe and for the CI gates a marketplace PR has to pass.
+
+## Releasing
+
+- **VS Code extension**: `npm run package` → `.vsix`, published from `VSC-plugin-MD2Docx-Converter/`.
+- **Dify plugin**: a `.difypkg` committed to `AlexMultiAgent/md2docx/` in the `AlexMultiAgent/dify-plugins` fork, pulled into upstream with a PR. One version-update PR = one `.difypkg` file. The rules are in `dify-plugin-MD2Docx/CLAUDE.md`.
 
 ## Architecture
 
@@ -45,6 +52,8 @@ Markdown text
 Templates are at `multi-templates/` under each subdirectory. The Dify plugin ships **8** files (academic/technical/business/official x Chinese/English; `thesis` and `template` reuse the academic pair), the VS Code extension ships **6** (no `official` yet). The `official` files are byte-identical copies of the academic ones — the `official` preset differs only through its style defaults.
 
 ⚠️ **Template sync note:** the VS Code extension is the primary source for templates. When adding new templates, update both subdirectories and keep the file names identical so `scripts/sync-templates.sh --check` stays green.
+
+⚠️ **CJK ranges must be written as escapes.** The CJK ideograph ranges are spelled `\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF` (ASCII escapes \uXXXX — copy them as written, they are not placeholders). Written as literal characters the lower bound silently becomes U+8C48 instead of U+F900, and the range then swallows Hangul and Yi syllables — a Korean document gets the Chinese template. The two characters look identical in an editor, so never retype them: both plugins must carry the same byte sequence.
 
 ## 模板修改流程 (Template modification workflow)
 

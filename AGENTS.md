@@ -7,7 +7,7 @@ This monorepo ships two products that share a Markdown→DOCX pipeline. **Read t
 | Directory | Stack | Build | Tests |
 |---|---|---|---|
 | `VSC-plugin-MD2Docx-Converter/` | TypeScript VS Code extension (`src/extension.ts`, ~1230 LOC) | `npm install && npm run compile && npm run package` | `node test_full_pipeline.js` (no test runner) |
-| `dify-plugin-MD2Docx/` | Python Dify Tool plugin (`src/md2docx.py`, ~970 LOC) | `dify-plugin plugin package . -o MD2Docx.difypkg` | `pytest tests/ -v` from inside this dir |
+| `dify-plugin-MD2Docx/` | Python Dify Tool plugin (`src/md2docx.py`, ~1220 LOC) | zip the dir — no CLI exists (see below) | `pytest tests/ -v` from inside this dir |
 | `scripts/sync-templates.sh` | bash | — | `bash scripts/sync-templates.sh --check` |
 
 Each subdirectory has its own `CLAUDE.md` with the real architecture and command cheatsheet. Do not duplicate that here.
@@ -24,20 +24,22 @@ These are not in the README/manifest but are critical:
 
 - **`requirements.txt` uses `pypandoc-binary` (NOT plain `pypandoc`)** which *bundles* a pandoc binary inside the pip wheel — no runtime GitHub download, no network call. `_ensure_pandoc()` just calls `pypandoc.get_pandoc_version()` to verify the bundled binary is reachable.
 - **Pandoc is deliberately NOT warmed up at import time.** Spawning a subprocess before `Plugin.run()` starts the event loop can deadlock in the gevent-patched sandbox, so the first conversion pays the cold start instead.
-- **Icon must exist at BOTH `dify-plugin-MD2Docx/icon.svg` and `dify-plugin-MD2Docx/_assets/icon.svg`.** The CLI packaging step needs the root copy; canonical is `_assets/`.
+- **Pandoc's `--metadata mainfont/fontsize/linestretch` never reaches the DOCX.** With any of the 8 bundled reference templates, `word/document.xml` and `word/styles.xml` come out byte-identical with and without the metadata — only `docProps/custom.xml` records it. The template's own `docDefaults` set the base font, so the **DOCX style override is the only layer that actually formats the document**. When you change how a document looks, change `apply_style_overrides` / `PROFILE_DEFAULTS`, and keep `PROFILE_METADATA` in agreement with them.
+- **Icon must exist at BOTH `dify-plugin-MD2Docx/icon.svg` and `dify-plugin-MD2Docx/_assets/icon.svg`.** The manifest's `icon:` points at the root copy; `_assets/` is the canonical location the marketplace check resolves. Keep the two byte-identical.
 - **`pytest.ini` lives in `dify-plugin-MD2Docx/`, not the repo root.** Run `pytest` from inside the plugin directory or pass `cd dify-plugin-MD2Docx && pytest`.
 - **`tests/conftest.py` skips the entire suite** with a `pytest.skip(..., allow_module_level=True)` if `dify_plugin` is not importable. Install `requirements-dev.txt` first.
 - **Mermaid requests go to `https://mermaid.ink/img/pako:<encoded>`** (public, no auth, no rate limit). The diagram is deflated and base64url-encoded into the URL. Set `mermaid_enabled=false` in the tool call to disable for privacy-sensitive content. Documented in `PRIVACY.md` and `dify-plugin-MD2Docx/README.md`.
 - **5 MB input cap.** `MAX_MARKDOWN_BYTES = 5 * 1024 * 1024` rejects oversized markdown with a structured `{"status":"error","stage":"validation"}` JSON. Above that, the Dify plugin sandbox OOMs.
 - **`_strip_dangling_image_rels()`** post-processes the pandoc output to remove `<Relationship Type=".../image" Target="media/...">` entries whose target file is missing. Some reference templates have such dangling rels; without this, `python-docx` fails to open the output.
-- **Three tools, 27 parameters in total.** `tools/md_to_docx.yaml` → *Markdown to DOCX* (6 params: `markdown_content`, `title`, `style_profile`, `reference_language`, `mermaid_enabled`, `mermaid_api_url`). `tools/md_to_docx_advanced.yaml` → *Markdown to DOCX (Advanced)* (those 6 plus 13 style overrides). `tools/mermaid_converter.yaml` → *Mermaid to Image* (2 params). `style_profile` enum: `academic|technical|business|official|thesis|template`. NOTE: a `type: file` param (`custom_template`) was removed in v0.0.3 because a `file` tool parameter makes a Dify **workflow** tool node hang in `get_workflow_tool_runtime()` and never dispatch (`POST dispatch/tool/invoke` never fires; node stuck "running" until timeout). Do not re-add `file`-type params unless the plugin is only used in Agent nodes.
+- **Three tools, 27 parameters in total.** `tools/md_to_docx.yaml` → *Markdown to DOCX* (6 params: `markdown_content`, `title`, `style_profile`, `reference_language`, `mermaid_enabled`, `mermaid_api_url`). `tools/md_to_docx_advanced.yaml` → *Markdown to DOCX (Advanced)* (those 6 plus 13 style overrides). `tools/mermaid_converter.yaml` → *Mermaid to Image* (2 params). `style_profile` enum: `academic|technical|business|official|thesis|template`. NOTE: a `type: file` param (`custom_template`) is **not exposed in any tool schema** — no published version has it — because a `file` tool parameter makes a Dify **workflow** tool node hang in `get_workflow_tool_runtime()` and never dispatch (`POST dispatch/tool/invoke` never fires; node stuck "running" until timeout). Do not re-add `file`-type params unless the plugin is only used in Agent nodes.
+- **CJK ranges must be ASCII escapes.** Both plugins detect Chinese with `[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]`. Written as literal characters the lower bound silently becomes U+8C48 and the range swallows Hangul and Yi — a Korean document then picks the Chinese template. The two characters look identical in an editor, so never retype them.
 - **Test markers `slow` and `integration`** are declared in `pytest.ini` but only `slow` is used (real pandoc + python-docx round-trip). `integration` is reserved for tests that call Mermaid Ink; currently no test uses it.
 
 ## VSC plugin gotchas agents miss
 
 - **`tsconfig.json` compiles to `out/`, gitignored.** Don't commit `out/extension.js`; it is regenerated by `npm run compile`.
 - **`.vscodeignore` whitelists `node_modules/adm-zip`** (runtime dep) and `multi-templates/*.docx` and `assets/icon.png`. Keep these in sync if you add new runtime assets.
-- **`test_full_pipeline.js` is a manual integration test** that spawns the real `pandoc` and `mmdc` binaries. There is no test runner. Run directly with `node test_full_pipeline.js`. It does NOT run on a CI hook (there are no CI hooks).
+- **`test_full_pipeline.js` is a manual integration test** that spawns the real `pandoc` and `mmdc` binaries. There is no test runner. Run directly with `node test_full_pipeline.js`. The repo **does** have CI (`.github/workflows/ci.yml`), but it only covers the Dify plugin's pytest suite and `scripts/sync-templates.sh --check` — this script is not wired in, because it needs pandoc and mmdc installed on the runner.
 - **Pandoc and mmdc are discovered at runtime**, not bundled. The `checkEnvironment` command reports versions and is the fastest way to debug "binary not found" issues.
 - **5 commands** are registered (see `package.json` `contributes.commands`). The 3 submenu commands override `styleProfile` and `referenceLanguage` regardless of user settings.
 - **`paperifyMd.*` settings are legacy aliases** for `mdocxConverter.*`; `readConfigValue()` checks both. Don't remove the legacy fallback without a deprecation cycle.
@@ -60,8 +62,6 @@ cd dify-plugin-MD2Docx
 pip install -r requirements.txt -r requirements-dev.txt
 python -c "import ast; ast.parse(open('src/md2docx.py', encoding='utf-8').read())"
 pytest tests/ -v -m "not integration"        # pandoc binary comes from pypandoc-binary wheel; no network needed
-cd ..
-dify-plugin plugin package dify-plugin-MD2Docx -o dify-plugin-MD2Docx/MD2Docx.difypkg
 
 # VS Code extension
 cd VSC-plugin-MD2Docx-Converter
@@ -70,10 +70,36 @@ npm run compile                              # tsc -p ./
 npm run package                              # vsce package --allow-missing-repository → .vsix
 ```
 
+There is **no** `dify-plugin plugin package` step: `dify-plugin-cli` is not on PyPI. The `.difypkg` is a plain zip — see "Publishing to the Dify Marketplace" below.
+
+## Publishing to the Dify Marketplace
+
+The marketplace lives in `langgenius/dify-plugins`; the fork is `AlexMultiAgent/dify-plugins`. Flow: commit and push the source here first, then commit the built `.difypkg` to `AlexMultiAgent/md2docx/MD2Docx.difypkg` on a branch of the fork, then PR against `langgenius/dify-plugins:main`. **One version-update PR = exactly one `.difypkg` file.**
+
+### The pre-check CI rejects the PR unless
+
+- `manifest.yaml` has **`contact`** — a valid email address.
+- `manifest.yaml` has a top-level **`network.domains`** list covering every host the plugin can reach (currently just `mermaid.ink`; the scanner also matches URLs quoted in a tool YAML's `human_description`).
+- `requirements.txt` pins **`dify_plugin>=0.9.0`**.
+- The PR body has a **`## Local validation`** section and a **`## Security and privacy notes`** section. The latter may not read "None/N/A" when the scanner found filesystem or network capabilities — disclose the temporary-file writes and the outbound host.
+- The PR body is **English only** (CJK outside code blocks is rejected) and carries the info fields Author / Plugin name / Version / Source repository / Contact, both submission-type checkboxes, and a risk level.
+
+The validators live in `langgenius/dify-marketplace-toolkit` under `toolkit/checks/*.py` — read them there for the exact rules. Check the body locally before opening the PR; a failed CI round costs ~15 min and names only one missing piece at a time.
+
+### Packaging without the CLI
+
+`dify-plugin-cli` is not on PyPI (404, and the Aliyun mirror has it neither), so `dify-plugin plugin package` cannot be used. The `.difypkg` is a plain zip: walk `dify-plugin-MD2Docx/`, drop what `.difyignore` excludes, **keep `.difyignore` itself**, sort the entries by ASCII path, and write them with `ZIP_DEFLATED` and no directory entries. Verify by unzipping the artifact and re-running the checks against the *extracted* tree (manifest fields, `_assets/<icon>`, each tool YAML's `extra.python.source`, and the SDK's `load_single_subclass_from_source`).
+
+### Environment notes for this machine
+
+- `github.com` is unreachable over **HTTPS** (TCP connect times out); `api.github.com` and **SSH** work. Push over `git@github.com:...` and use `gh` for everything else.
+- The upstream marketplace repo is huge — `git fetch --depth=1 --filter=blob:none` over SSH works, a full fetch does not. Creating the fork branch through the GitHub API (`git/blobs` → `git/trees` → `git/commits` → `git/refs`) avoids cloning it entirely and gives an exact one-file diff against upstream main.
+- `gh` is authenticated as `AlexMultiAgent`; the GitHub MCP server is not usable for this flow (no `repo:org` / PR-creation scopes).
+
 ## When in doubt
 
 - Sub-directory `CLAUDE.md` is more detailed than this file. Prefer it.
 - `dify-plugin-MD2Docx/CLAUDE.md` for the Python pipeline architecture (steps 1–5, 3-layer style system, profile defaults table).
 - `VSC-plugin-MD2Docx-Converter/CLAUDE.md` for the TypeScript extension (binary resolution, two-layer style system, vsce packaging).
-- `dify-plugin-MD2Docx/PRIVACY.md` for the Mermaid Ink disclosure (must stay accurate to the actual `MERMAID_INK_URL` constant in `src/md2docx.py`).
+- `dify-plugin-MD2Docx/PRIVACY.md` for the Mermaid Ink disclosure (must stay accurate to the actual `MERMAID_INK_URL` constant in `src/_mermaid_render.py`).
 - `dify-plugin-MD2Docx/.difyignore` controls what ships in the `.difypkg` (excludes tests/, caches, `*.pyc`, `*.difypkg`, `.remember/`, `*.html`, dev requirements). `README.md` and `readme/README_zh_Hans.md` **are** shipped — the marketplace needs them.
