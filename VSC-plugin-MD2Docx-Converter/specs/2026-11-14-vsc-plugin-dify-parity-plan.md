@@ -2199,20 +2199,30 @@ test('a nested w:pPr/w:rPr does not count as the style-level w:rPr', () => {
 
 test('a missing w:rFonts is inserted before w:sz', () => {
     const updated = upsertInsideElement(
-        '<w:rPr><w:sz w:val="24"/></w:rPr>', 'w:rPr', /<w:rFonts\b[^>]*\/>/, '<w:rFonts w:ascii="X"/>');
+        STYLE_BLOCK('<w:name w:val="Normal"/><w:rPr><w:sz w:val="24"/></w:rPr>'),
+        'w:rPr', /<w:rFonts\b[^>]*\/>/, '<w:rFonts w:ascii="X"/>');
     assert.ok(updated.indexOf('<w:rFonts') < updated.indexOf('<w:sz'));
 });
 
 test('a missing w:rFonts is inserted before w:lang', () => {
     const updated = upsertInsideElement(
-        '<w:rPr><w:lang w:val="zh-CN"/></w:rPr>', 'w:rPr', /<w:rFonts\b[^>]*\/>/, '<w:rFonts w:ascii="X"/>');
+        STYLE_BLOCK('<w:name w:val="Normal"/><w:rPr><w:lang w:val="zh-CN"/></w:rPr>'),
+        'w:rPr', /<w:rFonts\b[^>]*\/>/, '<w:rFonts w:ascii="X"/>');
     assert.ok(updated.indexOf('<w:rFonts') < updated.indexOf('<w:lang'));
 });
 
 test('a missing w:color is inserted before w:sz', () => {
     const updated = upsertInsideElement(
-        '<w:rPr><w:sz w:val="24"/></w:rPr>', 'w:rPr', /<w:color\b[^>]*\/>/, '<w:color w:val="000000"/>');
+        STYLE_BLOCK('<w:name w:val="Normal"/><w:rPr><w:sz w:val="24"/></w:rPr>'),
+        'w:rPr', /<w:color\b[^>]*\/>/, '<w:color w:val="000000"/>');
     assert.ok(updated.indexOf('<w:color') < updated.indexOf('<w:sz'));
+});
+
+test('a self-closing w:rPr is expanded before a child is inserted', () => {
+    const updated = upsertInsideElement(
+        STYLE_BLOCK('<w:name w:val="Normal"/><w:rPr/>'),
+        'w:rPr', /<w:rFonts\b[^>]*\/>/, '<w:rFonts w:ascii="X"/>');
+    assert.ok(updated.includes('<w:rFonts'), 'the child must be inserted into the expanded element');
 });
 
 test('the style-level w:rPr is used, not the paragraph mark one', () => {
@@ -2348,6 +2358,7 @@ function insertChildInOrder(
 - 找到**第一个**（按 schema 顺序最靠前的）在容器里实际存在的后续兄弟元素，把新元素插到它前面
 - 如果没有后续兄弟，插到容器闭合标签之前
 - 目标标签不在 `order` 里时，退化成插到闭合标签之前
+- ⚠️ **容器可能是自闭合的**（`<w:rPr/>`）。这时要先把它展开成 `<w:rPr></w:rPr>` 再插入 —— 否则「插到闭合标签之前」找不到匹配，会**静默什么都不做**。
 
 举例，容器是 `<w:rPr><w:sz w:val="24"/><w:lang w:val="zh-CN"/></w:rPr>`，要插 `w:rFonts`（`RPR_CHILD_ORDER` 里排第 2）→ 结果是 `<w:rPr><w:rFonts/><w:sz/><w:lang/></w:rPr>`。
 
@@ -2367,6 +2378,8 @@ export function ensureChildElement(xml: string, tagName: string): string {
 ⚠️ **「存在吗」的判断必须用顶层列表，不能用 `new RegExp(\`<${tagName}\\b\`).test(xml)`。** 后者会被段落标记里的 `<w:pPr><w:rPr>` 骗过去，误以为顶层 `<w:rPr>` 已经存在，结果顶层 `<w:rPr>` 永远补不上，字体就写不进样式。Step 1 的第三条测试专门盯这个。
 
 - [ ] **Step 6: upsertInsideElement 只动顶层父元素，内部按顺序插入**
+
+⚠️ **契约变更：这三个函数的第一个参数现在是「一个 `<w:style>` 块」，不是任意 XML 片段。** 因为「顶层」只有相对于样式块才有意义 —— `<w:pPr><w:rPr>` 里的 `rPr` 相对于 `w:style` 是嵌套的，相对于 `w:pPr` 才是顶层的。调用点（`updateStyleXml`）传进来的本来就是样式块，所以调用方不用改；但**测试里要传样式块**，不能直接传一段 `<w:rPr>…</w:rPr>`。
 
 ```ts
 export function upsertInsideElement(xml: string, tagName: string, childRegex: RegExp, childXml: string): string {
