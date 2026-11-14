@@ -3911,9 +3911,11 @@ Expected: 输出 10 行 `OK <profile>/<language>` 与 `All e2e exports succeeded
 - [ ] **Step 4: 提交**
 
 ```bash
-git add test/e2e/run.js test_full_pipeline.js
+git add test/e2e/run.js
 git commit -m "test: replace the stale pipeline script with a per-profile e2e export check"
 ```
+
+（`test_full_pipeline.js` 的删除已经在 Step 1 的 `git rm` 里进了暂存区，不要再 `git add` 它 —— 文件已经不存在，`git add` 会报 pathspec 错误。）
 
 ---
 
@@ -3996,14 +3998,16 @@ Only `src/extension.ts` may import `vscode` — the other modules are pure so `n
 - Style system 段改写为：
 
 ```markdown
-### Style system (two layers)
+### Style system (two layers, one source of truth)
 
-**Layer 1 — Pandoc metadata** (`buildPandocMetadata`): Reads `PROFILE_PRESETS[profile].metadata` and applies per-setting overrides.
+Both layers read the same preset table, `PROFILE_PRESETS` in `src/profiles.ts`. A preset stores each fact exactly once — the pandoc metadata is *derived* from the typed fields by `buildPandocMetadata()`, never stored a second time. Fonts are split into `ascii` (→ `w:ascii`/`w:hAnsi`/`w:cs`) and `eastAsia` (→ `w:eastAsia`) slots so English text is no longer forced into the CJK font.
 
-**Layer 2 — DOCX XML overrides** (`applyDocxStyleOverrides`): After pandoc finishes, opens the .docx via `adm-zip` and rewrites `word/styles.xml` and `word/document.xml`. Font names are split into `asciiFont` (w:ascii/w:hAnsi/w:cs) and `eastAsiaFont` (w:eastAsia) so English documents use a Latin face and Chinese text keeps its own.
+**Layer 1 — Pandoc metadata** (`buildPandocMetadata`): Sets `mainfont`, `CJKmainfont`, `fontsize`, `linestretch` and `monofont` via `--metadata`, derived from the preset's `body`, `bodySizePt`, `lineSpacing` and `monoFont` plus per-setting overrides.
 
-Both layers read the same `PROFILE_PRESETS` entry, so they cannot drift.
+**Layer 2 — DOCX XML overrides** (`applyDocxStyleOverrides`): After pandoc finishes, opens the .docx via `adm-zip` and rewrites `word/styles.xml` and `word/document.xml`. Styles are matched by display name (`w:name`), not by `w:styleId` — see "Matching styles by display name" below.
 ```
+
+> ⚠️ **不要写成 `PROFILE_PRESETS[profile].metadata`。** 那个字段在 Task 5 已经删掉了 —— 预设只存类型化的字段，metadata 由 `buildPandocMetadata()` 派生。文档再写回一个不存在的字段，下一个人照着改就会重新引入「同一份事实存两遍」的问题。
 
 - 预设表用第 3 节 Task 3 的数据。
 
