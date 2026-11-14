@@ -334,8 +334,11 @@ git commit -m "refactor: extract document title and language detection into pure
 
 ### Task 3: `src/profiles.ts` —— 预设单一数据源 + 中西文分槽
 
+> **执行说明：Task 3 与 Task 4 合并为一次实现。** 原计划里 Task 3 删掉旧的两张表、Task 4 才改写消费方，中间会留下一个编译不过的破损状态。合并后一次完成「建模块 + 改消费方」，产出可编译、可提交、可评审的完整状态。
+
 **Files:**
 - Create: `src/profiles.ts`
+- Create: `src/templates.ts`
 - Modify: `src/extension.ts`
 - Test: `test/unit/profiles.test.js`
 
@@ -668,15 +671,20 @@ Expected: PASS — profiles 测试全绿
 - [ ] **Step 6: 编译校验**
 
 Run: `npm run compile`
-Expected: 报错数量减少但仍可能有引用错误（`STYLE_PROFILE_METADATA`、`getProfileDocxDefaults` 已被删除但仍被引用）。这是预期的，下一个任务会修复；记录错误清单。
+Expected: 无 TypeScript 错误（Task 4 的改动已包含在本任务内）
 
-- [ ] **Step 7: 提交（暂不提交破损状态）**
+- [ ] **Step 7: 提交**
 
-**不要在这一步提交。** 先执行 Task 4 让 extension.ts 重新编译通过，再一起提交。
+```bash
+git add src/profiles.ts src/templates.ts src/extension.ts test/unit/profiles.test.js
+git commit -m "feat: consolidate style presets into a single source of truth"
+```
 
 ---
 
 ### Task 4: `src/templates.ts` + extension.ts 改用新预设（含双字体字段）
+
+> 本任务已合并进 Task 3 执行。
 
 **Files:**
 - Create: `src/templates.ts`

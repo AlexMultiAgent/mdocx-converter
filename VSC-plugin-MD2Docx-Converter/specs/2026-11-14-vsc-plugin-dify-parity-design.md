@@ -410,4 +410,5 @@ Node 侧实现：`zlib.deflateSync(Buffer.from(json))` → `buf.toString('base64
 - **`sync-templates.sh` 需扩到 10 个模板**，否则 Dify 侧收不到 thesis 模板。
 - **Dify 侧字体分槽**是 python-docx 的已知坑：`font.name` 只写 ascii/hAnsi，`w:eastAsia` 必须用 lxml 直接操作 `rFonts` 元素。
 - **node:test 加载 `out/`**：`npm test` 会自动触发编译；`test:e2e` 需本地 pandoc，不纳入默认流程。
+- **围栏剥离的已知边界**（`src/document.ts`）：`FENCED_CODE_BLOCK_REGEX` 只认反引号围栏，不认 `~~~`；闭合围栏必须与开启围栏等长（CommonMark 允许更长）；未闭合的围栏不剥离。这三种情况下围栏内的 `#` 注释行会被当成文档标题。仅影响 DOCX 核心属性里的标题，不影响正文排版。
 - **既有命令 ID 保持不变**，其注册方式、参数与菜单位置不变；产出随预设值统一而变化（行距、字体）。
