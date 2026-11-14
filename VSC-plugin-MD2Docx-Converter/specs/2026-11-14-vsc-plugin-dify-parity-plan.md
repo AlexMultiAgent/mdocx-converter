@@ -1340,12 +1340,33 @@ Expected: 输出 10 行 `wrote multi-templates/reference_*.docx`
 Run: `ls multi-templates/`
 Expected: 恰好 10 个 .docx
 
-- [ ] **Step 7: 运行测试确认通过**
+- [ ] **Step 7: 更新 `.vscodeignore` 的模板白名单**
+
+`.vscodeignore` 里 `multi-templates/**` 被排除，只逐个白名单了 6 个模板文件。新增的 4 个（official ×2、thesis ×2）如果不加白名单，打出来的 .vsix 里就没有它们，运行时 `resolveReferenceDocx` 会报「Bundled reference DOCX was not found」。
+
+把白名单段落替换为 10 个模板：
+
+```
+!multi-templates/reference_english_academic.docx
+!multi-templates/reference_english_business.docx
+!multi-templates/reference_english_technical.docx
+!multi-templates/reference_english_official.docx
+!multi-templates/reference_english_thesis.docx
+!multi-templates/reference_chinese_academic.docx
+!multi-templates/reference_chinese_business.docx
+!multi-templates/reference_chinese_technical.docx
+!multi-templates/reference_chinese_official.docx
+!multi-templates/reference_chinese_thesis.docx
+```
+
+同时把 `test_*.js` 这一行换成 `test/**`（`test_*.js` 只匹配根目录下的单个文件，匹配不到 `test/unit/` 里的用例）。
+
+- [ ] **Step 8: 运行测试确认通过**
 
 Run: `npm test`
 Expected: PASS
 
-- [ ] **Step 8: 用 pandoc 验证产物可用**
+- [ ] **Step 9: 用 pandoc 验证产物可用**
 
 Run:
 ```bash
@@ -1354,10 +1375,10 @@ pandoc /tmp/t.md -o /tmp/t.docx --reference-doc multi-templates/reference_chines
 ```
 Expected: 退出码 0，`/tmp/t.docx` 存在
 
-- [ ] **Step 9: 提交**
+- [ ] **Step 10: 提交**
 
 ```bash
-git add scripts/build-templates.js scripts/reference-base.docx multi-templates/ test/unit/templates.test.js
+git add scripts/build-templates.js scripts/reference-base.docx multi-templates/ test/unit/templates.test.js .vscodeignore
 git commit -m "feat: regenerate all reference templates from a declarative style table
 
 The three English templates were two-column with journal-style leftover
