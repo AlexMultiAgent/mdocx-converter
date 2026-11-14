@@ -68,7 +68,7 @@ VS Code 侧 `STYLE_PROFILE_METADATA`（pandoc 层）与 `getProfileDocxDefaults`
 | --- | --- | --- |
 | 范围 | 完整对齐 Dify + 模板重建 | 用户选定 |
 | Mermaid 默认行为 | 本地优先，API 兜底并告知 | 兼顾开箱即用与隐私透明 |
-| 文档标题来源 | 自动探测首个 H1，设置项可覆盖 | 无需用户输入即可得到有意义标题 |
+| 文档标题来源 | 自动探测首个 ATX 标题，设置项可覆盖 | 无需用户输入即可得到有意义标题 |
 | 独立 Mermaid 命令 | 渲染选中块并插回光标 | 产物可直接复用 |
 | 模板策略 | 全量重建 + 生成器 | 样式规则变成可审阅的数据，而不是二进制 |
 | 模板数量 | 10 个（5 预设 × 中英） | thesis 是独立标准，值得有自己的模板 |
@@ -94,7 +94,7 @@ VS Code 侧 `STYLE_PROFILE_METADATA`（pandoc 层）与 `getProfileDocxDefaults`
 
 `src/document.ts` 导出：
 
-- `extractDocumentTitle(markdownText: string): string | undefined` — 取首个 ATX H1（行首 `#` 至多 6 个 + 空格），去除首尾空白与尾部 `#`。**不识别 Setext 标题**（`===` 下划线式），只认 ATX 形式。
+- `extractDocumentTitle(markdownText: string): string | undefined` — 取首个 ATX 标题（H1–H6，行首 `#` 至多 6 个 + 空格），去除首尾空白与尾部 `#`。**不识别 Setext 标题**（`===` 下划线式），只认 ATX 形式。
 - `resolveDocumentTitle(markdownText: string, configuredTitle: string, markdownPath: string): string` — 配置项优先，其次 H1，最后文件名（去扩展名）。
 - `sanitizeFileName(name: string): string` — 替换 `<>:"/\|?*` 与控制字符为 `_`；空串回落为 `document`。
 
@@ -294,7 +294,7 @@ Node 侧实现：`zlib.deflateSync(Buffer.from(json))` → `buf.toString('base64
 ### 2.5 文档标题
 
 - 新增设置 `mdocxConverter.documentTitle`（string，默认 `""`）。
-- 解析优先级：设置项非空 → 首个 H1 → Markdown 文件名（去扩展名）。
+- 解析优先级：设置项非空 → 首个 ATX 标题（H1–H6）→ Markdown 文件名（去扩展名）。
 - 通过 `--metadata title=<值>` 传给 pandoc，最终写入 DOCX 核心属性 `dc:title`。
 - 不向正文插入标题段（避免与模板自带标题样式冲突）。
 
@@ -358,12 +358,12 @@ Node 侧实现：`zlib.deflateSync(Buffer.from(json))` → `buf.toString('base64
 | `profiles.test.js` | 6 个 profile 齐全；official 页边距 37/35/28/26；thesis 标题字号 22/16/14；metadata 与 DOCX 默认值中的行距一致；中西文字体分槽正确；非法 profile 归一化为 `template` |
 | `language.test.js` | CJK 阈值（≥40 或 >15% Latin）；空文本回落 `english` |
 | `mermaid.test.js` | 代码块切分（多块、含嵌套反引号、无代码块）；pako 编码往返（`zlib.inflateSync` 解回 JSON 并比对 `code`） |
-| `document.test.js` | H1 提取（首行 / 非首行 / 无 H1）；尾部 `#` 剥离；设置项优先级；文件名兜底与非法字符清理 |
+| `document.test.js` | 标题提取（首行 / 非首行 / 无标题 / Setext 不识别）；尾部 `#` 剥离；设置项优先级；文件名兜底与非法字符清理 |
 | `templates.test.js` | 10 个模板文件存在；每个模板单栏、A4 尺寸正确；`Normal` 为默认段落样式且带首行缩进 |
 
 ### 3.2 模板生成器的自检
 
-`npm run build:templates` 重新生成 10 个模板；生成器自带断言，生成后重新读回每个 .docx，校验 sectPr 单栏 + A4 + 页边距、`Normal` 的 `w:default="1"`、字体分槽正确、样式 ID 齐全。断言失败即非零退出。
+`npm run build:templates` 重新生成 10 个模板。生成结果由 `test/unit/templates.test.js` 校验：读回每个 .docx，检查 sectPr 单栏 + A4 + 页边距、`Normal` 的 `w:default="1"`、字体分槽正确、样式 ID 齐全、中英缩进差异、页脚部件存在。
 
 ### 3.3 端到端测试
 

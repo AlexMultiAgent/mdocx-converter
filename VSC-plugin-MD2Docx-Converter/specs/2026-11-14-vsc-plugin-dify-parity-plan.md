@@ -1,0 +1,2986 @@
+# VS Code 插件对齐 Dify + 模板重建 — 实施计划
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** 把 VS Code 扩展的能力补齐到 Dify 插件水平（6 档预设、Mermaid Ink 兜底、独立 Mermaid 命令、文档标题、导出进度），并重建全部内置模板，修复英文模板双栏 / 标题遗留 / 中英字体不分槽的问题。
+
+**Architecture:** 把 extension.ts 里的纯逻辑抽到 5 个不依赖 `vscode` 的模块（profiles / language / templates / mermaid / document），使它们能被 `node:test` 在 Extension Host 之外直接加载。预设数据合并为 `src/profiles.ts` 里的单一数据源 `PROFILE_PRESETS`，中西文字体分槽（`ascii` / `eastAsia`）。新增 `scripts/build-templates.js`，以 pandoc 官方 reference.docx 为基底、用声明式样式表生成 10 个模板（5 预设 × 中英）。
+
+**Tech Stack:** TypeScript（ES2022 / CommonJS）、Node 内置 `node:test`、`adm-zip`（唯一运行时依赖）、pandoc CLI、VS Code Extension API。
+
+**Spec:** `VSC-plugin-MD2Docx-Converter/specs/2026-11-14-vsc-plugin-dify-parity-design.md`
+
+---
+
+## 文件结构
+
+### 新建
+
+| 路径 | 职责 |
+|---|---|
+| `src/profiles.ts` | `PROFILE_PRESETS`（运行时预设单一数据源）、`TEMPLATE_LAYOUT`（模板排版参数，仅模板生成器消费）、`normalizeStyleProfile`、`StyleProfile` / `FontPair` 类型 |
+| `src/language.ts` | `detectMarkdownLanguage`、`resolveReferenceLanguage`、`ReferenceLanguage` / `ReferenceLanguageSetting` 类型 |
+| `src/templates.ts` | 内置模板映射表与候选路径计算 |
+| `src/mermaid.ts` | mermaid 代码块切分、pako 编码、Mermaid Ink HTTP 客户端、重试与并发控制 |
+| `src/document.ts` | 文档标题提取、文件名清理 |
+| `scripts/build-templates.js` | 模板生成器：读基底 → 改写 styles.xml / document.xml / 页脚 → 输出 10 个 .docx |
+| `scripts/reference-base.docx` | pandoc 官方 reference.docx 基底（提交进仓库保证生成确定性） |
+| `test/unit/profiles.test.js` | 预设表完整性、中西文分槽、行距一致性 |
+| `test/unit/language.test.js` | CJK/Latin 检测阈值 |
+| `test/unit/mermaid.test.js` | 代码块切分、pako 编码往返 |
+| `test/unit/document.test.js` | 标题提取、文件名清理 |
+| `test/unit/templates.test.js` | 10 个模板存在、单栏、A4、默认样式正确 |
+| `test/e2e/run.js` | 端到端：逐预设导出并校验产物 |
+
+### 修改
+
+| 路径 | 改动 |
+|---|---|
+| `src/extension.ts` | 引用新模块；`DocxStyleOverride` 改双字体字段；6 档预设；页边距默认值；Mermaid API 兜底；标题元数据；3 个新命令；`withProgress` 进度与取消；`checkEnvironment` 扩展 |
+| `package.json` | 新增 `test` / `test:e2e` / `build:templates` 脚本；3 个新命令与菜单；4 个新设置；`styleProfile` 枚举扩展；版本 0.3.0 |
+| `multi-templates/*.docx` | 由生成器重建，共 10 个 |
+| `scripts/sync-templates.sh` | 模板清单 8 → 10 |
+| `dify-plugin-MD2Docx/src/md2docx.py` | `TEMPLATE_MAP` 指向新模板；`PROFILE_DEFAULTS` 字体分槽；`_set_font` 拆 ascii/eastAsia；行距对齐 |
+| `dify-plugin-MD2Docx/multi-templates/*.docx` | 同步为同一批 10 个 |
+| `CLAUDE.md`（根）、`VSC-plugin-MD2Docx-Converter/CLAUDE.md`、两份 `README.md` | 架构、模板流程、命令 / 设置表、预设表 |
+
+---
+
+## Phase 1 — 基础设施（重构 + 模板）
+
+### Task 1: 测试骨架与 npm 脚本
+
+**Files:**
+- Modify: `package.json`（`scripts` 段）
+- Create: `test/unit/smoke.test.js`
+
+- [ ] **Step 1: 写一个会失败的冒烟测试**
+
+`test/unit/smoke.test.js`：
+
+```js
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+test('test harness runs', () => {
+    assert.equal(1 + 1, 2);
+});
+```
+
+- [ ] **Step 2: 运行测试确认它能跑通**
+
+Run: `node --test test/unit/`
+Expected: PASS，输出 `# pass 1`
+
+- [ ] **Step 3: 在 package.json 加入脚本**
+
+把 `scripts` 段改成：
+
+```json
+  "scripts": {
+    "compile": "tsc -p ./",
+    "package": "vsce package --allow-missing-repository",
+    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run compile",
+    "test": "npm run compile && node --test test/unit/",
+    "test:e2e": "node test/e2e/run.js",
+    "build:templates": "npm run compile && node scripts/build-templates.js"
+  },
+```
+
+- [ ] **Step 4: 运行 npm test 确认通过**
+
+Run: `npm test`
+Expected: `tsc` 无错误，随后 `# pass 1`
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add package.json test/unit/smoke.test.js
+git commit -m "chore: add node:test harness and npm test scripts"
+```
+
+---
+
+### Task 2: 抽取 `src/document.ts` 与 `src/language.ts`
+
+**Files:**
+- Create: `src/document.ts`
+- Create: `src/language.ts`
+- Modify: `src/extension.ts`
+- Test: `test/unit/document.test.js`、`test/unit/language.test.js`
+
+- [ ] **Step 1: 写失败的测试**
+
+`test/unit/document.test.js`：
+
+```js
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { extractDocumentTitle, resolveDocumentTitle, sanitizeFileName } = require('../../out/document.js');
+
+test('extractDocumentTitle returns the first ATX H1', () => {
+    assert.equal(extractDocumentTitle('# 标题\n\n正文'), '标题');
+    assert.equal(extractDocumentTitle('前言\n\n# 第二段里的 H1'), '第二段里的 H1');
+});
+
+test('extractDocumentTitle strips trailing hashes and whitespace', () => {
+    assert.equal(extractDocumentTitle('##   Spaced Title   ##'), 'Spaced Title');
+});
+
+test('extractDocumentTitle ignores setext headings', () => {
+    assert.equal(extractDocumentTitle('Setext\n======\n'), undefined);
+});
+
+test('extractDocumentTitle accepts any ATX heading level', () => {
+    assert.equal(extractDocumentTitle('## 只有二级标题'), '只有二级标题');
+    assert.equal(extractDocumentTitle('### 三级标题'), '三级标题');
+});
+
+test('extractDocumentTitle ignores seven or more hashes', () => {
+    assert.equal(extractDocumentTitle('####### 不是标题'), undefined);
+});
+
+test('resolveDocumentTitle prefers the configured title', () => {
+    assert.equal(resolveDocumentTitle('# From H1', 'Configured', '/tmp/a.md'), 'Configured');
+});
+
+test('resolveDocumentTitle falls back to the H1 then the filename', () => {
+    assert.equal(resolveDocumentTitle('# From H1', '', '/tmp/a.md'), 'From H1');
+    assert.equal(resolveDocumentTitle('no heading', '', '/tmp/report.md'), 'report');
+});
+
+test('sanitizeFileName replaces illegal characters', () => {
+    assert.equal(sanitizeFileName('a/b\\c:d*e?f"g<h>i|j'), 'a_b_c_d_e_f_g_h_i_j');
+    assert.equal(sanitizeFileName('   '), 'document');
+    assert.equal(sanitizeFileName('正常文件名'), '正常文件名');
+});
+```
+
+`test/unit/language.test.js`：
+
+```js
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { detectMarkdownLanguage, resolveReferenceLanguage } = require('../../out/language.js');
+
+test('detectMarkdownLanguage picks chinese for CJK-heavy text', () => {
+    assert.equal(detectMarkdownLanguage('这是一段完全由中文构成的文本。'.repeat(20)), 'chinese');
+});
+
+test('detectMarkdownLanguage picks english for latin text', () => {
+    assert.equal(detectMarkdownLanguage('This is a plain english paragraph about nothing.'.repeat(20)), 'english');
+});
+
+test('detectMarkdownLanguage picks chinese at the 40-character threshold', () => {
+    assert.equal(detectMarkdownLanguage('中'.repeat(40)), 'chinese');
+    assert.equal(detectMarkdownLanguage('中'.repeat(39)), 'english');
+});
+
+test('detectMarkdownLanguage falls back to english for empty text', () => {
+    assert.equal(detectMarkdownLanguage(''), 'english');
+});
+
+test('resolveReferenceLanguage honours an explicit setting', () => {
+    assert.equal(resolveReferenceLanguage('中文内容'.repeat(50), 'english'), 'english');
+    assert.equal(resolveReferenceLanguage('plain english', 'chinese'), 'chinese');
+    assert.equal(resolveReferenceLanguage('中文内容'.repeat(50), 'auto'), 'chinese');
+});
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `npm test`
+Expected: FAIL — `Cannot find module '../../out/document.js'`
+
+- [ ] **Step 3: 创建 `src/document.ts`**
+
+```ts
+const ATX_HEADING_REGEX = /^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
+const ILLEGAL_FILENAME_CHARS = /[<>:"/\\|?*\u0000-\u001f]/g;
+
+export function extractDocumentTitle(markdownText: string): string | undefined {
+    ATX_HEADING_REGEX.lastIndex = 0;
+    const match = ATX_HEADING_REGEX.exec(markdownText);
+    if (!match) {
+        return undefined;
+    }
+
+    const title = match[1].trim();
+    return title.length > 0 ? title : undefined;
+}
+
+export function resolveDocumentTitle(markdownText: string, configuredTitle: string, markdownPath: string): string {
+    const configured = configuredTitle.trim();
+    if (configured) {
+        return configured;
+    }
+
+    const fromHeading = extractDocumentTitle(markdownText);
+    if (fromHeading) {
+        return fromHeading;
+    }
+
+    const fileName = markdownPath.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '');
+    return sanitizeFileName(fileName);
+}
+
+export function sanitizeFileName(name: string): string {
+    const cleaned = name.replace(ILLEGAL_FILENAME_CHARS, '_').trim();
+    return cleaned.length > 0 ? cleaned : 'document';
+}
+```
+
+- [ ] **Step 4: 创建 `src/language.ts`**
+
+```ts
+export type ReferenceLanguage = 'english' | 'chinese';
+export type ReferenceLanguageSetting = ReferenceLanguage | 'auto';
+
+const CJK_CHAR_REGEX = /[㐀-䶿一-鿿豈-﫿]/g;
+const LATIN_CHAR_REGEX = /[A-Za-z]/g;
+
+export function normalizeReferenceLanguage(value: string | undefined): ReferenceLanguage {
+    return value === 'chinese' ? 'chinese' : 'english';
+}
+
+export function normalizeReferenceLanguageSetting(value: string | undefined): ReferenceLanguageSetting {
+    if (value === 'auto') {
+        return 'auto';
+    }
+
+    return normalizeReferenceLanguage(value);
+}
+
+export function resolveReferenceLanguage(markdownText: string, setting: ReferenceLanguageSetting): ReferenceLanguage {
+    if (setting === 'english' || setting === 'chinese') {
+        return setting;
+    }
+
+    return detectMarkdownLanguage(markdownText);
+}
+
+export function detectMarkdownLanguage(markdownText: string): ReferenceLanguage {
+    const sample = markdownText.slice(0, 20000);
+    const chineseMatches = sample.match(CJK_CHAR_REGEX)?.length ?? 0;
+    const latinMatches = sample.match(LATIN_CHAR_REGEX)?.length ?? 0;
+
+    // Prefer the Chinese template when Chinese text is materially present.
+    if (chineseMatches >= 40 || chineseMatches > latinMatches * 0.15) {
+        return 'chinese';
+    }
+
+    return 'english';
+}
+```
+
+- [ ] **Step 5: 从 extension.ts 删除被搬走的代码并改为 import**
+
+在 `src/extension.ts` 顶部 import 段加入：
+
+```ts
+import { normalizeReferenceLanguage, normalizeReferenceLanguageSetting, resolveReferenceLanguage } from './language';
+import type { ReferenceLanguage, ReferenceLanguageSetting } from './language';
+import { resolveDocumentTitle } from './document';
+```
+
+删除以下函数（它们已搬到新模块）：
+`normalizeReferenceLanguage`（原 396 行）、`normalizeReferenceLanguageSetting`（原 400 行）、`resolveReferenceLanguage`（原 408 行）、`detectMarkdownLanguage`（原 416 行）。
+
+同时删除原有的这行类型声明：
+
+```ts
+type ReferenceLanguage = 'english' | 'chinese';
+type ReferenceLanguageSetting = ReferenceLanguage | 'auto';
+```
+
+- [ ] **Step 6: 运行测试确认通过**
+
+Run: `npm test`
+Expected: PASS — `# pass 9`（document 7 条 + language 5 条 + smoke 1 条，实际数以输出为准）
+
+- [ ] **Step 7: 编译校验**
+
+Run: `npm run compile`
+Expected: 无 TypeScript 错误
+
+- [ ] **Step 8: 提交**
+
+```bash
+git add src/document.ts src/language.ts src/extension.ts test/unit/document.test.js test/unit/language.test.js
+git commit -m "refactor: extract document title and language detection into pure modules"
+```
+
+---
+
+### Task 3: `src/profiles.ts` —— 预设单一数据源 + 中西文分槽
+
+**Files:**
+- Create: `src/profiles.ts`
+- Modify: `src/extension.ts`
+- Test: `test/unit/profiles.test.js`
+
+- [ ] **Step 1: 写失败的测试**
+
+`test/unit/profiles.test.js`：
+
+```js
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { PROFILE_PRESETS, TEMPLATE_LAYOUT, normalizeStyleProfile, STYLE_PROFILES } = require('../../out/profiles.js');
+
+test('all six profiles exist', () => {
+    assert.deepEqual([...STYLE_PROFILES].sort(), ['academic', 'business', 'official', 'technical', 'template', 'thesis']);
+});
+
+test('normalizeStyleProfile falls back to template', () => {
+    assert.equal(normalizeStyleProfile('academic'), 'academic');
+    assert.equal(normalizeStyleProfile('nonsense'), 'template');
+    assert.equal(normalizeStyleProfile(undefined), 'template');
+});
+
+test('official profile uses GB/T 9704 margins', () => {
+    const official = PROFILE_PRESETS.official;
+    assert.equal(official.marginTopMm, 37);
+    assert.equal(official.marginBottomMm, 35);
+    assert.equal(official.marginLeftMm, 28);
+    assert.equal(official.marginRightMm, 26);
+});
+
+test('thesis profile uses GB/T 7713 heading sizes', () => {
+    const thesis = PROFILE_PRESETS.thesis;
+    assert.equal(thesis.heading1SizePt, 22);
+    assert.equal(thesis.heading2SizePt, 16);
+    assert.equal(thesis.heading3SizePt, 14);
+    assert.equal(thesis.marginTopMm, 30);
+});
+
+test('official profile maps heading fonts to GB/T 9704 levels', () => {
+    const official = PROFILE_PRESETS.official;
+    assert.equal(official.heading1.eastAsia, 'SimHei');
+    assert.equal(official.heading2.eastAsia, 'KaiTi');
+    assert.equal(official.heading3.eastAsia, 'FangSong');
+});
+
+test('body fonts split latin and east-asian slots', () => {
+    assert.equal(PROFILE_PRESETS.academic.body.ascii, 'Times New Roman');
+    assert.equal(PROFILE_PRESETS.academic.body.eastAsia, 'SimSun');
+    assert.equal(PROFILE_PRESETS.business.body.ascii, 'Arial');
+    assert.equal(PROFILE_PRESETS.business.body.eastAsia, 'Microsoft YaHei');
+    assert.equal(PROFILE_PRESETS.official.body.eastAsia, 'FangSong');
+});
+
+test('pandoc metadata and docx defaults agree on line spacing', () => {
+    for (const [name, preset] of Object.entries(PROFILE_PRESETS)) {
+        if (name === 'template' || preset.lineSpacing === undefined) {
+            continue;
+        }
+        assert.equal(preset.metadata.linestretch, String(preset.lineSpacing), `${name} linestretch`);
+    }
+});
+
+test('business and technical line spacing matches the Dify plugin', () => {
+    assert.equal(PROFILE_PRESETS.business.lineSpacing, 1.5);
+    assert.equal(PROFILE_PRESETS.technical.lineSpacing, 1.35);
+});
+
+test('official uses an exact 29pt line height', () => {
+    assert.equal(PROFILE_PRESETS.official.lineSpacingTwips, 580);
+    assert.equal(PROFILE_PRESETS.official.lineSpacingRule, 'exact');
+});
+
+test('template layout covers every profile', () => {
+    for (const name of STYLE_PROFILES) {
+        assert.ok(TEMPLATE_LAYOUT[name], `missing layout for ${name}`);
+        assert.ok(TEMPLATE_LAYOUT[name].indentTwips.chinese >= 0);
+        assert.ok(TEMPLATE_LAYOUT[name].indentTwips.english >= 0);
+    }
+});
+
+test('the template profile carries no font or size defaults', () => {
+    const template = PROFILE_PRESETS.template;
+    assert.equal(template.body, undefined);
+    assert.equal(template.bodySizePt, undefined);
+    assert.equal(template.heading1, undefined);
+    assert.deepEqual(template.metadata, {});
+});
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `npm test`
+Expected: FAIL — `Cannot find module '../../out/profiles.js'`
+
+- [ ] **Step 3: 创建 `src/profiles.ts`**
+
+```ts
+export type StyleProfile = 'template' | 'academic' | 'business' | 'technical' | 'official' | 'thesis';
+
+export const STYLE_PROFILES: readonly StyleProfile[] = ['template', 'academic', 'business', 'technical', 'official', 'thesis'];
+
+export interface FontPair {
+    /** Latin / western font — maps to w:ascii, w:hAnsi, w:cs. */
+    ascii: string;
+    /** East-asian font — maps to w:eastAsia. */
+    eastAsia: string;
+}
+
+export interface ProfilePreset {
+    /** Pandoc metadata applied via --metadata. */
+    metadata: Record<string, string>;
+    body?: FontPair;
+    bodySizePt?: number;
+    heading1?: FontPair;
+    heading1SizePt?: number;
+    heading2?: FontPair;
+    heading2SizePt?: number;
+    heading3?: FontPair;
+    heading3SizePt?: number;
+    /** Line spacing multiplier — feeds pandoc `linestretch` and the `auto` line rule. */
+    lineSpacing?: number;
+    /** Explicit line height in twips; overrides the multiplier when present. */
+    lineSpacingTwips?: number;
+    /** Line spacing rule used when writing w:spacing into the DOCX. */
+    lineSpacingRule?: 'auto' | 'exact';
+    marginTopMm?: number;
+    marginBottomMm?: number;
+    marginLeftMm?: number;
+    marginRightMm?: number;
+}
+
+export interface ProfileLayout {
+    justification: 'both' | 'left';
+    indentTwips: { chinese: number; english: number };
+    headingAlign: ('left' | 'center')[];
+    headingBeforeTwips: number[];
+    headingAfterTwips: number[];
+}
+
+export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
+    template: {
+        metadata: {}
+    },
+    academic: {
+        metadata: {
+            mainfont: 'Times New Roman',
+            CJKmainfont: 'SimSun',
+            fontsize: '12pt',
+            linestretch: '1.5'
+        },
+        body: { ascii: 'Times New Roman', eastAsia: 'SimSun' },
+        bodySizePt: 12,
+        heading1: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
+        heading1SizePt: 16,
+        heading2: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
+        heading2SizePt: 14,
+        heading3: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
+        heading3SizePt: 12,
+        lineSpacing: 1.5,
+        marginTopMm: 25.4,
+        marginBottomMm: 25.4,
+        marginLeftMm: 31.75,
+        marginRightMm: 31.75
+    },
+    business: {
+        metadata: {
+            mainfont: 'Arial',
+            CJKmainfont: 'Microsoft YaHei',
+            fontsize: '11pt',
+            linestretch: '1.5'
+        },
+        body: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
+        bodySizePt: 11,
+        heading1: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
+        heading1SizePt: 18,
+        heading2: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
+        heading2SizePt: 14,
+        heading3: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
+        heading3SizePt: 12,
+        lineSpacing: 1.5,
+        marginTopMm: 25.4,
+        marginBottomMm: 25.4,
+        marginLeftMm: 25.4,
+        marginRightMm: 25.4
+    },
+    technical: {
+        metadata: {
+            mainfont: 'Arial',
+            CJKmainfont: 'Microsoft YaHei',
+            monofont: 'Consolas',
+            fontsize: '11pt',
+            linestretch: '1.35'
+        },
+        body: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
+        bodySizePt: 11,
+        heading1: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
+        heading1SizePt: 16,
+        heading2: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
+        heading2SizePt: 14,
+        heading3: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
+        heading3SizePt: 12,
+        lineSpacing: 1.35,
+        marginTopMm: 19,
+        marginBottomMm: 19,
+        marginLeftMm: 19,
+        marginRightMm: 19
+    },
+    official: {
+        metadata: {
+            mainfont: 'Times New Roman',
+            CJKmainfont: 'FangSong',
+            fontsize: '16pt',
+            linestretch: '1.75'
+        },
+        body: { ascii: 'Times New Roman', eastAsia: 'FangSong' },
+        bodySizePt: 16,
+        heading1: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
+        heading1SizePt: 16,
+        heading2: { ascii: 'Times New Roman', eastAsia: 'KaiTi' },
+        heading2SizePt: 16,
+        heading3: { ascii: 'Times New Roman', eastAsia: 'FangSong' },
+        heading3SizePt: 16,
+        lineSpacing: 1.75,
+        lineSpacingTwips: 580,
+        lineSpacingRule: 'exact',
+        marginTopMm: 37,
+        marginBottomMm: 35,
+        marginLeftMm: 28,
+        marginRightMm: 26
+    },
+    thesis: {
+        metadata: {
+            mainfont: 'Times New Roman',
+            CJKmainfont: 'SimSun',
+            fontsize: '12pt',
+            linestretch: '1.5'
+        },
+        body: { ascii: 'Times New Roman', eastAsia: 'SimSun' },
+        bodySizePt: 12,
+        heading1: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
+        heading1SizePt: 22,
+        heading2: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
+        heading2SizePt: 16,
+        heading3: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
+        heading3SizePt: 14,
+        lineSpacing: 1.5,
+        marginTopMm: 30,
+        marginBottomMm: 30,
+        marginLeftMm: 30,
+        marginRightMm: 30
+    }
+};
+
+export const TEMPLATE_LAYOUT: Record<StyleProfile, ProfileLayout> = {
+    template: {
+        justification: 'both',
+        indentTwips: { chinese: 0, english: 0 },
+        headingAlign: ['left', 'left', 'left'],
+        headingBeforeTwips: [0, 0, 0],
+        headingAfterTwips: [0, 0, 0]
+    },
+    academic: {
+        justification: 'both',
+        indentTwips: { chinese: 480, english: 0 },
+        headingAlign: ['left', 'left', 'left'],
+        headingBeforeTwips: [240, 200, 160],
+        headingAfterTwips: [120, 100, 80]
+    },
+    business: {
+        justification: 'both',
+        indentTwips: { chinese: 440, english: 0 },
+        headingAlign: ['left', 'left', 'left'],
+        headingBeforeTwips: [280, 220, 180],
+        headingAfterTwips: [140, 110, 90]
+    },
+    technical: {
+        justification: 'left',
+        indentTwips: { chinese: 440, english: 0 },
+        headingAlign: ['left', 'left', 'left'],
+        headingBeforeTwips: [200, 160, 140],
+        headingAfterTwips: [100, 80, 80]
+    },
+    official: {
+        justification: 'both',
+        indentTwips: { chinese: 640, english: 0 },
+        headingAlign: ['center', 'left', 'left'],
+        headingBeforeTwips: [240, 120, 120],
+        headingAfterTwips: [120, 60, 60]
+    },
+    thesis: {
+        justification: 'both',
+        indentTwips: { chinese: 480, english: 0 },
+        headingAlign: ['center', 'left', 'left'],
+        headingBeforeTwips: [360, 240, 200],
+        headingAfterTwips: [180, 120, 100]
+    }
+};
+
+export function normalizeStyleProfile(value: string | undefined): StyleProfile {
+    return STYLE_PROFILES.includes(value as StyleProfile) ? (value as StyleProfile) : 'template';
+}
+```
+
+- [ ] **Step 4: 从 extension.ts 删掉旧的两张表并改为 import**
+
+删除 `src/extension.ts` 里的：
+
+```ts
+const BUNDLED_REFERENCE_DOCX_BY_PROFILE_AND_LANGUAGE: Record<StyleProfile, Record<ReferenceLanguage, string>> = { ... };
+const STYLE_PROFILE_METADATA: Record<StyleProfile, Record<string, string>> = { ... };
+type StyleProfile = 'template' | 'academic' | 'business' | 'technical';
+```
+
+以及整个 `getProfileDocxDefaults()` 函数。
+
+import 段加入：
+
+```ts
+import { PROFILE_PRESETS, normalizeStyleProfile } from './profiles';
+import type { FontPair, ProfilePreset, StyleProfile } from './profiles';
+```
+
+- [ ] **Step 5: 运行测试确认通过**
+
+Run: `npm test`
+Expected: PASS — profiles 测试全绿
+
+- [ ] **Step 6: 编译校验**
+
+Run: `npm run compile`
+Expected: 报错数量减少但仍可能有引用错误（`STYLE_PROFILE_METADATA`、`getProfileDocxDefaults` 已被删除但仍被引用）。这是预期的，下一个任务会修复；记录错误清单。
+
+- [ ] **Step 7: 提交（暂不提交破损状态）**
+
+**不要在这一步提交。** 先执行 Task 4 让 extension.ts 重新编译通过，再一起提交。
+
+---
+
+### Task 4: `src/templates.ts` + extension.ts 改用新预设（含双字体字段）
+
+**Files:**
+- Create: `src/templates.ts`
+- Modify: `src/extension.ts`
+- Test: `test/unit/profiles.test.js`（追加）
+
+- [ ] **Step 1: 追加失败的测试**
+
+在 `test/unit/profiles.test.js` 末尾追加：
+
+```js
+const { BUNDLED_REFERENCE_DOCX, getBundledReferenceDocxCandidates } = require('../../out/templates.js');
+
+test('every profile maps to a bundled template for both languages', () => {
+    for (const name of STYLE_PROFILES) {
+        assert.ok(BUNDLED_REFERENCE_DOCX[name].english, `missing english template for ${name}`);
+        assert.ok(BUNDLED_REFERENCE_DOCX[name].chinese, `missing chinese template for ${name}`);
+    }
+});
+
+test('thesis has its own template rather than reusing academic', () => {
+    assert.match(BUNDLED_REFERENCE_DOCX.thesis.english, /reference_english_thesis\.docx$/);
+    assert.match(BUNDLED_REFERENCE_DOCX.thesis.chinese, /reference_chinese_thesis\.docx$/);
+});
+
+test('bundled candidates are absolute paths under multi-templates', () => {
+    const candidates = getBundledReferenceDocxCandidates('/ext', 'chinese', 'official');
+    assert.equal(candidates.length, 1);
+    assert.match(candidates[0], /multi-templates[\\/]reference_chinese_official\.docx$/);
+});
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `npm test`
+Expected: FAIL — `Cannot find module '../../out/templates.js'`
+
+- [ ] **Step 3: 创建 `src/templates.ts`**
+
+```ts
+import * as path from 'path';
+import type { ReferenceLanguage } from './language';
+import type { StyleProfile } from './profiles';
+
+export const BUNDLED_REFERENCE_DOCX: Record<StyleProfile, Record<ReferenceLanguage, string>> = {
+    template: {
+        english: path.join('multi-templates', 'reference_english_academic.docx'),
+        chinese: path.join('multi-templates', 'reference_chinese_academic.docx')
+    },
+    academic: {
+        english: path.join('multi-templates', 'reference_english_academic.docx'),
+        chinese: path.join('multi-templates', 'reference_chinese_academic.docx')
+    },
+    business: {
+        english: path.join('multi-templates', 'reference_english_business.docx'),
+        chinese: path.join('multi-templates', 'reference_chinese_business.docx')
+    },
+    technical: {
+        english: path.join('multi-templates', 'reference_english_technical.docx'),
+        chinese: path.join('multi-templates', 'reference_chinese_technical.docx')
+    },
+    official: {
+        english: path.join('multi-templates', 'reference_english_official.docx'),
+        chinese: path.join('multi-templates', 'reference_chinese_official.docx')
+    },
+    thesis: {
+        english: path.join('multi-templates', 'reference_english_thesis.docx'),
+        chinese: path.join('multi-templates', 'reference_chinese_thesis.docx')
+    }
+};
+
+export function getBundledReferenceDocxCandidates(
+    extensionPath: string,
+    referenceLanguage: ReferenceLanguage,
+    styleProfile: StyleProfile
+): string[] {
+    const primary = BUNDLED_REFERENCE_DOCX[styleProfile][referenceLanguage];
+    return [path.join(extensionPath, primary)];
+}
+```
+
+- [ ] **Step 4: 改写 extension.ts 的样式覆盖层**
+
+先删除 extension.ts 里原有的 `getBundledReferenceDocxCandidates()` 函数，并在 import 段加入：
+
+```ts
+import { getBundledReferenceDocxCandidates } from './templates';
+```
+
+然后把 `DocxStyleOverride` 接口与相关函数改为：
+
+```ts
+interface DocxStyleOverride {
+    styleId: string;
+    aliases?: string[];
+    asciiFont?: string;
+    eastAsiaFont?: string;
+    sizePt?: number;
+    lineSpacingTwips?: number;
+    lineSpacingRule?: 'auto' | 'exact';
+    color?: string;
+    shadingFill?: string;
+}
+```
+
+`updateStyleXml` 中字体与行距部分改为：
+
+```ts
+    if (override.asciiFont || override.eastAsiaFont) {
+        const ascii = override.asciiFont ?? override.eastAsiaFont ?? '';
+        const eastAsia = override.eastAsiaFont ?? override.asciiFont ?? '';
+        const fontXml = `<w:rFonts w:ascii="${escapeXmlAttribute(ascii)}" w:hAnsi="${escapeXmlAttribute(ascii)}" w:eastAsia="${escapeXmlAttribute(eastAsia)}" w:cs="${escapeXmlAttribute(ascii)}"/>`;
+        updated = upsertInsideElement(updated, 'w:rPr', /<w:rFonts\b[^>]*\/>/, fontXml);
+    }
+```
+
+```ts
+    if (override.lineSpacingTwips) {
+        const rule = override.lineSpacingRule ?? 'auto';
+        updated = upsertInsideElement(updated, 'w:pPr', /<w:spacing\b[^>]*\/>/, `<w:spacing w:line="${override.lineSpacingTwips}" w:lineRule="${rule}"/>`);
+    }
+```
+
+`buildDocxStyleOverrides` 整体改为：
+
+```ts
+function resolveFontPair(explicitFont: string, presetPair?: FontPair): FontPair | undefined {
+    const explicit = explicitFont.trim();
+    if (explicit) {
+        return { ascii: explicit, eastAsia: explicit };
+    }
+
+    return presetPair;
+}
+
+function resolveLineSpacingTwips(settings: ExportSettings, preset: ProfilePreset): { twips: number; rule: 'auto' | 'exact' } | undefined {
+    if (settings.lineSpacing) {
+        return { twips: Math.round(settings.lineSpacing * 240), rule: 'auto' };
+    }
+
+    if (preset.lineSpacingTwips) {
+        return { twips: preset.lineSpacingTwips, rule: preset.lineSpacingRule ?? 'exact' };
+    }
+
+    if (preset.lineSpacing) {
+        return { twips: Math.round(preset.lineSpacing * 240), rule: 'auto' };
+    }
+
+    return undefined;
+}
+
+function buildDocxStyleOverrides(settings: ExportSettings): DocxStyleOverride[] {
+    const preset = PROFILE_PRESETS[settings.styleProfile];
+    const effectiveColor = settings.styleProfile === 'template' ? undefined : '000000';
+    const bodyFont = resolveFontPair(settings.bodyFont, preset.body);
+    const heading1Font = resolveFontPair(settings.heading1Font, preset.heading1);
+    const heading2Font = resolveFontPair(settings.heading2Font, preset.heading2);
+    const heading3Font = resolveFontPair(settings.heading3Font, preset.heading3);
+    const lineSpacing = resolveLineSpacingTwips(settings, preset);
+
+    const overrides: DocxStyleOverride[] = [
+        {
+            styleId: 'Normal',
+            aliases: ['a', 'a1', 'Text', 'BodyText', 'Body Text', 'FirstParagraph', 'Compact'],
+            asciiFont: bodyFont?.ascii,
+            eastAsiaFont: bodyFont?.eastAsia,
+            sizePt: settings.bodySizePt ?? preset.bodySizePt,
+            lineSpacingTwips: lineSpacing?.twips,
+            lineSpacingRule: lineSpacing?.rule,
+            color: effectiveColor
+        },
+        {
+            styleId: 'Heading1',
+            aliases: ['1'],
+            asciiFont: heading1Font?.ascii,
+            eastAsiaFont: heading1Font?.eastAsia,
+            sizePt: settings.heading1SizePt ?? preset.heading1SizePt,
+            color: effectiveColor
+        },
+        {
+            styleId: 'Heading2',
+            aliases: ['2', '21'],
+            asciiFont: heading2Font?.ascii,
+            eastAsiaFont: heading2Font?.eastAsia,
+            sizePt: settings.heading2SizePt ?? preset.heading2SizePt,
+            color: effectiveColor
+        },
+        {
+            styleId: 'Heading3',
+            aliases: ['3', '31'],
+            asciiFont: heading3Font?.ascii,
+            eastAsiaFont: heading3Font?.eastAsia,
+            sizePt: settings.heading3SizePt ?? preset.heading3SizePt,
+            color: effectiveColor
+        }
+    ];
+
+    if (settings.styleProfile === 'technical') {
+        overrides.push(...buildTechnicalCodeStyleOverrides());
+    }
+
+    return overrides.filter((override) => hasDocxStyleOverrideValue(override));
+}
+```
+
+`hasDocxStyleOverrideValue` 改为：
+
+```ts
+function hasDocxStyleOverrideValue(override: DocxStyleOverride): boolean {
+    return Boolean(
+        override.asciiFont
+        || override.eastAsiaFont
+        || override.sizePt
+        || override.lineSpacingTwips
+        || override.color
+        || override.shadingFill
+    );
+}
+```
+
+`buildTechnicalCodeStyleOverrides` 改为：
+
+```ts
+function buildTechnicalCodeStyleOverrides(): DocxStyleOverride[] {
+    return [
+        {
+            styleId: 'SourceCode',
+            aliases: ['Code'],
+            asciiFont: 'Consolas',
+            eastAsiaFont: 'Consolas',
+            sizePt: 10,
+            lineSpacingTwips: 252,
+            lineSpacingRule: 'auto',
+            color: '000000',
+            shadingFill: 'F3F4F6'
+        },
+        {
+            styleId: 'VerbatimChar',
+            asciiFont: 'Consolas',
+            eastAsiaFont: 'Consolas',
+            sizePt: 10,
+            color: '000000'
+        }
+    ];
+}
+```
+
+`buildPandocMetadata` 改为：
+
+```ts
+function buildPandocMetadata(settings: ExportSettings): Record<string, string> {
+    const preset = PROFILE_PRESETS[settings.styleProfile];
+    const metadata: Record<string, string> = { ...preset.metadata };
+
+    if (settings.bodyFont) {
+        metadata.mainfont = settings.bodyFont;
+        metadata.CJKmainfont = settings.bodyFont;
+    }
+
+    if (settings.bodySizePt) {
+        metadata.fontsize = `${settings.bodySizePt}pt`;
+    }
+
+    if (settings.lineSpacing) {
+        metadata.linestretch = String(settings.lineSpacing);
+    }
+
+    return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value.trim().length > 0));
+}
+```
+
+- [ ] **Step 5: 页边距默认值接入**
+
+`hasMarginOverrides` 与 `updateDocumentMargins` 改为读预设默认值：
+
+```ts
+function resolveMarginMm(settings: ExportSettings, preset: ProfilePreset) {
+    return {
+        top: settings.marginTopMm ?? preset.marginTopMm,
+        bottom: settings.marginBottomMm ?? preset.marginBottomMm,
+        left: settings.marginLeftMm ?? preset.marginLeftMm,
+        right: settings.marginRightMm ?? preset.marginRightMm
+    };
+}
+
+function hasMarginOverrides(settings: ExportSettings): boolean {
+    const margins = resolveMarginMm(settings, PROFILE_PRESETS[settings.styleProfile]);
+    return Boolean(margins.top || margins.bottom || margins.left || margins.right);
+}
+
+function updateDocumentMargins(documentXml: string, settings: ExportSettings): string {
+    const margins = resolveMarginMm(settings, PROFILE_PRESETS[settings.styleProfile]);
+    return documentXml.replace(/<w:pgMar\b[^>]*\/>/g, (pgMarXml) => {
+        const marginUpdates = [
+            { attr: 'w:top', value: margins.top },
+            { attr: 'w:bottom', value: margins.bottom },
+            { attr: 'w:left', value: margins.left },
+            { attr: 'w:right', value: margins.right }
+        ];
+
+        let updated = pgMarXml;
+        for (const margin of marginUpdates) {
+            if (margin.value) {
+                updated = upsertXmlAttribute(updated, margin.attr, String(mmToTwips(margin.value)));
+            }
+        }
+
+        return updated;
+    });
+}
+```
+
+- [ ] **Step 6: 编译校验**
+
+Run: `npm run compile`
+Expected: 无 TypeScript 错误
+
+- [ ] **Step 7: 运行测试确认通过**
+
+Run: `npm test`
+Expected: PASS
+
+- [ ] **Step 8: 提交**
+
+```bash
+git add src/profiles.ts src/templates.ts src/extension.ts test/unit/profiles.test.js
+git commit -m "feat: consolidate style presets into a single source of truth
+
+Profiles now carry a metadata table and a DOCX defaults table together,
+so the pandoc layer and the XML layer can no longer drift. Fonts are
+split into ascii/eastAsia slots so English documents stop rendering
+their body text in SimSun. Adds official (GB/T 9704) and thesis
+(GB/T 7713) profiles with their own page margins."
+```
+
+---
+
+### Task 5: 模板生成器与 10 个模板
+
+**Files:**
+- Create: `scripts/reference-base.docx`（从 pandoc 官方 reference.docx 复制）
+- Create: `scripts/build-templates.js`
+- Modify: `multi-templates/`（重新生成 10 个）
+- Test: `test/unit/templates.test.js`
+
+- [ ] **Step 1: 准备基底文件**
+
+Run:
+```bash
+pandoc --print-default-data-file reference.docx > scripts/reference-base.docx
+```
+Windows PowerShell 用户改用：
+```powershell
+pandoc --print-default-data-file reference.docx | Out-File -Encoding utf8NoBOM scripts/reference-base.docx
+```
+
+Verify: `ls -la scripts/reference-base.docx` → 应约 40–60 KB。
+
+- [ ] **Step 2: 写失败的测试**
+
+`test/unit/templates.test.js`：
+
+```js
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
+const AdmZip = require('adm-zip');
+
+const TEMPLATE_DIR = path.join(__dirname, '..', '..', 'multi-templates');
+const { STYLE_PROFILES } = require('../../out/profiles.js');
+
+function readTemplate(profile, language) {
+    const file = path.join(TEMPLATE_DIR, `reference_${language}_${profile}.docx`);
+    assert.ok(fs.existsSync(file), `missing template ${path.basename(file)}`);
+    return new AdmZip(file);
+}
+
+test('all ten templates exist', () => {
+    for (const profile of STYLE_PROFILES) {
+        if (profile === 'template') {
+            continue;
+        }
+        for (const language of ['english', 'chinese']) {
+            assert.ok(fs.existsSync(path.join(TEMPLATE_DIR, `reference_${language}_${profile}.docx`)));
+        }
+    }
+});
+
+for (const profile of ['academic', 'business', 'technical', 'official', 'thesis']) {
+    for (const language of ['english', 'chinese']) {
+        test(`${profile}/${language} is single column A4`, () => {
+            const zip = readTemplate(profile, language);
+            const document = zip.readAsText('word/document.xml');
+            const sectPr = document.match(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/)[0];
+            assert.ok(!/w:num="2"/.test(sectPr), 'must not be two columns');
+            assert.match(sectPr, /<w:pgSz w:w="11906" w:h="16838"\s*\/>/);
+        });
+
+        test(`${profile}/${language} defines Normal as the default paragraph style`, () => {
+            const zip = readTemplate(profile, language);
+            const styles = zip.readAsText('word/styles.xml');
+            const normal = styles.match(/<w:style\b[^>]*w:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/)[0];
+            assert.ok(normal.includes('w:default="1"'), 'Normal must be the default style');
+            assert.match(normal, /<w:rFonts[^>]*w:ascii="[^"]+"[^>]*w:eastAsia="[^"]+"/);
+        });
+
+        test(`${profile}/${language} defines canonical pandoc style ids`, () => {
+            const zip = readTemplate(profile, language);
+            const styles = zip.readAsText('word/styles.xml');
+            for (const id of ['BodyText', 'FirstParagraph', 'Compact', 'Heading1', 'Heading2', 'Heading3', 'SourceCode', 'VerbatimChar']) {
+                assert.ok(styles.includes(`w:styleId="${id}"`), `missing style ${id}`);
+            }
+        });
+    }
+}
+
+test('chinese templates indent the first line, english templates do not', () => {
+    const chinese = new AdmZip(path.join(TEMPLATE_DIR, 'reference_chinese_academic.docx')).readAsText('word/styles.xml');
+    const english = new AdmZip(path.join(TEMPLATE_DIR, 'reference_english_academic.docx')).readAsText('word/styles.xml');
+    assert.match(chinese, /<w:ind w:firstLine="480"\s*\/>/);
+    assert.ok(!/<w:ind w:firstLine="480"\s*\/>/.test(english));
+});
+
+test('templates carry a page-number footer', () => {
+    const zip = readTemplate('academic', 'chinese');
+    assert.ok(zip.getEntry('word/footer1.xml'), 'footer part missing');
+    assert.match(zip.readAsText('word/footer1.xml'), /PAGE/);
+});
+```
+
+- [ ] **Step 3: 运行测试确认失败**
+
+Run: `npm test`
+Expected: FAIL — `missing template reference_english_official.docx`
+
+- [ ] **Step 4: 创建 `scripts/build-templates.js`**
+
+```js
+const fs = require('fs');
+const path = require('path');
+const AdmZip = require('adm-zip');
+const { PROFILE_PRESETS, TEMPLATE_LAYOUT } = require('../out/profiles.js');
+
+const REPO_ROOT = path.join(__dirname, '..');
+const BASE_DOCX = path.join(__dirname, 'reference-base.docx');
+const OUTPUT_DIR = path.join(REPO_ROOT, 'multi-templates');
+
+const A4_WIDTH_TWIPS = 11906;
+const A4_HEIGHT_TWIPS = 16838;
+const HEADER_TWIPS = 850;
+const FOOTER_TWIPS = 990;
+const FOOTER_REL_ID = 'rId900';
+const CODE_FONT = 'Consolas';
+const CODE_SIZE_PT = 10;
+const CODE_FILL = 'F3F4F6';
+const PAGE_NUMBER_FONT = 'SimSun';
+const PAGE_NUMBER_SIZE_PT = 14;
+
+const PROFILE_ORDER = ['academic', 'business', 'technical', 'official', 'thesis'];
+const LANGUAGE_ORDER = ['english', 'chinese'];
+
+function escapeXml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function mmToTwips(mm) {
+    return Math.round((mm * 1440) / 25.4);
+}
+
+function fontXml(ascii, eastAsia) {
+    return `<w:rFonts w:ascii="${escapeXml(ascii)}" w:hAnsi="${escapeXml(ascii)}" w:eastAsia="${escapeXml(eastAsia)}" w:cs="${escapeXml(ascii)}"/>`;
+}
+
+function sizeXml(sizePt) {
+    const halfPoints = Math.round(sizePt * 2);
+    return `<w:sz w:val="${halfPoints}"/><w:szCs w:val="${halfPoints}"/>`;
+}
+
+function paragraphStyle({ id, name, basedOn = 'Normal', pPr = '', rPr = '', custom = true }) {
+    const customAttr = custom ? ' w:customStyle="1"' : '';
+    return `<w:style w:type="paragraph"${customAttr} w:styleId="${escapeXml(id)}">`
+        + `<w:name w:val="${escapeXml(name)}"/>`
+        + `<w:basedOn w:val="${escapeXml(basedOn)}"/>`
+        + `<w:qFormat/>`
+        + (pPr ? `<w:pPr>${pPr}</w:pPr>` : '')
+        + (rPr ? `<w:rPr>${rPr}</w:rPr>` : '')
+        + `</w:style>`;
+}
+
+function buildStyles(profile, language) {
+    const preset = PROFILE_PRESETS[profile];
+    const layout = TEMPLATE_LAYOUT[profile];
+    const indent = layout.indentTwips[language];
+    const lineTwips = preset.lineSpacingTwips ?? Math.round((preset.lineSpacing ?? 1.5) * 240);
+    const lineRule = preset.lineSpacingTwips ? 'exact' : 'auto';
+
+    const bodyPPr = `<w:widowControl/>`
+        + `<w:spacing w:after="0" w:line="${lineTwips}" w:lineRule="${lineRule}"/>`
+        + (indent ? `<w:ind w:firstLine="${indent}"/>` : '')
+        + `<w:jc w:val="${layout.justification}"/>`;
+    const bodyRPr = fontXml(preset.body.ascii, preset.body.eastAsia) + sizeXml(preset.bodySizePt ?? 12);
+
+    const definitions = [];
+
+    definitions.push(
+        '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
+        + '<w:name w:val="Normal"/><w:qFormat/>'
+        + `<w:pPr>${bodyPPr}</w:pPr>`
+        + `<w:rPr>${bodyRPr}</w:rPr>`
+        + '</w:style>'
+    );
+
+    for (const [id, name] of [['BodyText', 'Body Text'], ['FirstParagraph', 'First Paragraph'], ['Compact', 'Compact']]) {
+        definitions.push(paragraphStyle({ id, name, pPr: bodyPPr, rPr: bodyRPr }));
+    }
+
+    const headingSizes = [
+        { font: preset.heading1, sizePt: preset.heading1SizePt ?? 16 },
+        { font: preset.heading2, sizePt: preset.heading2SizePt ?? 14 },
+        { font: preset.heading3, sizePt: preset.heading3SizePt ?? 12 }
+    ];
+
+    headingSizes.forEach((heading, index) => {
+        const id = `Heading${index + 1}`;
+        definitions.push(paragraphStyle({
+            id,
+            name: `heading ${index + 1}`,
+            basedOn: 'Normal',
+            custom: false,
+            pPr: '<w:keepNext/><w:keepLines/>'
+                + `<w:spacing w:before="${layout.headingBeforeTwips[index]}" w:after="${layout.headingAfterTwips[index]}" w:line="${lineTwips}" w:lineRule="${lineRule}"/>`
+                + '<w:ind w:firstLine="0"/>'
+                + `<w:jc w:val="${layout.headingAlign[index]}"/>`
+                + `<w:outlineLvl w:val="${index}"/>`,
+            rPr: fontXml(heading.font.ascii, heading.font.eastAsia) + sizeXml(heading.sizePt) + '<w:b/><w:bCs/>'
+        }));
+    });
+
+    definitions.push(paragraphStyle({
+        id: 'SourceCode',
+        name: 'Source Code',
+        pPr: '<w:wordWrap w:val="off"/>'
+            + '<w:spacing w:before="60" w:after="60" w:line="240" w:lineRule="auto"/>'
+            + '<w:ind w:left="280" w:right="280" w:firstLine="0"/>'
+            + '<w:jc w:val="left"/>'
+            + `<w:shd w:val="clear" w:color="auto" w:fill="${CODE_FILL}"/>`,
+        rPr: fontXml(CODE_FONT, CODE_FONT) + sizeXml(CODE_SIZE_PT)
+    }));
+
+    definitions.push(
+        '<w:style w:type="character" w:customStyle="1" w:styleId="VerbatimChar">'
+        + '<w:name w:val="Verbatim Char"/>'
+        + `<w:rPr>${fontXml(CODE_FONT, CODE_FONT)}${sizeXml(CODE_SIZE_PT)}</w:rPr>`
+        + '</w:style>'
+    );
+
+    return definitions.join('');
+}
+
+function replaceStyleBlock(stylesXml, styleId, replacement) {
+    const regex = new RegExp(`<w:style\\b(?=[^>]*w:styleId="${styleId}")[\\s\\S]*?</w:style>`);
+    if (regex.test(stylesXml)) {
+        return stylesXml.replace(regex, replacement);
+    }
+
+    return stylesXml;
+}
+
+function buildDocument(profile) {
+    const preset = PROFILE_PRESETS[profile];
+    return (
+        '<w:footerReference w:type="default" r:id="rId900"/>'
+        + '<w:footnotePr><w:numRestart w:val="eachSect"/></w:footnotePr>'
+        + `<w:pgSz w:w="${A4_WIDTH_TWIPS}" w:h="${A4_HEIGHT_TWIPS}"/>`
+        + '<w:pgMar'
+        + ` w:top="${mmToTwips(preset.marginTopMm ?? 25.4)}"`
+        + ` w:right="${mmToTwips(preset.marginRightMm ?? 25.4)}"`
+        + ` w:bottom="${mmToTwips(preset.marginBottomMm ?? 25.4)}"`
+        + ` w:left="${mmToTwips(preset.marginLeftMm ?? 25.4)}"`
+        + ` w:header="${HEADER_TWIPS}" w:footer="${FOOTER_TWIPS}" w:gutter="0"/>`
+        + '<w:cols w:space="720"/>'
+        + '<w:docGrid w:linePitch="312"/>'
+    );
+}
+
+function buildFooter() {
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        + '<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        + '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
+        + `<w:r><w:rPr>${fontXml(PAGE_NUMBER_FONT, PAGE_NUMBER_FONT)}${sizeXml(PAGE_NUMBER_SIZE_PT)}</w:rPr><w:fldChar w:fldCharType="begin"/></w:r>`
+        + '<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>'
+        + '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        + '<w:r><w:t>1</w:t></w:r>'
+        + '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+        + '</w:p></w:ftr>';
+}
+
+function buildTemplate(baseZip, profile, language) {
+    let stylesXml = baseZip.readAsText('word/styles.xml');
+
+    for (const styleId of ['Normal', 'BodyText', 'FirstParagraph', 'Compact', 'Heading1', 'Heading2', 'Heading3', 'SourceCode', 'VerbatimChar']) {
+        stylesXml = replaceStyleBlock(stylesXml, styleId, '');
+    }
+
+    stylesXml = stylesXml.replace(/<\/w:styles>\s*$/, `${buildStyles(profile, language)}</w:styles>`);
+
+    let documentXml = baseZip.readAsText('word/document.xml');
+    documentXml = documentXml.replace(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/, `<w:sectPr>${buildDocument(profile)}</w:sectPr>`);
+
+    let contentTypes = baseZip.readAsText('[Content_Types].xml');
+    contentTypes = contentTypes.replace(
+        '</Types>',
+        '<Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>'
+    );
+
+    let rels = baseZip.readAsText('word/_rels/document.xml.rels');
+    rels = rels.replace(
+        '</Relationships>',
+        `<Relationship Id="${FOOTER_REL_ID}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>`
+    );
+
+    const output = new AdmZip();
+    for (const entry of baseZip.getEntries()) {
+        const name = entry.entryName;
+        if (name === 'word/styles.xml') {
+            output.addFile(name, Buffer.from(stylesXml, 'utf8'));
+        } else if (name === 'word/document.xml') {
+            output.addFile(name, Buffer.from(documentXml, 'utf8'));
+        } else if (name === '[Content_Types].xml') {
+            output.addFile(name, Buffer.from(contentTypes, 'utf8'));
+        } else if (name === 'word/_rels/document.xml.rels') {
+            output.addFile(name, Buffer.from(rels, 'utf8'));
+        } else {
+            output.addFile(name, entry.getData());
+        }
+    }
+
+    output.addFile('word/footer1.xml', Buffer.from(buildFooter(), 'utf8'));
+
+    return output;
+}
+
+function main() {
+    if (!fs.existsSync(BASE_DOCX)) {
+        console.error(`Base reference DOCX not found: ${BASE_DOCX}`);
+        console.error('Create it with: pandoc --print-default-data-file reference.docx > scripts/reference-base.docx');
+        process.exit(1);
+    }
+
+    fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+    const baseZip = new AdmZip(BASE_DOCX);
+
+    for (const profile of PROFILE_ORDER) {
+        for (const language of LANGUAGE_ORDER) {
+            const zip = buildTemplate(baseZip, profile, language);
+            const target = path.join(OUTPUT_DIR, `reference_${language}_${profile}.docx`);
+            zip.writeZip(target);
+            console.log(`wrote ${path.relative(REPO_ROOT, target)}`);
+        }
+    }
+}
+
+main();
+```
+
+- [ ] **Step 5: 生成模板**
+
+Run: `npm run build:templates`
+Expected: 输出 10 行 `wrote multi-templates/reference_*.docx`
+
+- [ ] **Step 6: 删除旧模板残留**
+
+旧模板文件已被同名覆盖，无需额外删除。若 `multi-templates/` 下仍有未列出的 .docx，手动删除。
+
+Run: `ls multi-templates/`
+Expected: 恰好 10 个 .docx
+
+- [ ] **Step 7: 运行测试确认通过**
+
+Run: `npm test`
+Expected: PASS
+
+- [ ] **Step 8: 用 pandoc 验证产物可用**
+
+Run:
+```bash
+printf '# 标题\n\n正文内容。\n' > /tmp/t.md
+pandoc /tmp/t.md -o /tmp/t.docx --reference-doc multi-templates/reference_chinese_academic.docx
+```
+Expected: 退出码 0，`/tmp/t.docx` 存在
+
+- [ ] **Step 9: 提交**
+
+```bash
+git add scripts/build-templates.js scripts/reference-base.docx multi-templates/ test/unit/templates.test.js
+git commit -m "feat: regenerate all reference templates from a declarative style table
+
+The three English templates were two-column with journal-style leftover
+heading formatting (smallCaps, auto-numbering, italic H2) and no
+standard style ids, so body text fell back to docDefaults and the
+plugin's overrides only landed by alias. A generator over pandoc's own
+reference docx produces single-column A4 templates with canonical style
+ids, split ascii/east-asian fonts, first-line indent and a page-number
+footer, and adds real official (GB/T 9704) and thesis (GB/T 7713)
+templates."
+```
+
+---
+
+### Task 6: Dify 侧同步
+
+**Files:**
+- Modify: `scripts/sync-templates.sh`
+- Modify: `dify-plugin-MD2Docx/src/md2docx.py`
+- Modify: `dify-plugin-MD2Docx/multi-templates/`（同步 10 个）
+
+- [ ] **Step 1: 扩展同步脚本的模板清单**
+
+`scripts/sync-templates.sh` 里的 `TEMPLATES=( ... )` 改为：
+
+```bash
+TEMPLATES=(
+    "reference_english_academic.docx"
+    "reference_english_technical.docx"
+    "reference_english_business.docx"
+    "reference_english_official.docx"
+    "reference_english_thesis.docx"
+    "reference_chinese_academic.docx"
+    "reference_chinese_technical.docx"
+    "reference_chinese_business.docx"
+    "reference_chinese_official.docx"
+    "reference_chinese_thesis.docx"
+)
+```
+
+同时把文件头注释里的 `# Template files (8 total):` 改为 `# Template files (10 total):`，并把下面的两行：
+
+```bash
+#   reference_{english,chinese}_{academic,technical,business,official}.docx
+```
+
+改为：
+
+```bash
+#   reference_{english,chinese}_{academic,technical,business,official,thesis}.docx
+```
+
+- [ ] **Step 2: 运行同步脚本**
+
+Run: `bash scripts/sync-templates.sh`
+Expected: 报告复制 10 个文件，无 mismatch
+
+- [ ] **Step 3: 更新 Dify 的 TEMPLATE_MAP**
+
+`dify-plugin-MD2Docx/src/md2docx.py` 的 `TEMPLATE_MAP` 改为：
+
+```python
+TEMPLATE_MAP: dict[str, dict[str, str]] = {
+    "academic": {
+        "english": "reference_english_academic.docx",
+        "chinese": "reference_chinese_academic.docx",
+    },
+    "template": {
+        "english": "reference_english_academic.docx",
+        "chinese": "reference_chinese_academic.docx",
+    },
+    "technical": {
+        "english": "reference_english_technical.docx",
+        "chinese": "reference_chinese_technical.docx",
+    },
+    "business": {
+        "english": "reference_english_business.docx",
+        "chinese": "reference_chinese_business.docx",
+    },
+    "official": {
+        "english": "reference_english_official.docx",
+        "chinese": "reference_chinese_official.docx",
+    },
+    "thesis": {
+        "english": "reference_english_thesis.docx",
+        "chinese": "reference_chinese_thesis.docx",
+    },
+}
+```
+
+- [ ] **Step 4: Dify 的字体分槽**
+
+`PROFILE_DEFAULTS` 里每个 profile 的 `body_font` / `headingN_font` 拆成两个字段。改法：把 `PROFILE_DEFAULTS` 改为下面的结构（其余字段不变）：
+
+```python
+PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
+    "academic": {
+        "body_ascii_font": "Times New Roman",
+        "body_east_asia_font": "SimSun",
+        "body_size_pt": 12,
+        "heading1_ascii_font": "Times New Roman",
+        "heading1_east_asia_font": "SimHei",
+        "heading1_size_pt": 16,
+        "heading2_ascii_font": "Times New Roman",
+        "heading2_east_asia_font": "SimHei",
+        "heading2_size_pt": 14,
+        "heading3_ascii_font": "Times New Roman",
+        "heading3_east_asia_font": "SimHei",
+        "heading3_size_pt": 12,
+        "line_spacing": 1.5,
+        "margin_top_mm": 25.4,
+        "margin_bottom_mm": 25.4,
+        "margin_left_mm": 31.75,
+        "margin_right_mm": 31.75,
+    },
+    "business": {
+        "body_ascii_font": "Arial",
+        "body_east_asia_font": "Microsoft YaHei",
+        "body_size_pt": 11,
+        "heading1_ascii_font": "Arial",
+        "heading1_east_asia_font": "Microsoft YaHei",
+        "heading1_size_pt": 18,
+        "heading2_ascii_font": "Arial",
+        "heading2_east_asia_font": "Microsoft YaHei",
+        "heading2_size_pt": 14,
+        "heading3_ascii_font": "Arial",
+        "heading3_east_asia_font": "Microsoft YaHei",
+        "heading3_size_pt": 12,
+        "line_spacing": 1.5,
+        "margin_top_mm": 25.4,
+        "margin_bottom_mm": 25.4,
+        "margin_left_mm": 25.4,
+        "margin_right_mm": 25.4,
+    },
+    "technical": {
+        "body_ascii_font": "Arial",
+        "body_east_asia_font": "Microsoft YaHei",
+        "body_size_pt": 11,
+        "heading1_ascii_font": "Arial",
+        "heading1_east_asia_font": "Microsoft YaHei",
+        "heading1_size_pt": 16,
+        "heading2_ascii_font": "Arial",
+        "heading2_east_asia_font": "Microsoft YaHei",
+        "heading2_size_pt": 14,
+        "heading3_ascii_font": "Arial",
+        "heading3_east_asia_font": "Microsoft YaHei",
+        "heading3_size_pt": 12,
+        "line_spacing": 1.35,
+        "margin_top_mm": 19,
+        "margin_bottom_mm": 19,
+        "margin_left_mm": 19,
+        "margin_right_mm": 19,
+    },
+    "official": {
+        "body_ascii_font": "Times New Roman",
+        "body_east_asia_font": "FangSong",
+        "body_size_pt": 16,
+        "heading1_ascii_font": "Times New Roman",
+        "heading1_east_asia_font": "SimHei",
+        "heading1_size_pt": 16,
+        "heading2_ascii_font": "Times New Roman",
+        "heading2_east_asia_font": "KaiTi",
+        "heading2_size_pt": 16,
+        "heading3_ascii_font": "Times New Roman",
+        "heading3_east_asia_font": "FangSong",
+        "heading3_size_pt": 16,
+        "line_spacing": 1.75,
+        "margin_top_mm": 37,
+        "margin_bottom_mm": 35,
+        "margin_left_mm": 28,
+        "margin_right_mm": 26,
+    },
+    "thesis": {
+        "body_ascii_font": "Times New Roman",
+        "body_east_asia_font": "SimSun",
+        "body_size_pt": 12,
+        "heading1_ascii_font": "Times New Roman",
+        "heading1_east_asia_font": "SimHei",
+        "heading1_size_pt": 22,
+        "heading2_ascii_font": "Times New Roman",
+        "heading2_east_asia_font": "SimHei",
+        "heading2_size_pt": 16,
+        "heading3_ascii_font": "Times New Roman",
+        "heading3_east_asia_font": "SimHei",
+        "heading3_size_pt": 14,
+        "line_spacing": 1.5,
+        "margin_top_mm": 30,
+        "margin_bottom_mm": 30,
+        "margin_left_mm": 30,
+        "margin_right_mm": 30,
+    },
+    "template": {},
+}
+```
+
+`_set_font` 改为接受两个字体名：
+
+```python
+def _set_font(run_or_style, ascii_font: str | None = None, east_asia_font: str | None = None) -> None:
+    """Set the latin and east-asian fonts on a run or style element."""
+    rPr = run_or_style._element.get_or_add_rPr()
+    rFonts = rPr.find(qn("w:rFonts"))
+    if rFonts is None:
+        rFonts = etree.SubElement(rPr, qn("w:rFonts"))
+    if ascii_font:
+        rFonts.set(qn("w:ascii"), ascii_font)
+        rFonts.set(qn("w:hAnsi"), ascii_font)
+        rFonts.set(qn("w:cs"), ascii_font)
+    if east_asia_font:
+        rFonts.set(qn("w:eastAsia"), east_asia_font)
+```
+
+技术档的代码样式调用点也要跟着改，否则 `eastAsia` 槽位会留空：
+
+```python
+            _set_font(cs, "Consolas", "Consolas")
+```
+
+`_apply_to_styles` 的 `font=` 参数改为 `ascii_font=` 与 `east_asia_font=`：
+
+```python
+def _apply_to_styles(doc: Document, names: tuple[str, ...], *, ascii_font=None,
+                     east_asia_font=None, size=None, color=None,
+                     line_spacing=None) -> bool:
+    """Apply font/size/color/line_spacing to matching style names. Returns True
+    if at least one style was found and modified.
+    """
+    matched = False
+    for name in names:
+        try:
+            style = doc.styles[name]
+            matched = True
+            if ascii_font or east_asia_font:
+                _set_font(style, ascii_font, east_asia_font)
+            if size:
+                _set_font_size(style, size)
+            if color:
+                _set_font_color(style, color)
+            if line_spacing:
+                _set_line_spacing(style.paragraph_format, line_spacing)
+        except KeyError:
+            pass
+    return matched
+```
+
+`apply_style_overrides` 里的取值部分改为：
+
+```python
+    body_ascii = params.get("body_font") or profile.get("body_ascii_font")
+    body_east_asia = params.get("body_font") or profile.get("body_east_asia_font")
+    body_size = parse_pt(params.get("body_size_pt")) or profile.get("body_size_pt")
+    line_spacing = parse_spacing(params.get("line_spacing")) or profile.get("line_spacing")
+
+    h1_ascii = params.get("heading1_font") or profile.get("heading1_ascii_font")
+    h1_east_asia = params.get("heading1_font") or profile.get("heading1_east_asia_font")
+    h1_size = parse_pt(params.get("heading1_size_pt")) or profile.get("heading1_size_pt")
+    h2_ascii = params.get("heading2_font") or profile.get("heading2_ascii_font")
+    h2_east_asia = params.get("heading2_font") or profile.get("heading2_east_asia_font")
+    h2_size = parse_pt(params.get("heading2_size_pt")) or profile.get("heading2_size_pt")
+    h3_ascii = params.get("heading3_font") or profile.get("heading3_ascii_font")
+    h3_east_asia = params.get("heading3_font") or profile.get("heading3_east_asia_font")
+    h3_size = parse_pt(params.get("heading3_size_pt")) or profile.get("heading3_size_pt")
+```
+
+并把三处 `_apply_to_styles(...)` 调用改为传 `ascii_font=` / `east_asia_font=`：
+
+```python
+    if not _apply_to_styles(doc, NORMAL_STYLE_NAMES, ascii_font=body_ascii,
+                             east_asia_font=body_east_asia, size=body_size,
+                             color=effective_color, line_spacing=line_spacing):
+```
+
+```python
+    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 1"], ascii_font=h1_ascii,
+                             east_asia_font=h1_east_asia, size=h1_size,
+                             color=effective_color):
+```
+
+```python
+    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 2"], ascii_font=h2_ascii,
+                             east_asia_font=h2_east_asia, size=h2_size,
+                             color=effective_color):
+```
+
+```python
+    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 3"], ascii_font=h3_ascii,
+                             east_asia_font=h3_east_asia, size=h3_size,
+                             color=effective_color):
+```
+
+- [ ] **Step 4b: 注意工作区里已有的未提交改动**
+
+`dify-plugin-MD2Docx/src/` 与 `dify-plugin-MD2Docx/tests/` 在本任务开始前就有未提交的改动（pandoc 警告收集、Mermaid 渲染器重构、新增 `tests/test_mermaid_converter.py`），不属于本次工作。
+
+执行前先跑 `git -C ../.. status --short` 确认这些改动仍在，然后：
+
+- **不要**用 `git checkout` / `git restore` 丢弃它们。
+- 本任务的编辑要叠加在这些改动之上，`_set_font` 的签名变化要同时适配代码样式的调用点。
+- 提交时只 `git add` 本任务真正改到的文件与行；如果上述未提交改动与本任务落在同一文件里，提交前先确认 diff 内容是否属于本任务，把不属于本任务的 hunk 留在工作区。
+
+- [ ] **Step 5: 语法检查与测试**
+
+Run:
+```bash
+cd dify-plugin-MD2Docx
+python -c "import ast; ast.parse(open('src/md2docx.py').read()); print('Syntax OK')"
+pytest tests/ -q
+```
+Expected: `Syntax OK`，测试全绿（若 pytest 未安装，先 `pip install -r requirements-dev.txt`）
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add scripts/sync-templates.sh dify-plugin-MD2Docx/src/md2docx.py dify-plugin-MD2Docx/multi-templates/
+git commit -m "feat: sync templates and split fonts into latin/east-asian slots on the Dify side
+
+thesis now points at its own GB/T 7713 template instead of reusing the
+academic one, and the DOCX style override writes w:ascii and w:eastAsia
+separately so English documents stop inheriting SimSun."
+```
+
+---
+
+## Phase 2 — 功能补齐
+
+### Task 7: `src/mermaid.ts` —— Mermaid Ink 客户端与渲染策略
+
+**Files:**
+- Create: `src/mermaid.ts`
+- Test: `test/unit/mermaid.test.js`
+
+- [ ] **Step 1: 写失败的测试**
+
+`test/unit/mermaid.test.js`：
+
+```js
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const zlib = require('zlib');
+const { parseMermaidBlocks, encodeMermaidPako, MERMAID_BLOCK_REGEX } = require('../../out/mermaid.js');
+
+test('parseMermaidBlocks finds a single block', () => {
+    const blocks = parseMermaidBlocks('# Title\n\n```mermaid\ngraph TD; A-->B\n```\n\nafter');
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].code, 'graph TD; A-->B');
+    assert.ok(blocks[0].start >= 0);
+    assert.ok(blocks[0].end > blocks[0].start);
+});
+
+test('parseMermaidBlocks finds multiple blocks', () => {
+    const blocks = parseMermaidBlocks('```mermaid\nA\n```\ntext\n```mermaid\nB\n```');
+    assert.equal(blocks.length, 2);
+    assert.equal(blocks[0].code, 'A');
+    assert.equal(blocks[1].code, 'B');
+});
+
+test('parseMermaidBlocks returns nothing when there is no mermaid fence', () => {
+    assert.deepEqual(parseMermaidBlocks('# Title\n\n```js\nconsole.log(1)\n```'), []);
+});
+
+test('parseMermaidBlocks keeps inline code inside the body', () => {
+    const blocks = parseMermaidBlocks('```mermaid\ngraph TD; A["`x`"]-->B\n```');
+    assert.equal(blocks.length, 1);
+    assert.ok(blocks[0].code.includes('A["`x`"]'));
+});
+
+test('encodeMermaidPako round-trips through inflate', () => {
+    const encoded = encodeMermaidPako('graph TD; A-->B');
+    assert.ok(!encoded.includes('='), 'base64url must be unpadded');
+    assert.ok(!encoded.includes('+') && !encoded.includes('/'), 'must be base64url');
+    const json = zlib.inflateSync(Buffer.from(encoded, 'base64url')).toString('utf8');
+    assert.deepEqual(JSON.parse(json), { code: 'graph TD; A-->B' });
+});
+
+test('encodeMermaidPako matches the Dify plugin payload format', () => {
+    // Python: zlib.compress(json.dumps({"code": code}, separators=(",", ":")).encode(), 9)
+    const encoded = encodeMermaidPako('graph TD; A-->B');
+    const raw = Buffer.from(encoded, 'base64url');
+    assert.equal(raw[0], 0x78, 'must be a zlib stream');
+    const json = zlib.inflateSync(raw).toString('utf8');
+    assert.equal(json, '{"code":"graph TD; A-->B"}', 'must match Python json.dumps separators');
+});
+
+test('the block regex is anchored to line starts', () => {
+    assert.ok(MERMAID_BLOCK_REGEX.flags.includes('m'));
+    assert.ok(MERMAID_BLOCK_REGEX.flags.includes('g'));
+});
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `npm test`
+Expected: FAIL — `Cannot find module '../../out/mermaid.js'`
+
+- [ ] **Step 3: 创建 `src/mermaid.ts`**
+
+```ts
+import * as https from 'https';
+import * as zlib from 'zlib';
+
+export const MERMAID_BLOCK_REGEX = /^```mermaid[^\n]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gim;
+
+export const MERMAID_REQUEST_TIMEOUT_MS = 30_000;
+export const MERMAID_MAX_ATTEMPTS = 3;
+export const MERMAID_RETRY_DELAYS_MS = [1000, 2000];
+export const MERMAID_TOTAL_BUDGET_MS = 120_000;
+
+export interface MermaidBlock {
+    code: string;
+    start: number;
+    end: number;
+}
+
+export interface MermaidRenderOptions {
+    apiUrl: string;
+    timeoutMs?: number;
+    maxAttempts?: number;
+    retryDelaysMs?: number[];
+}
+
+export function parseMermaidBlocks(markdownText: string): MermaidBlock[] {
+    const blocks: MermaidBlock[] = [];
+    const regex = new RegExp(MERMAID_BLOCK_REGEX.source, MERMAID_BLOCK_REGEX.flags);
+
+    let match = regex.exec(markdownText);
+    while (match) {
+        blocks.push({
+            code: match[1],
+            start: match.index,
+            end: match.index + match[0].length
+        });
+        match = regex.exec(markdownText);
+    }
+
+    return blocks;
+}
+
+> 已实测：Node 与 Python 的 zlib 在同一 level 9 下**压缩字节不同**（两边的 zlib 构建版本不同），但 Node 产出的是合法的 zlib 流（首字节 `78 da`），Python 的 `zlib.decompress` 能正确解开并还原出完全一致的 `{"code": ...}` JSON。Mermaid Ink 服务端只做标准 inflate，因此格式兼容即可，不需要追求与 Python 逐字节相同。
+
+export function encodeMermaidPako(diagram: string): string {
+    const payload = JSON.stringify({ code: diagram });
+    return zlib.deflateSync(Buffer.from(payload, 'utf8'), { level: 9 }).toString('base64url');
+}
+
+export function renderMermaidViaInk(diagram: string, options: MermaidRenderOptions): Promise<Buffer> {
+    const timeoutMs = options.timeoutMs ?? MERMAID_REQUEST_TIMEOUT_MS;
+    const baseUrl = options.apiUrl.replace(/\/+$/, '');
+    const url = `${baseUrl}/img/pako:${encodeMermaidPako(diagram)}`;
+
+    return new Promise<Buffer>((resolve, reject) => {
+        const request = https.get(url, { headers: { 'User-Agent': 'mdocx-converter' } }, (response) => {
+            const status = response.statusCode ?? 0;
+
+            if (status >= 300 && status < 400 && response.headers.location) {
+                response.resume();
+                reject(new Error(`Mermaid Ink redirected to ${response.headers.location}`));
+                return;
+            }
+
+            if (status !== 200) {
+                response.resume();
+                reject(new Error(`Mermaid Ink returned HTTP ${status}`));
+                return;
+            }
+
+            const chunks: Buffer[] = [];
+            response.on('data', (chunk: Buffer) => chunks.push(chunk));
+            response.on('end', () => resolve(Buffer.concat(chunks)));
+        });
+
+        request.setTimeout(timeoutMs, () => {
+            request.destroy(new Error(`Mermaid Ink request timed out after ${timeoutMs}ms`));
+        });
+
+        request.on('error', reject);
+    });
+}
+
+export async function renderMermaidWithRetry(
+    diagram: string,
+    options: MermaidRenderOptions
+): Promise<Buffer> {
+    const maxAttempts = options.maxAttempts ?? MERMAID_MAX_ATTEMPTS;
+    const retryDelays = options.retryDelaysMs ?? MERMAID_RETRY_DELAYS_MS;
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            return await renderMermaidViaInk(diagram, options);
+        } catch (error) {
+            lastError = error;
+            if (attempt < maxAttempts) {
+                const delay = retryDelays[Math.min(attempt - 1, retryDelays.length - 1)];
+                await new Promise((resolve) => setTimeout(resolve, delay));
+            }
+        }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+export async function mapWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+
+    const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+        while (nextIndex < items.length) {
+            const index = nextIndex;
+            nextIndex += 1;
+            results[index] = await worker(items[index], index);
+        }
+    });
+
+    await Promise.all(runners);
+    return results;
+}
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `npm test`
+Expected: PASS
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add src/mermaid.ts test/unit/mermaid.test.js
+git commit -m "feat: add mermaid block parser and Mermaid Ink API client"
+```
+
+---
+
+### Task 8: 渲染策略接线（local → api 兜底 + 失败降级）
+
+**Files:**
+- Modify: `src/extension.ts`
+- Modify: `package.json`（新增 2 个设置）
+
+- [ ] **Step 1: 在 package.json 增加设置**
+
+`contributes.configuration.properties` 里加入：
+
+```json
+        "mdocxConverter.mermaidRenderer": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "local",
+            "api"
+          ],
+          "enumDescriptions": [
+            "Render with the local Mermaid CLI first and fall back to the Mermaid Ink API when mmdc is unavailable.",
+            "Render with the local Mermaid CLI only. Export fails with install guidance when mmdc is missing.",
+            "Render with the Mermaid Ink HTTP API only. Diagram content is sent to the configured host."
+          ],
+          "default": "auto",
+          "description": "How Mermaid diagrams are rendered. The API fallback sends diagram content to mermaid.ink unless a self-hosted Mermaid Ink URL is configured."
+        },
+        "mdocxConverter.mermaidApiUrl": {
+          "type": "string",
+          "default": "https://mermaid.ink",
+          "description": "Base URL of the Mermaid Ink service used when mdocxConverter.mermaidRenderer allows the API fallback. Point this at a self-hosted instance to keep diagram content local."
+        },
+```
+
+- [ ] **Step 2: 扩展 ExportSettings 与 readSettings**
+
+`ExportSettings` 接口加入：
+
+```ts
+    mermaidRenderer: 'auto' | 'local' | 'api';
+    mermaidApiUrl: string;
+```
+
+`readSettings` 里加入：
+
+```ts
+        mermaidRenderer: readConfigValue<'auto' | 'local' | 'api'>(config, legacyConfig, 'mermaidRenderer', 'auto'),
+        mermaidApiUrl: readConfigValue(config, legacyConfig, 'mermaidApiUrl', 'https://mermaid.ink').trim() || 'https://mermaid.ink',
+```
+
+- [ ] **Step 3: 改造 prepareMarkdown**
+
+把 `src/extension.ts` 的 `prepareMarkdown` 整体替换为：
+
+```ts
+async function prepareMarkdown(
+    markdownPath: string,
+    markdownText: string,
+    settings: ExportSettings,
+    outputChannel: vscode.OutputChannel,
+    onProgress?: (completed: number, total: number) => void
+): Promise<PreparedMarkdown> {
+    const blocks = parseMermaidBlocks(markdownText);
+    if (blocks.length === 0) {
+        outputChannel.appendLine('No Mermaid blocks found.');
+        return {
+            markdownPath,
+            mermaidCount: 0
+        };
+    }
+
+    const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'mdocx-converter-'));
+    const assetsDir = path.join(tempDir, 'mermaid-assets');
+    await fsp.mkdir(assetsDir, { recursive: true });
+
+    let localMermaid: ResolvedExecutable | undefined;
+    if (settings.mermaidRenderer !== 'api') {
+        localMermaid = await resolveMermaidCli(settings.mermaidCliPath, markdownPath);
+        if (localMermaid) {
+            outputChannel.appendLine(`Using Mermaid CLI: ${localMermaid.command}`);
+            outputChannel.appendLine(`Mermaid CLI version: ${localMermaid.versionLine}`);
+        }
+    }
+
+    if (!localMermaid && settings.mermaidRenderer === 'local') {
+        throw new UserFacingError(
+            'Mermaid CLI was not found, but this Markdown file contains mermaid code fences. Install with "npm install -g @mermaid-js/mermaid-cli" or set mdocxConverter.mermaidCliPath.'
+        );
+    }
+
+    if (!localMermaid && settings.mermaidRenderer === 'auto') {
+        outputChannel.appendLine('Mermaid CLI unavailable, falling back to the Mermaid Ink API.');
+    }
+
+    const deadline = Date.now() + MERMAID_TOTAL_BUDGET_MS;
+    let completed = 0;
+    const markCompleted = () => {
+        completed += 1;
+        onProgress?.(completed, blocks.length);
+    };
+
+    const rendered = await mapWithConcurrency(blocks, 4, async (block, index) => {
+        const fileName = `diagram-${index + 1}.${settings.mermaidOutputFormat}`;
+        const outputPath = path.join(assetsDir, fileName);
+
+        if (localMermaid) {
+            const inputPath = path.join(assetsDir, `diagram-${index + 1}.mmd`);
+            await fsp.writeFile(inputPath, block.code.trim(), 'utf8');
+            try {
+                await runExecutable(
+                    localMermaid.command,
+                    ['-i', inputPath, '-o', outputPath, '-b', 'transparent'],
+                    { shell: localMermaid.useShell, cwd: path.dirname(markdownPath) }
+                );
+                markCompleted();
+                return { fileName, succeeded: true };
+            } catch (error) {
+                outputChannel.appendLine(`Mermaid CLI failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
+                if (settings.mermaidRenderer === 'local') {
+                    throw error;
+                }
+            }
+        }
+
+        if (settings.mermaidRenderer !== 'local' && Date.now() < deadline) {
+            try {
+                const image = await renderMermaidWithRetry(block.code, { apiUrl: settings.mermaidApiUrl });
+                await fsp.writeFile(outputPath, image);
+                outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${settings.mermaidApiUrl}`);
+                markCompleted();
+                return { fileName, succeeded: true };
+            } catch (error) {
+                outputChannel.appendLine(`Mermaid Ink API failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
+            }
+        }
+
+        markCompleted();
+        return { fileName, succeeded: false };
+    });
+
+    let processedMarkdown = '';
+    let lastIndex = 0;
+
+    blocks.forEach((block, index) => {
+        processedMarkdown += markdownText.slice(lastIndex, block.start);
+        const result = rendered[index];
+        if (result.succeeded) {
+            const relativeDiagramPath = `./mermaid-assets/${result.fileName}`.replace(/\\/g, '/');
+            processedMarkdown = ensureTrailingBlankLine(processedMarkdown);
+            processedMarkdown += `![Mermaid Diagram ${index + 1}](${relativeDiagramPath})\n\n`;
+        } else {
+            processedMarkdown = ensureTrailingBlankLine(processedMarkdown);
+            processedMarkdown += '```mermaid\n' + block.code + '\n```\n\n';
+        }
+        lastIndex = block.end;
+    });
+
+    processedMarkdown += markdownText.slice(lastIndex);
+
+    const preparedMarkdownPath = path.join(tempDir, path.basename(markdownPath));
+    await fsp.writeFile(preparedMarkdownPath, processedMarkdown, 'utf8');
+
+    const failedCount = rendered.filter((item) => !item.succeeded).length;
+    if (failedCount > 0) {
+        outputChannel.appendLine(`${failedCount} of ${blocks.length} Mermaid diagrams could not be rendered and were kept as code blocks.`);
+    }
+
+    return {
+        markdownPath: preparedMarkdownPath,
+        tempDir,
+        mermaidCount: blocks.length
+    };
+}
+```
+
+import 段加入：
+
+```ts
+import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, parseMermaidBlocks, renderMermaidWithRetry } from './mermaid';
+```
+
+删除 `MERMAID_BLOCK_REGEX` 常量（已搬到 `src/mermaid.ts`）。
+
+- [ ] **Step 4: 编译校验**
+
+Run: `npm run compile`
+Expected: 无 TypeScript 错误
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add src/extension.ts package.json
+git commit -m "feat: fall back to the Mermaid Ink API and keep failed diagrams as code blocks"
+```
+
+---
+
+### Task 9: 文档标题元数据
+
+**Files:**
+- Modify: `src/extension.ts`
+- Modify: `package.json`
+
+- [ ] **Step 1: 增加设置**
+
+`package.json` 加入：
+
+```json
+        "mdocxConverter.documentTitle": {
+          "type": "string",
+          "default": "",
+          "description": "Document title written into the DOCX core properties. Leave empty to use the first level-1 heading, or the file name when the document has no heading."
+        },
+```
+
+- [ ] **Step 2: 读取设置**
+
+`ExportSettings` 加入 `documentTitle: string;`，`readSettings` 加入：
+
+```ts
+        documentTitle: readConfigValue(config, legacyConfig, 'documentTitle', '').trim(),
+```
+
+- [ ] **Step 3: 写入 metadata**
+
+在 `runExport` 中，`prepareMarkdown` 调用之后、`runPandoc` 之前，解析标题：
+
+```ts
+        const documentTitle = resolveDocumentTitle(markdownText, settings.documentTitle, markdownUri.fsPath);
+        outputChannel.appendLine(`Document title: ${documentTitle}`);
+```
+
+在 `runPandoc` 的 `buildPandocMetadata(settings)` 之后，把标题加进 metadata：
+
+```ts
+    const metadata = buildPandocMetadata(settings);
+    metadata.title = options.documentTitle;
+```
+
+为此在 `runPandoc` 的参数接口里加 `documentTitle: string;`，并在调用处传入 `documentTitle`。
+
+- [ ] **Step 4: 编译校验**
+
+Run: `npm run compile`
+Expected: 无 TypeScript 错误
+
+- [ ] **Step 5: 手工验证**
+
+Run:
+```bash
+printf '# 我的标题\n\n正文。\n' > /tmp/title.md
+pandoc /tmp/title.md -o /tmp/title.docx --reference-doc multi-templates/reference_chinese_academic.docx --metadata title=我的标题
+python -c "import zipfile;print(zipfile.ZipFile('/tmp/title.docx').read('docProps/core.xml').decode('utf8'))"
+```
+Expected: `core.xml` 里出现 `<dc:title>我的标题</dc:title>`
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add src/extension.ts package.json
+git commit -m "feat: write the document title into the DOCX core properties"
+```
+
+---
+
+### Task 10: 新增命令（official / thesis 导出 + 独立 Mermaid 渲染）
+
+**Files:**
+- Modify: `src/extension.ts`
+- Modify: `package.json`
+
+- [ ] **Step 1: 注册新命令**
+
+`src/extension.ts` 顶部常量区加入：
+
+```ts
+const EXPORT_OFFICIAL_DOCUMENT_COMMAND_ID = 'mdocxConverter.exportOfficialDocument';
+const EXPORT_THESIS_COMMAND_ID = 'mdocxConverter.exportThesis';
+const RENDER_MERMAID_COMMAND_ID = 'mdocxConverter.renderMermaidToImage';
+```
+
+`activate` 里加入：
+
+```ts
+    const exportOfficialDocumentDisposable = vscode.commands.registerCommand(EXPORT_OFFICIAL_DOCUMENT_COMMAND_ID, async (uri?: vscode.Uri) => {
+        await runExport(uri, outputChannel, context.extensionPath, {
+            styleProfile: 'official',
+            referenceLanguage: 'auto'
+        });
+    });
+    const exportThesisDisposable = vscode.commands.registerCommand(EXPORT_THESIS_COMMAND_ID, async (uri?: vscode.Uri) => {
+        await runExport(uri, outputChannel, context.extensionPath, {
+            styleProfile: 'thesis',
+            referenceLanguage: 'auto'
+        });
+    });
+    const renderMermaidDisposable = vscode.commands.registerCommand(RENDER_MERMAID_COMMAND_ID, async () => {
+        await renderMermaidToImage(outputChannel, context);
+    });
+```
+
+并把三个 disposable 加进 `context.subscriptions.push(...)`。
+
+- [ ] **Step 2: 实现独立 Mermaid 渲染**
+
+在 `src/extension.ts` 加入：
+
+```ts
+async function renderMermaidToImage(outputChannel: vscode.OutputChannel, context: vscode.ExtensionContext): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        void vscode.window.showErrorMessage('Open a Markdown file to render a Mermaid diagram.');
+        return;
+    }
+
+    const document = editor.document;
+    const selection = editor.selection;
+    let code: string;
+    let insertRange: vscode.Range;
+
+    if (!selection.isEmpty) {
+        code = document.getText(selection);
+        insertRange = new vscode.Range(selection.end, selection.end);
+    } else {
+        const block = findMermaidBlockAtPosition(document.getText(), document.offsetAt(selection.active));
+        if (!block) {
+            void vscode.window.showErrorMessage('Select a Mermaid code block or place the cursor inside one.');
+            return;
+        }
+        code = block.code;
+        insertRange = new vscode.Range(document.positionAt(block.end), document.positionAt(block.end));
+    }
+
+    const settings = readSettings(document.uri);
+    const outputDirectory = path.join(path.dirname(document.uri.fsPath), 'mermaid-images');
+    await fsp.mkdir(outputDirectory, { recursive: true });
+
+    const fileName = `mermaid-${formatTimestamp(new Date())}.${settings.mermaidOutputFormat}`;
+    const outputPath = path.join(outputDirectory, fileName);
+
+    try {
+        const image = await renderDiagramToFile(code, outputPath, settings, outputChannel, context);
+        if (!image) {
+            return;
+        }
+
+        const relativePath = `mermaid-images/${fileName}`.replace(/\\/g, '/');
+        await editor.edit((builder) => {
+            builder.insert(insertRange, `\n![Mermaid Diagram](${relativePath})\n`);
+        });
+
+        outputChannel.appendLine(`Mermaid diagram rendered: ${outputPath}`);
+        void vscode.window.showInformationMessage(`Mermaid diagram rendered: ${fileName}`);
+    } catch (error) {
+        const message = getErrorMessage(error);
+        outputChannel.appendLine(`Mermaid render failed: ${message}`);
+        void vscode.window.showErrorMessage(message);
+    }
+}
+
+function formatTimestamp(date: Date): string {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
+        + `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+async function renderDiagramToFile(
+    code: string,
+    outputPath: string,
+    settings: ExportSettings,
+    outputChannel: vscode.OutputChannel,
+    context: vscode.ExtensionContext
+): Promise<boolean> {
+    if (settings.mermaidRenderer !== 'api') {
+        const localMermaid = await resolveMermaidCli(settings.mermaidCliPath, path.dirname(outputPath));
+        if (localMermaid) {
+            const inputPath = `${outputPath}.mmd`;
+            await fsp.writeFile(inputPath, code.trim(), 'utf8');
+            await runExecutable(localMermaid.command, ['-i', inputPath, '-o', outputPath, '-b', 'transparent'], {
+                shell: localMermaid.useShell,
+                cwd: path.dirname(outputPath)
+            });
+            await fsp.rm(inputPath, { force: true });
+            return true;
+        }
+
+        if (settings.mermaidRenderer === 'local') {
+            throw new UserFacingError('Mermaid CLI was not found. Install with "npm install -g @mermaid-js/mermaid-cli" or set mdocxConverter.mermaidCliPath.');
+        }
+
+        outputChannel.appendLine('Mermaid CLI unavailable, falling back to the Mermaid Ink API.');
+    }
+
+    const image = await renderMermaidWithRetry(code, { apiUrl: settings.mermaidApiUrl });
+    await fsp.writeFile(outputPath, image);
+    outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${settings.mermaidApiUrl}`);
+    await notifyMermaidApiUsage(context);
+    return true;
+}
+```
+
+`findMermaidBlockAtPosition` 放进 `src/document.ts`（纯函数，便于测试）：
+
+```ts
+export interface MermaidBlockRange {
+    code: string;
+    start: number;
+    end: number;
+}
+
+export function findMermaidBlockAtPosition(markdownText: string, offset: number): MermaidBlockRange | undefined {
+    const regex = /^```mermaid[^\n]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gim;
+    let match = regex.exec(markdownText);
+    while (match) {
+        const start = match.index;
+        const end = start + match[0].length;
+        if (offset >= start && offset <= end) {
+            return { code: match[1], start, end };
+        }
+        match = regex.exec(markdownText);
+    }
+
+    return undefined;
+}
+```
+
+`src/document.ts` 的 import 段无需改动。
+
+- [ ] **Step 2b: 给 `findMermaidBlockAtPosition` 补测试**
+
+在 `test/unit/document.test.js` 末尾追加：
+
+```js
+const { findMermaidBlockAtPosition } = require('../../out/document.js');
+
+test('findMermaidBlockAtPosition locates the block under the cursor', () => {
+    const text = 'intro\n```mermaid\ngraph TD; A-->B\n```\ntail';
+    const start = text.indexOf('```mermaid');
+    const found = findMermaidBlockAtPosition(text, start + 3);
+    assert.ok(found);
+    assert.equal(found.code, 'graph TD; A-->B');
+});
+
+test('findMermaidBlockAtPosition returns undefined outside a block', () => {
+    assert.equal(findMermaidBlockAtPosition('# Title\n\ntext', 3), undefined);
+});
+```
+
+Run: `npm test`
+Expected: PASS
+
+- [ ] **Step 3: 远程渲染的用户告知**
+
+在 `src/extension.ts` 加入：
+
+```ts
+async function notifyMermaidApiUsage(context: vscode.ExtensionContext): Promise<void> {
+    const noticeKey = 'mdocxConverter.mermaidApiNoticeShown';
+    if (context.globalState.get(noticeKey)) {
+        return;
+    }
+
+    const choice = await vscode.window.showInformationMessage(
+        'Mermaid diagrams were rendered by mermaid.ink — the diagram content was sent to an external service.',
+        'Open Settings'
+    );
+
+    await context.globalState.update(noticeKey, true);
+    if (choice === 'Open Settings') {
+        await vscode.commands.executeCommand('workbench.action.openSettings', 'mdocxConverter.mermaidRenderer');
+    }
+}
+```
+
+在 `prepareMarkdown` 的 API 成功分支之后也调用一次 `notifyMermaidApiUsage(context)`（需要把 `context` 传进 `prepareMarkdown`；为最小改动，可在 `runExport` 里于 `prepareMarkdown` 返回后判断是否发生过 API 回退——为此在 `PreparedMarkdown` 上加 `usedApiFallback: boolean`）。
+
+- [ ] **Step 4: package.json 声明命令与菜单**
+
+`contributes.commands` 加入：
+
+```json
+      {
+        "command": "mdocxConverter.exportOfficialDocument",
+        "title": "Export as Official Document (MDocx)",
+        "shortTitle": "Official Document",
+        "category": "MD2Docx Converter"
+      },
+      {
+        "command": "mdocxConverter.exportThesis",
+        "title": "Export as Thesis (MDocx)",
+        "shortTitle": "Thesis",
+        "category": "MD2Docx Converter"
+      },
+      {
+        "command": "mdocxConverter.renderMermaidToImage",
+        "title": "Render Mermaid Diagram to Image (MDocx)",
+        "shortTitle": "Render Mermaid",
+        "category": "MD2Docx Converter"
+      }
+```
+
+`activationEvents` 加入三个 `onCommand:` 条目。
+
+`contributes.menus["mdocxConverter.exportSubmenu"]` 加入：
+
+```json
+        {
+          "command": "mdocxConverter.exportOfficialDocument",
+          "group": "1_profiles@40"
+        },
+        {
+          "command": "mdocxConverter.exportThesis",
+          "group": "1_profiles@50"
+        }
+```
+
+`contributes.menus["editor/context"]` 加入：
+
+```json
+        {
+          "command": "mdocxConverter.renderMermaidToImage",
+          "group": "z_mdocx@96",
+          "when": "editorLangId == markdown"
+        }
+```
+
+`contributes.menus.commandPalette` 加入三个新命令。
+
+- [ ] **Step 5: 编译校验**
+
+Run: `npm run compile`
+Expected: 无 TypeScript 错误
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add src/extension.ts src/document.ts package.json
+git commit -m "feat: add official/thesis export commands and a standalone mermaid renderer"
+```
+
+---
+
+### Task 11: 导出进度与取消
+
+**Files:**
+- Modify: `src/extension.ts`
+
+- [ ] **Step 1: 引入进度与取消令牌**
+
+`src/extension.ts` 顶部 import 加入：
+
+```ts
+import type { CancellationToken } from 'vscode';
+```
+
+- [ ] **Step 2: runExport 包一层 withProgress**
+
+把 `runExport` 主体改为在 `vscode.window.withProgress` 内执行。关键改动：
+
+```ts
+async function runExport(
+    uri: vscode.Uri | undefined,
+    outputChannel: vscode.OutputChannel,
+    extensionPath: string,
+    exportOverrides?: ExportOverrides
+): Promise<void> {
+    const markdownUri = getMarkdownUri(uri);
+    if (!markdownUri) {
+        void vscode.window.showErrorMessage('Open a Markdown file or right-click a .md file to export it.');
+        return;
+    }
+
+    outputChannel.clear();
+    outputChannel.show(true);
+    outputChannel.appendLine(`Starting export for ${markdownUri.fsPath}`);
+
+    let prepared: PreparedMarkdown | undefined;
+
+    try {
+        await vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: 'Exporting Markdown to DOCX',
+                cancellable: true
+            },
+            async (progress, token) => {
+                const settings = readSettings(markdownUri, exportOverrides);
+                const outputPath = await resolveOutputPath(markdownUri, settings.outputDirectory);
+                const markdownText = await fsp.readFile(markdownUri.fsPath, 'utf8');
+                const resolvedLanguage = resolveReferenceLanguage(markdownText, settings.referenceLanguage);
+                const referenceDocx = await resolveReferenceDocx(markdownUri, settings.referenceDocx, resolvedLanguage, settings.styleProfile, extensionPath);
+
+                logMissingLocalImages(markdownUri.fsPath, markdownText, outputChannel);
+
+                progress.report({ message: 'Preparing Markdown' });
+                prepared = await prepareMarkdown(markdownUri.fsPath, markdownText, settings, outputChannel, (completed, total) => {
+                    progress.report({ message: `Rendering Mermaid diagrams (${completed}/${total})` });
+                }, token);
+
+                token.throwIfCancellationRequested();
+
+                const pandoc = await requirePandoc(settings.pandocPath);
+                outputChannel.appendLine(`Using Pandoc: ${pandoc.command}`);
+                outputChannel.appendLine(`Pandoc version: ${pandoc.versionLine}`);
+
+                if (referenceDocx) {
+                    outputChannel.appendLine(`Using reference DOCX: ${referenceDocx}`);
+                    outputChannel.appendLine(`Reference language mode: ${settings.referenceLanguage} -> ${resolvedLanguage}`);
+                } else {
+                    outputChannel.appendLine('No reference DOCX found. Exporting with Pandoc defaults.');
+                }
+
+                progress.report({ message: 'Running Pandoc' });
+                await runPandoc({
+                    pandoc,
+                    sourceMarkdownPath: prepared.markdownPath,
+                    originalMarkdownPath: markdownUri.fsPath,
+                    outputPath,
+                    referenceDocx,
+                    settings,
+                    documentTitle: resolveDocumentTitle(markdownText, settings.documentTitle, markdownUri.fsPath),
+                    tempDir: prepared.tempDir,
+                    outputChannel,
+                    token
+                });
+
+                progress.report({ message: 'Applying styles' });
+                outputChannel.appendLine(`Export completed: ${outputPath}`);
+                void vscode.window.showInformationMessage(`DOCX exported successfully: ${path.basename(outputPath)}`);
+
+                if (settings.openAfterExport) {
+                    await openExportedDocx(outputPath, outputChannel);
+                }
+            }
+        );
+    } catch (error) {
+        const message = getErrorMessage(error);
+        outputChannel.appendLine(`Export failed: ${message}`);
+        void vscode.window.showErrorMessage(message);
+    } finally {
+        if (prepared?.tempDir) {
+            const settings = readSettings(markdownUri, exportOverrides);
+            if (!settings.keepIntermediateFiles) {
+                await fsp.rm(prepared.tempDir, { recursive: true, force: true });
+            } else {
+                outputChannel.appendLine(`Kept intermediate files in: ${prepared.tempDir}`);
+            }
+        }
+    }
+}
+```
+
+- [ ] **Step 3: runPandoc 支持取消**
+
+`runPandoc` 的参数接口加 `token?: CancellationToken;`，并把 `runExecutable` 换成可中止的调用。在 `runExecutable` 里加一个可选的 `token` 参数：
+
+```ts
+async function runExecutable(
+    command: string,
+    args: string[],
+    options: { cwd?: string; shell?: boolean; maxBuffer?: number; token?: CancellationToken } = {}
+): Promise<{ stdout: string; stderr: string }> {
+    ...
+}
+```
+
+`execExecutable` 内部改用 `spawn` 以便拿到 child 句柄：
+
+```ts
+function execExecutable(
+    command: string,
+    args: string[],
+    options: { cwd?: string; shell?: boolean; maxBuffer?: number; token?: CancellationToken } = {}
+): Promise<{ stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, {
+            cwd: options.cwd,
+            shell: options.shell !== undefined ? options.shell : shouldRunThroughShell(command),
+            windowsHide: true
+        });
+
+        let stdout = '';
+        let stderr = '';
+        const maxBuffer = options.maxBuffer ?? 16 * 1024 * 1024;
+
+        child.stdout?.on('data', (chunk: Buffer) => {
+            stdout += chunk.toString();
+            if (stdout.length > maxBuffer) {
+                child.kill();
+            }
+        });
+        child.stderr?.on('data', (chunk: Buffer) => {
+            stderr += chunk.toString();
+            if (stderr.length > maxBuffer) {
+                child.kill();
+            }
+        });
+
+        const cancellation = options.token?.onCancellationRequested(() => {
+            child.kill();
+        });
+
+        child.on('error', (error) => {
+            cancellation?.dispose();
+            reject(error);
+        });
+
+        child.on('close', (code) => {
+            cancellation?.dispose();
+            if (code === 0) {
+                resolve({ stdout, stderr });
+                return;
+            }
+
+            const error = new Error(`Process exited with code ${code}`) as Error & { stdout?: string; stderr?: string };
+            error.stdout = stdout;
+            error.stderr = stderr;
+            reject(error);
+        });
+    });
+}
+```
+
+在 `runPandoc` 的 `try` 块开头插入：
+
+```ts
+        options.token?.throwIfCancellationRequested();
+```
+
+- [ ] **Step 4: 编译校验**
+
+Run: `npm run compile`
+Expected: 无 TypeScript 错误
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add src/extension.ts
+git commit -m "feat: show export progress and allow cancelling a running export"
+```
+
+---
+
+### Task 12: 扩展 checkEnvironment
+
+**Files:**
+- Modify: `src/extension.ts`
+
+- [ ] **Step 1: 扩展诊断输出**
+
+把 `checkEnvironment` 替换为：
+
+```ts
+async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vscode.OutputChannel): Promise<void> {
+    const markdownUri = getMarkdownUri(uri) ?? vscode.Uri.file(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd());
+    const settings = readSettings(markdownUri);
+
+    outputChannel.clear();
+    outputChannel.show(true);
+    outputChannel.appendLine('Checking mdocx-converter export environment...');
+
+    const pandoc = await resolvePandoc(settings.pandocPath);
+    if (pandoc) {
+        outputChannel.appendLine(`OK Pandoc: ${pandoc.command}`);
+        outputChannel.appendLine(`   ${pandoc.versionLine}`);
+    } else {
+        outputChannel.appendLine('MISSING Pandoc');
+        outputChannel.appendLine(`   ${getPandocInstallHelp()}`);
+    }
+
+    const mermaid = await resolveMermaidCli(settings.mermaidCliPath, markdownUri.fsPath);
+    if (mermaid) {
+        outputChannel.appendLine(`OK Mermaid CLI: ${mermaid.command}`);
+        outputChannel.appendLine(`   ${mermaid.versionLine}`);
+    } else {
+        outputChannel.appendLine('MISSING Mermaid CLI');
+        outputChannel.appendLine('   Required only for ```mermaid code fences. Install with: npm install -g @mermaid-js/mermaid-cli');
+        outputChannel.appendLine('   Or set mdocxConverter.mermaidCliPath.');
+    }
+
+    outputChannel.appendLine(`Mermaid renderer: ${settings.mermaidRenderer}`);
+
+    if (settings.mermaidRenderer !== 'local') {
+        const reachable = await checkMermaidApiReachable(settings.mermaidApiUrl);
+        outputChannel.appendLine(reachable
+            ? `OK Mermaid Ink API: ${settings.mermaidApiUrl}`
+            : `UNREACHABLE Mermaid Ink API: ${settings.mermaidApiUrl}`);
+    }
+
+    const templateCount = countBundledTemplates(extensionPath);
+    outputChannel.appendLine(`Bundled templates: ${templateCount}`);
+
+    outputChannel.appendLine(`Active style profile: ${settings.styleProfile}`);
+
+    if (pandoc && (mermaid || settings.mermaidRenderer !== 'local')) {
+        void vscode.window.showInformationMessage('mdocx-converter export environment looks ready.');
+    } else if (pandoc) {
+        void vscode.window.showWarningMessage('Pandoc is ready. Mermaid CLI is missing, so Mermaid diagrams will not export until mmdc is installed.');
+    } else {
+        void vscode.window.showWarningMessage('Pandoc is missing. Install Pandoc before exporting DOCX files.');
+    }
+}
+
+async function checkMermaidApiReachable(apiUrl: string): Promise<boolean> {
+    try {
+        await renderMermaidViaInk('graph TD; A-->B', { apiUrl, timeoutMs: 10000, maxAttempts: 1 });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function countBundledTemplates(extensionPath: string): number {
+    const templateDir = path.join(extensionPath, 'multi-templates');
+    if (!fs.existsSync(templateDir)) {
+        return 0;
+    }
+
+    return fs.readdirSync(templateDir).filter((name) => name.endsWith('.docx')).length;
+}
+```
+
+`checkEnvironment` 需要拿到 `extensionPath`，因此签名改为 `checkEnvironment(uri, outputChannel, extensionPath)`，并在 `activate` 里传入 `context.extensionPath`。
+
+import 段加入 `renderMermaidViaInk`。
+
+- [ ] **Step 2: 编译校验**
+
+Run: `npm run compile`
+Expected: 无 TypeScript 错误
+
+- [ ] **Step 3: 提交**
+
+```bash
+git add src/extension.ts
+git commit -m "feat: report renderer, API reachability and template count in checkEnvironment"
+```
+
+---
+
+### Task 13: 端到端测试脚本重写
+
+**Files:**
+- Create: `test/e2e/run.js`
+- Delete: `test_full_pipeline.js`
+
+- [ ] **Step 1: 删除旧脚本**
+
+```bash
+git rm test_full_pipeline.js
+```
+
+- [ ] **Step 2: 写新脚本**
+
+`test/e2e/run.js`：
+
+```js
+const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const fsp = require('fs/promises');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const AdmZip = require('adm-zip');
+
+const execFileAsync = promisify(execFile);
+const REPO_ROOT = path.join(__dirname, '..', '..');
+const TEMPLATE_DIR = path.join(REPO_ROOT, 'multi-templates');
+const PROFILES = ['academic', 'business', 'technical', 'official', 'thesis'];
+
+function run(command, args, options = {}) {
+    return execFileAsync(command, args, {
+        cwd: options.cwd,
+        shell: process.platform === 'win32' && /\.(cmd|bat)$/i.test(command),
+        windowsHide: true
+    });
+}
+
+async function pandocVersion() {
+    const { stdout } = await run('pandoc', ['--version']);
+    return stdout.split('\n')[0].trim();
+}
+
+async function exportOne(profile, language, workDir) {
+    const markdownPath = path.join(workDir, 'sample.md');
+    const outputPath = path.join(workDir, `sample-${profile}-${language}.docx`);
+    const referenceDocx = path.join(TEMPLATE_DIR, `reference_${language}_${profile}.docx`);
+
+    await run('pandoc', [
+        markdownPath,
+        '--from', 'gfm+raw_html',
+        '--to', 'docx',
+        '--output', outputPath,
+        '--reference-doc', referenceDocx
+    ], { cwd: workDir });
+
+    const zip = new AdmZip(outputPath);
+    const document = zip.readAsText('word/document.xml');
+    const sectPr = document.match(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/)[0];
+
+    if (/w:num="2"/.test(sectPr)) {
+        throw new Error(`${profile}/${language} produced a two-column document`);
+    }
+    if (!/<w:pgSz w:w="11906" w:h="16838"/.test(sectPr)) {
+        throw new Error(`${profile}/${language} is not A4`);
+    }
+    if (!zip.getEntry('word/footer1.xml')) {
+        throw new Error(`${profile}/${language} lost the page-number footer`);
+    }
+
+    return outputPath;
+}
+
+async function main() {
+    const markdown = '# Sample Title\n\nSome body text for the export test.\n\n## Section\n\nMore text.\n';
+    const workDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'mdocx-e2e-'));
+
+    try {
+        console.log('Pandoc:', await pandocVersion());
+        await fsp.writeFile(path.join(workDir, 'sample.md'), markdown, 'utf8');
+
+        for (const profile of PROFILES) {
+            for (const language of ['english', 'chinese']) {
+                const output = await exportOne(profile, language, workDir);
+                console.log(`OK ${profile}/${language} -> ${path.basename(output)}`);
+            }
+        }
+
+        console.log('\nAll e2e exports succeeded.');
+    } finally {
+        await fsp.rm(workDir, { recursive: true, force: true });
+    }
+}
+
+main().catch((error) => {
+    console.error('E2E FAILED:', error.message);
+    process.exit(1);
+});
+```
+
+- [ ] **Step 3: 运行**
+
+Run: `npm run test:e2e`
+Expected: 输出 10 行 `OK <profile>/<language>` 与 `All e2e exports succeeded.`
+
+- [ ] **Step 4: 提交**
+
+```bash
+git add test/e2e/run.js test_full_pipeline.js
+git commit -m "test: replace the stale pipeline script with a per-profile e2e export check"
+```
+
+---
+
+### Task 14: 文档与版本
+
+**Files:**
+- Modify: `package.json`（版本号、`styleProfile` 枚举）
+- Modify: `CLAUDE.md`（根）
+- Modify: `VSC-plugin-MD2Docx-Converter/CLAUDE.md`
+- Modify: `VSC-plugin-MD2Docx-Converter/README.md`
+- Modify: `dify-plugin-MD2Docx/CLAUDE.md`
+- Modify: `dify-plugin-MD2Docx/README.md`
+
+- [ ] **Step 1: package.json 的 styleProfile 枚举**
+
+把 `mdocxConverter.styleProfile` 的 `enum` 与 `enumDescriptions` 改为：
+
+```json
+          "enum": [
+            "template",
+            "academic",
+            "business",
+            "technical",
+            "official",
+            "thesis"
+          ],
+          "enumDescriptions": [
+            "Template only: use the selected reference DOCX without extra metadata overrides.",
+            "Academic paper: 12 pt, 1.5 line spacing, Times New Roman / SimSun body, SimHei headings.",
+            "Business report: 11 pt, 1.5 line spacing, Arial / Microsoft YaHei body and headings.",
+            "Technical document: 11 pt, 1.35 line spacing, Arial body, Consolas code styles.",
+            "Official document (GB/T 9704): 16 pt FangSong body, 29 pt fixed line height, 37/35/28/26 mm margins.",
+            "Thesis (GB/T 7713): 12 pt body, 22/16/14 pt headings, 30 mm margins."
+          ],
+```
+
+- [ ] **Step 2: 版本号**
+
+`package.json` 的 `"version"` 改为 `"0.3.0"`。
+
+- [ ] **Step 3: 根 CLAUDE.md**
+
+模板说明段落改为：
+
+```markdown
+Templates are at `multi-templates/` under each subdirectory (10 files: academic/technical/business/official/thesis x Chinese/English; the `template` profile reuses academic). Both subdirectories carry the identical set.
+
+The VS Code extension owns the template generator (`VSC-plugin-MD2Docx-Converter/scripts/build-templates.js`) — edit the style table in `src/profiles.ts`, run `npm run build:templates`, then `bash scripts/sync-templates.sh` to copy the result into the Dify plugin.
+```
+
+并把「⚠️ **模板同步 note:**」整段替换为上面的说明。
+
+- [ ] **Step 4: VSC 插件 CLAUDE.md**
+
+- Commands 段补上：
+
+```bash
+npm test              # compile + node:test unit suite
+npm run test:e2e      # per-profile export check (needs pandoc)
+npm run build:templates   # regenerate multi-templates/ from src/profiles.ts
+```
+
+- Architecture 段补上模块划分小节：
+
+```markdown
+### Source layout
+
+| Module | Contents |
+|---|---|
+| `src/extension.ts` | Command wiring, settings, pandoc invocation, adm-zip style overrides, progress UI |
+| `src/profiles.ts` | `PROFILE_PRESETS` — the single source of truth for every style profile; `TEMPLATE_LAYOUT` for the template generator |
+| `src/language.ts` | CJK/Latin language detection |
+| `src/templates.ts` | Bundled template map and candidate paths |
+| `src/mermaid.ts` | Mermaid block parsing, pako encoding, Mermaid Ink API client |
+| `src/document.ts` | Document title extraction, filename sanitisation |
+
+Only `src/extension.ts` may import `vscode` — the other modules are pure so `node --test` can load them directly.
+```
+
+- Style system 段改写为：
+
+```markdown
+### Style system (two layers)
+
+**Layer 1 — Pandoc metadata** (`buildPandocMetadata`): Reads `PROFILE_PRESETS[profile].metadata` and applies per-setting overrides.
+
+**Layer 2 — DOCX XML overrides** (`applyDocxStyleOverrides`): After pandoc finishes, opens the .docx via `adm-zip` and rewrites `word/styles.xml` and `word/document.xml`. Font names are split into `asciiFont` (w:ascii/w:hAnsi/w:cs) and `eastAsiaFont` (w:eastAsia) so English documents use a Latin face and Chinese text keeps its own.
+
+Both layers read the same `PROFILE_PRESETS` entry, so they cannot drift.
+```
+
+- 预设表用第 3 节 Task 3 的数据。
+
+- [ ] **Step 5: VSC README**
+
+补上 Features 段的预设表、Commands 表、Settings 表，并加一节 Breaking changes：
+
+```markdown
+### Changes in 0.3.0
+
+- English documents now use Times New Roman (or Arial) for body text instead of SimSun. Fonts are split into Latin and East-Asian slots.
+- `business` line spacing changed from 1.25 to 1.5; `technical` from 1.2 to 1.35 — matching the Dify plugin.
+- All bundled templates were regenerated: single column, A4, standard pandoc style ids, first-line indent, and a centred page number. The previous English templates were two-column with journal-style heading formatting.
+```
+
+- [ ] **Step 6: Dify 侧文档**
+
+`dify-plugin-MD2Docx/CLAUDE.md` 的模板说明改为：
+
+```markdown
+multi-templates/           # 10 reference.docx (5 profiles x 2 languages) — copied from the VSC plugin by scripts/sync-templates.sh
+```
+
+并在模板解析一节说明 `thesis` 指向独立模板。
+
+- [ ] **Step 7: 全量校验**
+
+Run:
+```bash
+npm run compile
+npm test
+npm run build:templates
+git status --short
+```
+Expected: 编译无错误、测试全绿、模板生成无差异（`git status` 不显示 multi-templates 改动）
+
+- [ ] **Step 8: 提交**
+
+```bash
+git add package.json CLAUDE.md VSC-plugin-MD2Docx-Converter/CLAUDE.md VSC-plugin-MD2Docx-Converter/README.md dify-plugin-MD2Docx/CLAUDE.md dify-plugin-MD2Docx/README.md
+git commit -m "docs: document the new profiles, commands, settings and template pipeline"
+```
+
+---
+
+## 自查清单
+
+- [ ] spec 的每一节都有对应任务：模块划分 → Task 2/4；单一数据源 → Task 3；预设表 → Task 3；命令 → Task 10；模板重建 → Task 5；Dify 同步 → Task 6；Mermaid → Task 7/8；标题 → Task 9；进度 → Task 11；诊断 → Task 12；测试 → Task 1/13；文档 → Task 14
+- [ ] 无 TBD / TODO / “similar to Task N” 占位
+- [ ] 类型名一致：`FontPair`、`ProfilePreset`、`StyleProfile`、`MermaidBlock`、`DocxStyleOverride`
+- [ ] `PROFILE_PRESETS` 的字段名在生成器、扩展、测试三处一致
+- [ ] 模板文件清单在三处一致（生成器、模板映射、同步脚本）：10 个
