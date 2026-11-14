@@ -240,7 +240,7 @@ export function sanitizeFileName(name: string): string {
 }
 ```
 
-- [ ] **Step 3b: 注意 CJK 正则的字面量陷阱**
+- [ ] **Step 3b: 注意 CJK 正则的字面量陷阱（下面 Step 4 会用到）**
 
 正文字符区间必须写成**字节精确的转义序列**，不要直接把字符本身抄进源码：
 
@@ -256,7 +256,7 @@ const CJK_CHAR_REGEX = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/g;
 export type ReferenceLanguage = 'english' | 'chinese';
 export type ReferenceLanguageSetting = ReferenceLanguage | 'auto';
 
-const CJK_CHAR_REGEX = /[㐀-䶿一-鿿豈-﫿]/g;
+const CJK_CHAR_REGEX = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/g;
 const LATIN_CHAR_REGEX = /[A-Za-z]/g;
 
 export function normalizeReferenceLanguage(value: string | undefined): ReferenceLanguage {
