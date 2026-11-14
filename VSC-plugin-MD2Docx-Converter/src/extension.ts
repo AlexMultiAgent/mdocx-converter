@@ -6,6 +6,9 @@ import { promises as fsp } from 'fs';
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import AdmZip = require('adm-zip');
+import { normalizeReferenceLanguage, normalizeReferenceLanguageSetting, resolveReferenceLanguage } from './language';
+import type { ReferenceLanguage, ReferenceLanguageSetting } from './language';
+import { resolveDocumentTitle } from './document';
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
@@ -58,8 +61,6 @@ const STYLE_PROFILE_METADATA: Record<StyleProfile, Record<string, string>> = {
     }
 };
 
-type ReferenceLanguage = 'english' | 'chinese';
-type ReferenceLanguageSetting = ReferenceLanguage | 'auto';
 type StyleProfile = 'template' | 'academic' | 'business' | 'technical';
 
 interface ExportSettings {
@@ -391,39 +392,6 @@ async function resolveReferenceDocx(
     }
 
     throw new UserFacingError(`Bundled ${referenceLanguage} reference DOCX was not found: ${bundledReferenceDocxCandidates.join(', ')}`);
-}
-
-function normalizeReferenceLanguage(value: string | undefined): ReferenceLanguage {
-    return value === 'chinese' ? 'chinese' : 'english';
-}
-
-function normalizeReferenceLanguageSetting(value: string | undefined): ReferenceLanguageSetting {
-    if (value === 'auto') {
-        return 'auto';
-    }
-
-    return normalizeReferenceLanguage(value);
-}
-
-function resolveReferenceLanguage(markdownText: string, setting: ReferenceLanguageSetting): ReferenceLanguage {
-    if (setting === 'english' || setting === 'chinese') {
-        return setting;
-    }
-
-    return detectMarkdownLanguage(markdownText);
-}
-
-function detectMarkdownLanguage(markdownText: string): ReferenceLanguage {
-    const sample = markdownText.slice(0, 20000);
-    const chineseMatches = sample.match(/[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/g)?.length ?? 0;
-    const englishMatches = sample.match(/[A-Za-z]/g)?.length ?? 0;
-
-    // Prefer Chinese template when Chinese text is materially present.
-    if (chineseMatches >= 40 || chineseMatches > englishMatches * 0.15) {
-        return 'chinese';
-    }
-
-    return 'english';
 }
 
 function getBundledReferenceDocxCandidates(
