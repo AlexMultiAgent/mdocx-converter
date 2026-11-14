@@ -2826,21 +2826,32 @@ test('findDocxPart returns undefined for a part that is not there', () => {
             stylesXml = upsertStyleOverride(stylesXml, override);
         }
         stylesXml = normalizeDocxStyleOrder(stylesXml);
-        stylesEntry.setData(Buffer.from(stylesXml, 'utf8'));
+        zip.updateFile(stylesEntry, Buffer.from(stylesXml, 'utf8'));
     }
 
     if (hasMarginOverrides(settings)) {
         const documentEntry = findDocxPart(zip, 'word/document.xml');
         if (documentEntry) {
             const documentXml = updateDocumentMargins(documentEntry.getData().toString('utf8'), settings);
-            documentEntry.setData(Buffer.from(documentXml, 'utf8'));
+            zip.updateFile(documentEntry, Buffer.from(documentXml, 'utf8'));
         }
     }
 
     zip.writeZip(outputPath);
 ```
 
-⚠️ **用 `entry.setData(...)`，不要用 `zip.updateFile(...)`。** `updateFile` 找不到条目时是静默空操作 —— 正是这个 bug 的一部分。`setData` 直接作用在已经找到的条目上，两个路径下行为一致。
+⚠️ **`updateFile` 要传**条目对象**，不要传条目名字符串。** `adm-zip` 的实现是：
+
+```js
+updateFile: function (entry, content) {
+    var item = getEntry(entry);
+    if (item) { item.setData(content); }
+}
+```
+
+传字符串时它按名字精确查找，**找不到就什么都不做**（连新增条目都不会）—— 正是这个 bug 的一部分。传条目对象时它按对象自己的 `entryName` 查找，所以一定命中。
+
+（`@types/adm-zip` 的签名是 `updateFile(entry: string | AdmZip.IZipEntry, content: Buffer)`，传对象是支持的用法。）
 
 - [ ] **Step 3: 端到端验证**
 
