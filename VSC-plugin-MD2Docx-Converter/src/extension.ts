@@ -9,14 +9,13 @@ import AdmZip = require('adm-zip');
 import { normalizeReferenceLanguageSetting, resolveReferenceLanguage } from './language';
 import type { ReferenceLanguage, ReferenceLanguageSetting } from './language';
 import {
-    PROFILE_PRESETS,
     buildPandocMetadata as buildProfileMetadata,
     normalizeStyleProfile,
-    resolveFontPair,
-    resolveLineSpacingTwips,
     resolveMarginsMm
 } from './profiles';
-import type { CodeStyle, StyleProfile } from './profiles';
+import type { StyleProfile } from './profiles';
+import { buildDocxStyleOverrides, upsertStyleOverride, upsertXmlAttribute } from './docxStyles';
+import type { DocxStyleOverride } from './docxStyles';
 import { getBundledReferenceDocxCandidates } from './templates';
 
 const execFileAsync = promisify(execFile);
@@ -665,7 +664,18 @@ async function runPandoc(options: {
             outputChannel.appendLine(result.stderr.trim());
         }
 
-        const docxStyleOverrides = buildDocxStyleOverrides(settings);
+        const docxStyleOverrides = buildDocxStyleOverrides({
+            styleProfile: settings.styleProfile,
+            bodyFont: settings.bodyFont,
+            bodySizePt: settings.bodySizePt,
+            heading1Font: settings.heading1Font,
+            heading1SizePt: settings.heading1SizePt,
+            heading2Font: settings.heading2Font,
+            heading2SizePt: settings.heading2SizePt,
+            heading3Font: settings.heading3Font,
+            heading3SizePt: settings.heading3SizePt,
+            lineSpacing: settings.lineSpacing
+        });
         if (docxStyleOverrides.length > 0 || hasMarginOverrides(settings)) {
             await applyDocxStyleOverrides(outputPath, settings, docxStyleOverrides);
             outputChannel.appendLine('Applied DOCX style overrides.');
@@ -685,105 +695,6 @@ function buildPandocMetadata(settings: ExportSettings): Record<string, string> {
     });
 }
 
-interface DocxStyleOverride {
-    styleId: string;
-    aliases?: string[];
-    asciiFont?: string;
-    eastAsiaFont?: string;
-    sizePt?: number;
-    lineSpacingTwips?: number;
-    lineSpacingRule?: 'auto' | 'exact';
-    color?: string;
-    shadingFill?: string;
-}
-
-function buildDocxStyleOverrides(settings: ExportSettings): DocxStyleOverride[] {
-    const preset = PROFILE_PRESETS[settings.styleProfile];
-    const effectiveColor = preset.color;
-    const bodyFont = resolveFontPair(settings.bodyFont, preset.body);
-    const heading1Font = resolveFontPair(settings.heading1Font, preset.heading1);
-    const heading2Font = resolveFontPair(settings.heading2Font, preset.heading2);
-    const heading3Font = resolveFontPair(settings.heading3Font, preset.heading3);
-    const lineSpacing = resolveLineSpacingTwips(settings.styleProfile, settings.lineSpacing);
-
-    const overrides: DocxStyleOverride[] = [
-        {
-            styleId: 'Normal',
-            aliases: ['a', 'a1', 'Text', 'BodyText', 'Body Text', 'FirstParagraph', 'Compact'],
-            asciiFont: bodyFont?.ascii,
-            eastAsiaFont: bodyFont?.eastAsia,
-            sizePt: settings.bodySizePt ?? preset.bodySizePt,
-            lineSpacingTwips: lineSpacing?.twips,
-            lineSpacingRule: lineSpacing?.rule,
-            color: effectiveColor
-        },
-        {
-            styleId: 'Heading1',
-            aliases: ['1'],
-            asciiFont: heading1Font?.ascii,
-            eastAsiaFont: heading1Font?.eastAsia,
-            sizePt: settings.heading1SizePt ?? preset.heading1SizePt,
-            color: effectiveColor
-        },
-        {
-            styleId: 'Heading2',
-            aliases: ['2', '21'],
-            asciiFont: heading2Font?.ascii,
-            eastAsiaFont: heading2Font?.eastAsia,
-            sizePt: settings.heading2SizePt ?? preset.heading2SizePt,
-            color: effectiveColor
-        },
-        {
-            styleId: 'Heading3',
-            aliases: ['3', '31'],
-            asciiFont: heading3Font?.ascii,
-            eastAsiaFont: heading3Font?.eastAsia,
-            sizePt: settings.heading3SizePt ?? preset.heading3SizePt,
-            color: effectiveColor
-        }
-    ];
-
-    if (preset.codeStyle) {
-        overrides.push(...buildCodeStyleOverrides(preset.codeStyle));
-    }
-
-    return overrides.filter((override) => hasDocxStyleOverrideValue(override));
-}
-
-function buildCodeStyleOverrides(codeStyle: CodeStyle): DocxStyleOverride[] {
-    return [
-        {
-            styleId: 'SourceCode',
-            aliases: ['Code'],
-            asciiFont: codeStyle.font,
-            eastAsiaFont: codeStyle.font,
-            sizePt: codeStyle.sizePt,
-            lineSpacingTwips: Math.round(codeStyle.lineSpacing * 240),
-            lineSpacingRule: 'auto',
-            color: '000000',
-            shadingFill: codeStyle.shadingFill
-        },
-        {
-            styleId: 'VerbatimChar',
-            asciiFont: codeStyle.font,
-            eastAsiaFont: codeStyle.font,
-            sizePt: codeStyle.sizePt,
-            color: '000000'
-        }
-    ];
-}
-
-function hasDocxStyleOverrideValue(override: DocxStyleOverride): boolean {
-    return Boolean(
-        override.asciiFont
-        || override.eastAsiaFont
-        || override.sizePt
-        || override.lineSpacingTwips
-        || override.color
-        || override.shadingFill
-    );
-}
-
 async function applyDocxStyleOverrides(
     outputPath: string,
     settings: ExportSettings,
@@ -794,7 +705,7 @@ async function applyDocxStyleOverrides(
     if (stylesEntry && styleOverrides.length > 0) {
         let stylesXml = stylesEntry.getData().toString('utf8');
         for (const override of styleOverrides) {
-            stylesXml = applyStyleOverrideToPrimaryAndAliases(stylesXml, override);
+            stylesXml = upsertStyleOverride(stylesXml, override);
         }
         zip.updateFile('word/styles.xml', Buffer.from(stylesXml, 'utf8'));
     }
@@ -808,131 +719,6 @@ async function applyDocxStyleOverrides(
     }
 
     zip.writeZip(outputPath);
-}
-
-function applyStyleOverrideToPrimaryAndAliases(stylesXml: string, override: DocxStyleOverride): string {
-    let updated = upsertStyleOverride(stylesXml, {
-        ...override,
-        aliases: undefined
-    });
-
-    for (const alias of override.aliases ?? []) {
-        updated = upsertStyleOverride(updated, {
-            ...override,
-            styleId: alias,
-            aliases: undefined
-        });
-    }
-
-    return updated;
-}
-
-function upsertStyleOverride(stylesXml: string, override: DocxStyleOverride): string {
-    const styleRegex = new RegExp(`<w:style\\b(?=[^>]*w:styleId="${escapeRegex(override.styleId)}")[\\s\\S]*?</w:style>`);
-    if (styleRegex.test(stylesXml)) {
-        return stylesXml.replace(styleRegex, (styleXml) => updateStyleXml(styleXml, override));
-    }
-
-    return insertDocxStyle(stylesXml, override);
-}
-
-function insertDocxStyle(stylesXml: string, override: DocxStyleOverride): string {
-    const styleType = override.styleId.endsWith('Char') ? 'character' : 'paragraph';
-    const styleName = override.styleId.replace(/([a-z])([A-Z])/g, '$1 $2');
-    const baseStyleXml = `<w:style w:type="${styleType}" w:customStyle="1" w:styleId="${escapeXmlAttribute(override.styleId)}"><w:name w:val="${escapeXmlAttribute(styleName)}"/></w:style>`;
-    const updatedStyleXml = updateStyleXml(baseStyleXml, override);
-    return stylesXml.replace(/<\/w:styles>\s*$/, `${updatedStyleXml}</w:styles>`);
-}
-
-function updateStyleXml(styleXml: string, override: DocxStyleOverride): string {
-    let updated = styleXml;
-    updated = ensureChildElement(updated, 'w:rPr');
-
-    if (override.lineSpacingTwips || override.shadingFill) {
-        updated = ensureChildElement(updated, 'w:pPr');
-    }
-
-    if (override.asciiFont || override.eastAsiaFont) {
-        const ascii = override.asciiFont || override.eastAsiaFont || '';
-        const eastAsia = override.eastAsiaFont || override.asciiFont || '';
-        const fontXml = `<w:rFonts w:ascii="${escapeXmlAttribute(ascii)}" w:hAnsi="${escapeXmlAttribute(ascii)}" w:eastAsia="${escapeXmlAttribute(eastAsia)}" w:cs="${escapeXmlAttribute(ascii)}"/>`;
-        updated = upsertInsideElement(updated, 'w:rPr', /<w:rFonts\b[^>]*\/>/, fontXml);
-    }
-
-    if (override.sizePt) {
-        const halfPoints = String(Math.round(override.sizePt * 2));
-        updated = upsertInsideElement(updated, 'w:rPr', /<w:sz\b[^>]*\/>/, `<w:sz w:val="${halfPoints}"/>`);
-        updated = upsertInsideElement(updated, 'w:rPr', /<w:szCs\b[^>]*\/>/, `<w:szCs w:val="${halfPoints}"/>`);
-    }
-
-    if (override.lineSpacingTwips) {
-        const rule = override.lineSpacingRule ?? 'auto';
-        updated = upsertLineSpacingAttributes(updated, override.lineSpacingTwips, rule);
-    }
-
-    if (override.color) {
-        updated = upsertInsideElement(updated, 'w:rPr', /<w:color\b[^>]*\/>/, `<w:color w:val="${escapeXmlAttribute(override.color)}"/>`);
-    }
-
-    if (override.shadingFill) {
-        updated = upsertInsideElement(updated, 'w:pPr', /<w:shd\b[^>]*\/>/, `<w:shd w:val="clear" w:color="auto" w:fill="${escapeXmlAttribute(override.shadingFill)}"/>`);
-    }
-
-    return updated;
-}
-
-function ensureChildElement(xml: string, tagName: string): string {
-    if (new RegExp(`<${tagName}\\b`).test(xml)) {
-        return xml;
-    }
-
-    return xml.replace(/(<w:style\b[^>]*>)/, `$1<${tagName}/>`);
-}
-
-function upsertInsideElement(xml: string, tagName: string, childRegex: RegExp, childXml: string): string {
-    const elementRegex = new RegExp(`<${tagName}\\b[^>]*(?:/>|>[\\s\\S]*?</${tagName}>)`);
-    return xml.replace(elementRegex, (elementXml) => {
-        if (childRegex.test(elementXml)) {
-            return elementXml.replace(childRegex, childXml);
-        }
-
-        if (elementXml.endsWith('/>')) {
-            return elementXml.replace(/\/>$/, `>${childXml}</${tagName}>`);
-        }
-
-        return elementXml.replace(new RegExp(`</${tagName}>$`), `${childXml}</${tagName}>`);
-    });
-}
-
-/**
- * Set `w:line` / `w:lineRule` on the style's `w:spacing` element while keeping the
- * template's `w:before` / `w:after` paragraph spacing intact. Only the two line
- * attributes are touched; a missing `w:spacing` element is inserted into `w:pPr`.
- */
-function upsertLineSpacingAttributes(styleXml: string, lineTwips: number, rule: 'auto' | 'exact'): string {
-    const pPrRegex = /<w:pPr\b[^>]*(?:\/>|>[\s\S]*?<\/w:pPr>)/;
-    if (!pPrRegex.test(styleXml)) {
-        return styleXml;
-    }
-
-    return styleXml.replace(pPrRegex, (pPrXml) => {
-        const spacingRegex = /<w:spacing\b[^>]*\/>/;
-        if (spacingRegex.test(pPrXml)) {
-            return pPrXml.replace(spacingRegex, (spacingXml) => {
-                let updated = spacingXml;
-                updated = upsertXmlAttribute(updated, 'w:line', String(lineTwips));
-                updated = upsertXmlAttribute(updated, 'w:lineRule', rule);
-                return updated;
-            });
-        }
-
-        const spacingXml = `<w:spacing w:line="${lineTwips}" w:lineRule="${rule}"/>`;
-        if (pPrXml.endsWith('/>')) {
-            return pPrXml.replace(/\/>$/, `>${spacingXml}</w:pPr>`);
-        }
-
-        return pPrXml.replace(/<\/w:pPr>$/, `${spacingXml}</w:pPr>`);
-    });
 }
 
 function resolveMarginMm(settings: ExportSettings) {
@@ -970,29 +756,8 @@ function updateDocumentMargins(documentXml: string, settings: ExportSettings): s
     });
 }
 
-function upsertXmlAttribute(xml: string, attrName: string, value: string): string {
-    const attrRegex = new RegExp(`${escapeRegex(attrName)}="[^"]*"`);
-    if (attrRegex.test(xml)) {
-        return xml.replace(attrRegex, `${attrName}="${escapeXmlAttribute(value)}"`);
-    }
-
-    return xml.replace(/\/>$/, ` ${attrName}="${escapeXmlAttribute(value)}"/>`);
-}
-
 function mmToTwips(value: number): number {
     return Math.round(value * 56.6929133858);
-}
-
-function escapeRegex(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function escapeXmlAttribute(value: string): string {
-    return value
-        .replace(/&/g, '&amp;')
-        .replace(/"/g, '&quot;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
 }
 
 async function runExecutable(
