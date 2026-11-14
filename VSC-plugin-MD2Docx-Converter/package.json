@@ -191,6 +191,11 @@
           "default": "https://mermaid.ink",
           "description": "Base URL of the Mermaid Ink service used when mdocxConverter.mermaidRenderer allows the API fallback. Point this at a self-hosted instance to keep diagram content local."
         },
+        "mdocxConverter.documentTitle": {
+          "type": "string",
+          "default": "",
+          "description": "Document title written into the DOCX core properties. Leave empty to use the first heading in the document, or the file name when the document has no heading."
+        },
         "mdocxConverter.openAfterExport": {
           "type": "boolean",
           "default": false,

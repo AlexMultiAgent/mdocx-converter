@@ -18,6 +18,7 @@ import { buildDocxStyleOverrides, upsertStyleOverride, upsertXmlAttribute, norma
 import type { DocxStyleOverride } from './docxStyles';
 import { findDocxPart } from './docxParts';
 import { getBundledReferenceDocxCandidates } from './templates';
+import { resolveDocumentTitle } from './document';
 import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, parseMermaidBlocks, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 
 const execFileAsync = promisify(execFile);
@@ -42,6 +43,7 @@ interface ExportSettings {
     mermaidOutputFormat: 'png' | 'svg';
     mermaidRenderer: MermaidRenderer;
     mermaidApiUrl: string;
+    documentTitle: string;
     openAfterExport: boolean;
     keepIntermediateFiles: boolean;
     styleProfile: StyleProfile;
@@ -158,6 +160,11 @@ async function runExport(
 
         prepared = await prepareMarkdown(markdownUri.fsPath, markdownText, settings, outputChannel);
 
+        // The title goes into the DOCX core properties, not into the body —
+        // a title paragraph would fight with the template's own title style.
+        const documentTitle = resolveDocumentTitle(markdownText, settings.documentTitle, markdownUri.fsPath);
+        outputChannel.appendLine(`Document title: ${documentTitle}`);
+
         const pandoc = await requirePandoc(settings.pandocPath);
         outputChannel.appendLine(`Using Pandoc: ${pandoc.command}`);
         outputChannel.appendLine(`Pandoc version: ${pandoc.versionLine}`);
@@ -176,6 +183,7 @@ async function runExport(
             outputPath,
             referenceDocx,
             settings,
+            documentTitle,
             tempDir: prepared.tempDir,
             outputChannel
         });
@@ -268,6 +276,7 @@ function readSettings(markdownUri: vscode.Uri, exportOverrides?: ExportOverrides
         mermaidOutputFormat: readConfigValue<'png' | 'svg'>(config, legacyConfig, 'mermaidOutputFormat', 'png'),
         mermaidRenderer: readConfigValue<MermaidRenderer>(config, legacyConfig, 'mermaidRenderer', 'auto'),
         mermaidApiUrl: readConfigValue(config, legacyConfig, 'mermaidApiUrl', 'https://mermaid.ink').trim() || 'https://mermaid.ink',
+        documentTitle: readConfigValue(config, legacyConfig, 'documentTitle', '').trim(),
         openAfterExport: readConfigValue(config, legacyConfig, 'openAfterExport', false),
         keepIntermediateFiles: readConfigValue(config, legacyConfig, 'keepIntermediateFiles', false),
         styleProfile: exportOverrides?.styleProfile ?? normalizeStyleProfile(readConfigValue(config, legacyConfig, 'styleProfile', 'template')),
@@ -708,10 +717,11 @@ async function runPandoc(options: {
     outputPath: string;
     referenceDocx?: string;
     settings: ExportSettings;
+    documentTitle: string;
     tempDir?: string;
     outputChannel: vscode.OutputChannel;
 }): Promise<void> {
-    const { pandoc, sourceMarkdownPath, originalMarkdownPath, outputPath, referenceDocx, settings, tempDir, outputChannel } = options;
+    const { pandoc, sourceMarkdownPath, originalMarkdownPath, outputPath, referenceDocx, settings, documentTitle, tempDir, outputChannel } = options;
     const resourcePathSeparator = process.platform === 'win32' ? ';' : ':';
     const resourcePathEntries = [
         path.dirname(originalMarkdownPath),
@@ -734,14 +744,21 @@ async function runPandoc(options: {
         args.push('--reference-doc', referenceDocx);
     }
 
-    const metadata = buildPandocMetadata(settings);
+    const styleMetadata = buildPandocMetadata(settings);
+    // The title is metadata of its own: pandoc writes it into the DOCX core
+    // properties, where the style overrides never reach.
+    const metadata: Record<string, string> = {
+        ...styleMetadata,
+        title: documentTitle
+    };
+
     for (const [key, value] of Object.entries(metadata)) {
         args.push('--metadata', `${key}=${value}`);
     }
 
-    if (Object.keys(metadata).length > 0) {
+    if (Object.keys(styleMetadata).length > 0) {
         outputChannel.appendLine(`Style profile: ${settings.styleProfile}`);
-        outputChannel.appendLine(`Pandoc metadata overrides: ${Object.entries(metadata).map(([key, value]) => `${key}=${value}`).join(', ')}`);
+        outputChannel.appendLine(`Pandoc metadata overrides: ${Object.entries(styleMetadata).map(([key, value]) => `${key}=${value}`).join(', ')}`);
     }
 
     outputChannel.appendLine(`Running Pandoc with args: ${args.join(' ')}`);
