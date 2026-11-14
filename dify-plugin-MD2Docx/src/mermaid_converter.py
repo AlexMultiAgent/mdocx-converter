@@ -30,6 +30,14 @@ _mermaid_render = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mermaid_render)
 
 render_mermaid_via_api = _mermaid_render.render_mermaid_via_api
+render_mermaid_with_retry = _mermaid_render.render_mermaid_with_retry
+validate_api_url = _mermaid_render.validate_api_url
+
+# Upper bound for the diagram source. The text is shipped verbatim to a
+# third-party rendering service, so an oversized payload is rejected outright.
+MAX_MERMAID_CODE_BYTES = 256 * 1024
+
+_FENCE_RE = re.compile(r"^```[a-zA-Z0-9_+-]*\s*\n?", re.MULTILINE)
 
 
 class MermaidConverterTool(Tool):
@@ -41,20 +49,33 @@ class MermaidConverterTool(Tool):
             yield self.create_text_message("Error: mermaid_code is required")
             return
 
+        if len(code.encode("utf-8")) > MAX_MERMAID_CODE_BYTES:
+            limit_kb = MAX_MERMAID_CODE_BYTES // 1024
+            yield self.create_text_message(
+                f"Error: mermaid_code exceeds the {limit_kb}KB limit."
+            )
+            return
+
         # Strip code fences if present
         if code.startswith("```"):
-            code = re.sub(r"^```mermaid\s*", "", code)
-            code = re.sub(r"```$", "", code).strip()
-
-        api_url = parameters.get("mermaid_api_url") or None
+            code = _FENCE_RE.sub("", code)
+            code = re.sub(r"```\s*$", "", code).strip()
 
         try:
-            png_bytes = render_mermaid_via_api(code, api_url=api_url)
+            api_url = validate_api_url(parameters.get("mermaid_api_url"))
+        except ValueError as e:
+            yield self.create_text_message(f"Error: {e}")
+            return
+
+        try:
+            png_bytes = render_mermaid_with_retry(
+                code, api_url=api_url, renderer=render_mermaid_via_api
+            )
         except Exception as e:
             yield self.create_text_message(f"Mermaid rendering failed: {e}")
             return
 
         yield self.create_blob_message(
             blob=png_bytes,
-            meta={"mime_type": "image/png", "file_name": "diagram.png"},
+            meta={"mime_type": "image/png", "filename": "diagram.png"},
         )

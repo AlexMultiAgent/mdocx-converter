@@ -28,7 +28,7 @@ Markdown text
 
 ## Built-in templates
 
-8 reference DOCX files in `multi-templates/` of each subdirectory (6 style profiles × 2 languages: `technical`, `business`, `official`, `academic`, `thesis`, `template` × `Chinese`/`English`). The VS Code extension is the source of truth; new templates are added there first and mirrored to the Dify plugin in the same PR.
+The Dify plugin ships **8** reference DOCX files in `dify-plugin-MD2Docx/multi-templates/` (6 style profiles × 2 languages; `thesis` and `template` reuse the academic pair). The VS Code extension ships 6 — it has no `official` templates yet. The VS Code extension is the source of truth; new templates are added there first and mirrored to the Dify plugin in the same PR.
 
 ## Repository layout
 

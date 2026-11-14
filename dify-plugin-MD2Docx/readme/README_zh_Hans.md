@@ -35,7 +35,7 @@ dify-plugin plugin package .
 
 ## 功能
 
-- **6 种样式预设**，内置中英文参考模板（2 语言 × 6 样式）：`technical`（技术文档）、`business`（商业报告）、`official`（GB/T 9704 公文）、`academic`（学术论文）、`thesis`（GB/T 7713 学位论文）、`template`（完全自定义）。
+- **6 种样式预设**，内置 8 个中英文参考模板：`technical`（技术文档）、`business`（商业报告）、`official`（GB/T 9704 公文）、`academic`（学术论文）、`thesis`（GB/T 7713 学位论文）、`template`（完全自定义）。`thesis` 与 `template` 共用 academic 模板。
 - **Mermaid 渲染**：通过 Mermaid Ink API 将代码块转为 PNG。可在 DOCX 内嵌，也可通过独立 `Mermaid to Image` 工具单独渲染。
 - **13 项样式覆盖**：正文/标题字体、字号、行距、四边距均可逐项覆盖。
 - **中文优先**：自动中英文检测，SimSun / SimHei / FangSong / KaiTi 全覆盖。

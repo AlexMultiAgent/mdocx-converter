@@ -88,7 +88,7 @@ Some text after.
         from md2docx import preprocess_mermaid
         monkeypatch.setattr(
             "md2docx.render_mermaid_via_api",
-            lambda diagram: b"\x89PNG\r\n\x1a\n" + b"\x00" * 16,
+            lambda diagram, api_url=None, timeout=None: b"\x89PNG\r\n\x1a\n" + b"\x00" * 16,
         )
         monkeypatch.setattr("md2docx.time.sleep", lambda s: None)
         processed, count, temp_dir, errors = preprocess_mermaid(md_with_mermaid, enabled=True)

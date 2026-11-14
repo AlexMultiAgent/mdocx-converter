@@ -7,15 +7,17 @@ This plugin lives in the `dify-plugin-MD2Docx/` directory of the [mdocx-converte
 ```bash
 pip install -r requirements.txt                                # install runtime deps
 pip install -r requirements-dev.txt                            # install dev deps (pytest, dify_plugin)
-python -c "import ast; ast.parse(open('src/md2docx.py').read()); print('Syntax OK')"  # syntax check
+python -c "import ast; ast.parse(open('src/md2docx.py', encoding='utf-8').read()); print('Syntax OK')"  # syntax check
 pytest tests/ -v                                               # run test suite
 ```
 
-Tests live in `tests/`: `smoke_test.py` (pure functions), `test_invoke.py` (Dify Tool entry with mocked deps), `test_docx_output.py` (end-to-end pandoc conversion). `conftest.py` auto-skips when `dify_plugin` is missing.
+> The syntax check needs `encoding='utf-8'`: the source contains UTF-8 punctuation and the default locale encoding on a Chinese Windows install is GBK, which raises `UnicodeDecodeError`.
+
+Tests live in `tests/`: `smoke_test.py` (pure functions), `test_invoke.py` (Dify Tool entry with mocked deps), `test_docx_output.py` (end-to-end pandoc conversion), `test_mermaid_converter.py` (standalone Mermaid tool). `conftest.py` auto-skips when `dify_plugin` is missing.
 
 ## Architecture
 
-This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + a single Python file: `src/md2docx.py` (~744 lines).
+This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + three Python modules: `src/md2docx.py` (core conversion, ~1090 lines), `src/_mermaid_render.py` (shared Mermaid HTTP client), `src/mermaid_converter.py` (standalone Mermaid tool).
 
 ### Conversion pipeline
 
@@ -28,21 +30,23 @@ markdown_content
   │     custom_template (uploaded file) > built-in 8 ref.docx (profile × language)
   │
   ├─ 3. Mermaid preprocessing (if enabled):
-  │     regex ```mermaid blocks → Mermaid Ink API (parallel, 4 workers) → PNG bytes → temp file
+  │     regex ```mermaid blocks → Mermaid Ink API (4 workers in parallel, 120s total budget)
   │     Replace blocks with ![diagram](temp.png) in markdown
   │     Falls back to preserving original code block if API fails
   │
   ├─ 4. Pandoc conversion:
   │     pypandoc.convert_text() with --reference-doc and --metadata
   │     pypandoc-binary provides pandoc at pip install time (no runtime download)
+  │     Pandoc's own warnings are captured and surfaced to the caller
   │
   ├─ 5. DOCX style overrides:
   │     python-docx opens generated .docx
+  │     Write the title into the core properties (dc:title)
   │     Modify Normal, Heading1-3 styles (font, size, line spacing) via lxml
   │     Technical profile: SourceCode + VerbatimChar (Consolas 10pt, color #000000, shading #F3F4F6)
   │     Page margins via section properties
   │
-  └─ 6. Return: text_message + blob_message(docx_bytes)
+  └─ 6. Return: text_message + ONE json_message + blob_message(docx_bytes)
 ```
 
 ### File structure
@@ -50,6 +54,7 @@ markdown_content
 ```
 dify-plugin-MD2Docx/
 ├── manifest.yaml              # Plugin metadata, runtime config
+├── main.py                    # Plugin entry point
 ├── requirements.txt           # pypandoc-binary, python-docx, requests, lxml
 ├── PRIVACY.md                 # Mermaid Ink API & Pandoc download disclosure
 ├── _assets/
@@ -59,21 +64,35 @@ dify-plugin-MD2Docx/
 │   ├── md2docx.py             # Md2DocxProvider (ToolProvider)
 │   └── md2docx.yaml           # Tool Provider declaration
 ├── tools/
-│   └── md_to_docx.yaml        # Tool parameter schema (18 parameters)
+│   ├── md_to_docx.yaml        # Core tool — 6 parameters
+│   ├── md_to_docx_advanced.yaml  # Advanced tool — 19 parameters
+│   └── mermaid_converter.yaml # Standalone Mermaid → PNG — 2 parameters
 └── src/
     ├── __init__.py
-    └── md2docx.py              # Core conversion — all logic in one file
+    ├── md2docx.py             # Core conversion — Md2DocxTool
+    ├── _mermaid_render.py     # Shared Mermaid client (no Tool subclass)
+    └── mermaid_converter.py   # MermaidConverterTool
 ```
 
-### Tool parameters (18 total)
+### Tool parameters
 
-**Core (4):** `markdown_content` (req, llm), `title` (opt, llm), `style_profile` (select, form; 6 options: academic/thesis/technical/business/official/template), `reference_language` (select, form)
+**Markdown to DOCX (6):** `markdown_content` (req, llm), `title` (opt, llm), `style_profile` (select, form; 6 options: academic/thesis/technical/business/official/template), `reference_language` (select, form), `mermaid_enabled` (boolean, form, default: true), `mermaid_api_url` (string, form)
+
+**Markdown to DOCX (Advanced) (19):** the 6 above plus `body_font`, `body_size_pt`, `line_spacing`, `margin_top_mm`, `margin_bottom_mm`, `margin_left_mm`, `margin_right_mm`, `heading1_font`, `heading1_size_pt`, `heading2_font`, `heading2_size_pt`, `heading3_font`, `heading3_size_pt`.
+
+**Mermaid to Image (2):** `mermaid_code` (req, llm), `mermaid_api_url` (string, form).
 
 > A `custom_template` (`type: file`) param was REMOVED in v0.0.3. A `file`-type tool parameter makes a Dify **workflow** tool node hang in `get_workflow_tool_runtime()` and never dispatch (node stuck "running" until timeout, daemon never receives invoke). `file` params only work in Agent nodes. The `_invoke` code still tolerates a `custom_template` kwarg if present, but it is no longer exposed in the schema.
 
-**Extended (1):** `mermaid_enabled` (boolean, form, default: true)
+### Dify output contract
 
-**Advanced (13):** `body_font`, `body_size_pt`, `line_spacing`, `margin_top_mm`, `margin_bottom_mm`, `margin_left_mm`, `margin_right_mm`, `heading1_font`, `heading1_size_pt`, `heading2_font`, `heading2_size_pt`, `heading3_font`, `heading3_size_pt`
+The daemon treats every `json` message as a **discrete output** — it does not merge them. A tool invocation therefore yields exactly one `json` message:
+
+```json
+{"status": "success", "stage": "complete", "file": "Report.docx", "size_kb": 12.3, "warnings": []}
+```
+
+Blob metadata is read with the key **`filename`** (not `file_name`), which the backend ignores.
 
 ### Template resolution
 
@@ -82,41 +101,55 @@ dify-plugin-MD2Docx/
 
 Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`, and `thesis` profiles share the same academic reference files. Technical, business, and official each have their own English/Chinese pair.
 
+> `reference_{english,chinese}_official.docx` are byte-identical copies of the academic files — the `official` profile differs purely through its style defaults (FangSong 16pt, 1.75x, GB/T 9704 margins). They are kept as separate files so both plugins hold the same eight names.
+
 ### Language auto-detection
 
 `detect_language()` samples the first 20,000 characters. Chinese is selected when CJK character count ≥ 40 OR > 15% of Latin letter count. Otherwise English.
 
 ### Style system (three layers)
 
-**Layer 1 — Pandoc metadata** (`build_pandoc_metadata`): Sets `mainfont`, `CJKmainfont`, `fontsize`, `linestretch` via `--metadata`. These come from `PROFILE_METADATA` plus per-parameter overrides.
+**Layer 1 — Pandoc metadata** (`build_pandoc_metadata`): Sets `mainfont`, `CJKmainfont`, `fontsize`, `linestretch` via `--metadata`. These come from `PROFILE_METADATA` plus per-parameter overrides. A `body_font` override replaces `mainfont`; `CJKmainfont` only follows it when the override is itself a CJK font, so a Latin body font cannot take over the East Asian slot.
 
 **Layer 2 — DOCX XML overrides** (`apply_style_overrides`): After pandoc finishes, opens the .docx via `python-docx` and modifies styles using lxml for raw XML access:
 
 - `Normal` style — font, size, line spacing
 - `Heading1`/`Heading2`/`Heading3` — font, size
-- `SourceCode` + `VerbatimChar` (technical profile only) — Consolas 10pt, color #1F2937
+- `SourceCode` (paragraph) + `VerbatimChar` (character) — Consolas 10pt, color #000000; shading #F3F4F6 on the paragraph style only
 - Page margins — via `section.top_margin` etc. in python-docx
 
+Two rules the layer depends on:
+
+- **Style resolution is by display name.** Style ids are not portable — `a` is Normal in the English templates but List Number in the Chinese one — so ids are only consulted when no name matches. Matching by name keeps the body font off list and table styles.
+- **The East Asian font slot is separate.** `w:rFonts/@w:eastAsia` gets the profile's CJK font while `ascii`/`hAnsi` get the Latin font, so the `business`/`technical` presets (Arial body) do not send Chinese text to an arbitrary system fallback. A font the user named explicitly fills **both** slots — they asked for that font. `w:szCs` is written alongside `w:sz` so complex-script text keeps the same size.
+
+  > CJK fonts are recognised by name, not by the presence of ideographs: OOXML stores the Latin names (`SimSun` is 宋体, `SimHei` is 黑体). See `CJK_FONT_NAMES`.
+- **Non-`template` profiles force body and heading text to black** (`000000`). The reference templates carry Word's blue accent heading colours; Chinese formal documents use black, so the override is intentional.
+
 **Layer 3 — Profile defaults** (`PROFILE_DEFAULTS`): Hardcoded per profile:
+
 - `academic`: SimSun body 12pt, SimHei headings 16/14/12pt, 1.5x, margins 25.4mm
 - `thesis`: SimSun body 12pt, SimHei headings 22/16/14pt (GB/T 7713), 1.5x, margins 30mm
-- `business`: Arial body 11pt, Arial headings 18/14/12pt, 1.5x, margins 25.4mm
-- `technical`: Arial body 11pt, Arial headings 16/14/12pt, 1.35x, Consolas code, margins 19mm
+- `business`: Arial body 11pt, Arial headings 18/14/12pt, 1.5x, margins 25.4mm (Chinese text: Microsoft YaHei)
+- `technical`: Arial body 11pt, Arial headings 16/14/12pt, 1.35x, Consolas code, margins 19mm (Chinese text: Microsoft YaHei)
 - `official`: FangSong body 16pt, SimHei/KaiTi/FangSong headings 16pt, 1.75x, margins 37/35/28/26mm (GB/T 9704)
 - `template`: no defaults (rely on reference.docx entirely)
 
 ### Key design decisions
 
 - **pypandoc-binary**: pandoc binary bundled in the pip package, installed at plugin init — no runtime download, no network dependency for conversion
-- **_warmup_pandoc()**: pre-loads pandoc on plugin startup (when `LOAD_FROM_DIFY_PLUGIN=1`) for fast first invocation
+- **No pandoc warmup**: pre-loading pandoc at import time is skipped on purpose. Spawning a subprocess before `Plugin.run()` starts the event loop can deadlock in a gevent-patched environment; the first conversion pays the cold start instead.
 - **Mermaid Ink API**: Free public HTTP service for Mermaid rendering. No auth, no rate limiting. Users can disable via `mermaid_enabled: false`
 - **python-docx + lxml**: Style overrides use python-docx for high-level access + lxml for raw XML manipulation when needed (fonts, spacing, shading, colors)
 - **User overrides > Profile defaults**: Every style parameter can be overridden individually; `0` or empty means "use profile default"
 - **Script style**: Avoiding `from __future__ import annotations` to maintain compatibility
-- **Safety guards**: `markdown_content` is capped at 5 MB (`MAX_MARKDOWN_BYTES`) to prevent OOM in the Dify plugin sandbox
-- **Mermaid resilience**: 3 attempts per diagram (1s/2s backoff), 120s total budget, and a per-attempt 30s timeout
+- **Safety guards**: `markdown_content` is capped at 5 MB (`MAX_MARKDOWN_BYTES`) to prevent OOM in the Dify plugin sandbox; `mermaid_code` is capped at 256 KB (`MAX_MERMAID_CODE_BYTES`)
+- **Mermaid resilience**: 3 attempts per diagram (1s/2s backoff), 4 diagrams rendered in parallel, a 120s total budget that also clamps the per-request timeout, and a 30s per-attempt ceiling. A diagram that cannot be rendered is kept as its original code block.
+- **Mermaid endpoint validation**: `mermaid_api_url` must be http(s) and must not point at a link-local address (which covers the cloud metadata endpoint `169.254.169.254`). Private ranges stay allowed because a self-hosted instance commonly lives on an internal network.
+- **Pandoc warnings are surfaced**: pypandoc forwards pandoc's stderr to the `pypandoc` logger; a handler collects it so an image that could not be resolved is reported instead of being silently dropped from the DOCX.
 - **Pandoc output cleanup**: `_strip_dangling_image_rels` removes image/oleObject relationships inherited from reference templates whose target files are missing, so python-docx can always open the produced DOCX
 - **custom_template safety**: A `str` value for `custom_template` is rejected with a clear warning instead of being written as a corrupted binary
+- **Title length**: `title` is capped at 120 characters (`MAX_TITLE_LENGTH`) because it becomes the name of the produced file
 
 ## Differences from VS Code extension
 

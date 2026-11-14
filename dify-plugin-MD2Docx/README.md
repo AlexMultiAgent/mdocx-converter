@@ -35,7 +35,7 @@ The package depends on `pypandoc-binary`, which bundles Pandoc inside the pip wh
 
 ## Features
 
-- **6 style profiles** with built-in reference DOCX templates (Chinese + English × 6): `technical`, `business`, `official` (GB/T 9704), `academic`, `thesis` (GB/T 7713), and `template`.
+- **6 style profiles** backed by 8 built-in reference DOCX templates (Chinese + English): `technical`, `business`, `official` (GB/T 9704), `academic`, `thesis` (GB/T 7713), and `template`. `thesis` and `template` share the academic pair.
 - **Mermaid rendering** via Mermaid Ink API. Inline in DOCX or standalone via the `Mermaid to Image` tool.
 - **Fine-grained overrides**: 13 advanced parameters for body/heading fonts, sizes, line spacing, and margins.
 - **CJK-first**: automatic Chinese/English detection with SimSun / SimHei / FangSong / KaiTi defaults.
@@ -47,7 +47,7 @@ The package depends on `pypandoc-binary`, which bundles Pandoc inside the pip wh
 | ----------- | ---------------- | --------- | ------------------------------- | ------------ | ------------ | ------------------------------------- |
 | `technical` | Arial            | 11 pt     | Arial 16 / 14 / 12 pt           | 1.35         | 19           | Tech blogs, API docs                  |
 | `business`  | Arial            | 11 pt     | Arial 18 / 14 / 12 pt           | 1.5          | 25.4         | Business reports, memos               |
-| `official`  | FangSong         | 16 pt     | SimHei / KaiTi / FangSong 16 pt | 1.75         | 37/35/28/26  | GB/T 9704 |
+| `official`  | FangSong         | 16 pt     | SimHei / KaiTi / FangSong 16 pt | 1.75         | 37/35/28/26  | GB/T 9704                             |
 | `academic`  | SimSun           | 12 pt     | SimHei 16 / 14 / 12 pt          | 1.5          | 25.4         | Academic writing, CSSCI               |
 | `thesis`    | SimSun           | 12 pt     | SimHei 22 / 16 / 14 pt          | 1.5          | 30           | GB/T 7713                             |
 | `template`  | (from reference) | —         | —                               | —            | —            | Fully custom                          |

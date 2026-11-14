@@ -40,6 +40,8 @@ TEMPLATES=(
 
 MISMATCHES=0
 COPIED=0
+CHECKED=0
+SKIPPED=0
 
 for tmpl in "${TEMPLATES[@]}"; do
     src="$VSC_TEMPLATES/$tmpl"
@@ -47,8 +49,10 @@ for tmpl in "${TEMPLATES[@]}"; do
 
     if [[ ! -f "$src" ]]; then
         echo "WARN: Source template missing (may be Dify-only): $tmpl"
+        SKIPPED=$((SKIPPED + 1))
         continue
     fi
+    CHECKED=$((CHECKED + 1))
 
     if $CHECK_ONLY; then
         if [[ ! -f "$dst" ]]; then
@@ -71,7 +75,7 @@ done
 
 if $CHECK_ONLY; then
     if [[ $MISMATCHES -eq 0 ]]; then
-        echo "OK: All $(( ${#TEMPLATES[@]} )) templates in sync."
+        echo "OK: $CHECKED template(s) in sync."$([ "$SKIPPED" -gt 0 ] && echo " ($SKIPPED Dify-only template(s) skipped)")
     else
         echo "ERROR: $MISMATCHES template(s) out of sync. Run without --check to sync."
         exit 1

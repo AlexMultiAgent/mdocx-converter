@@ -12,7 +12,9 @@ import time
 import shutil
 import tempfile
 import zipfile
-import threading
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional, Any, Generator
 
@@ -26,6 +28,7 @@ import pypandoc
 from docx import Document
 from docx.shared import Cm
 from docx.oxml.ns import qn
+from docx.styles.style import ParagraphStyle
 from lxml import etree
 
 # Load the shared Mermaid renderer from its sibling file. The Dify SDK loads
@@ -40,6 +43,8 @@ _mermaid_render = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mermaid_render)
 
 render_mermaid_via_api = _mermaid_render.render_mermaid_via_api
+render_mermaid_with_retry = _mermaid_render.render_mermaid_with_retry
+validate_api_url = _mermaid_render.validate_api_url
 MERMAID_INK_URL = _mermaid_render.MERMAID_INK_URL
 
 # ── Tunables ────────────────────────────────────────────────
@@ -52,17 +57,35 @@ MAX_MARKDOWN_BYTES = 5 * 1024 * 1024  # 5 MB
 # still running after this are cancelled and reported as timed-out.
 MERMAID_TOTAL_BUDGET_SECONDS = 120
 
-# Per-attempt timeout for a single Mermaid Ink request.
-MERMAID_REQUEST_TIMEOUT_SECONDS = 30
+# Number of diagrams rendered at the same time.
+MERMAID_MAX_WORKERS = 4
 
-# Number of retry attempts for a single Mermaid Ink request (1 initial + N retries).
-MERMAID_MAX_ATTEMPTS = 3
+# Per-attempt timeout and retry count live in `_mermaid_render.py`, which both
+# tools share.
 
 # ── Regex ───────────────────────────────────────────────────
 
-MERMAID_BLOCK_RE = re.compile(r"(?m)^```mermaid[^\n]*\n([\s\S]*?)\n^```", re.IGNORECASE)
+# A Mermaid block: a fenced code block whose info string is exactly
+# "mermaid". The fence may be backticks or tildes and may be indented by up
+# to three spaces (four spaces would make it an indented code block). The
+# info string must match exactly, otherwise ```mermaidjs would be shipped to
+# the rendering service.
+MERMAID_BLOCK_RE = re.compile(
+    r"(?ms)^[ \t]{0,3}(?P<fence>```+|~~~+)[ \t]*mermaid[ \t]*\r?\n"
+    r"(?P<body>.*?)"
+    r"^[ \t]{0,3}(?P=fence)[ \t]*\r?$"
+)
 CJK_CHAR_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
 LATIN_CHAR_RE = re.compile(r"[A-Za-z]")
+
+# Fonts that carry CJK glyphs, under the names Word stores in OOXML.
+CJK_FONT_NAMES = frozenset({
+    "SimSun", "NSimSun", "SimHei", "FangSong", "FangSong_GB2312",
+    "KaiTi", "KaiTi_GB2312", "STSong", "STHeiti", "DengXian",
+    "Microsoft YaHei", "Microsoft YaHei UI", "Microsoft JhengHei",
+    "Yu Gothic", "MS Mincho", "MS Gothic",
+})
+_CJK_FONT_NAMES_LOWER = frozenset(name.lower() for name in CJK_FONT_NAMES)
 
 # ── Profile defaults (ported from getProfileDocxDefaults) ───
 
@@ -213,15 +236,24 @@ TEMPLATE_MAP: dict[str, dict[str, str]] = {
 
 VALID_PROFILES = {"template", "academic", "business", "technical", "official", "thesis"}
 
-# Style name aliases used by some reference.docx templates
-NORMAL_STYLE_NAMES = ("Normal", "a", "a1", "Text", "BodyText", "Body Text",
-                       "FirstParagraph", "Compact")
+# Style display names as they appear in `w:name`. Style ids are not portable
+# between templates — 'a' is Normal in the English templates but List Number
+# in the Chinese one — so ids are only used as a fallback.
+NORMAL_STYLE_NAMES = ("Normal", "Text", "BodyText", "Body Text",
+                       "FirstParagraph", "First Paragraph", "Compact")
+NORMAL_STYLE_IDS = ("a", "a1")
 HEADING_ALIASES = {
-    "Heading 1": ("Heading 1", "1"),
-    "Heading 2": ("Heading 2", "2", "21"),
-    "Heading 3": ("Heading 3", "3", "31"),
+    "Heading 1": ("Heading 1",),
+    "Heading 2": ("Heading 2",),
+    "Heading 3": ("Heading 3",),
 }
-CODE_STYLE_NAMES = ("SourceCode", "VerbatimChar", "Code")
+HEADING_STYLE_IDS = {
+    "Heading 1": ("1",),
+    "Heading 2": ("2", "21"),
+    "Heading 3": ("3", "31"),
+}
+CODE_STYLE_NAMES = ("Source Code", "Verbatim Char", "Code")
+CODE_STYLE_IDS = ("SourceCode", "VerbatimChar", "Code")
 
 
 # ── Language detection ───────────────────────────────────────
@@ -307,19 +339,19 @@ def parse_mm(value) -> Optional[float]:
     return parse_pt(value)
 
 
-def mm_to_twips(mm: float) -> int:
-    """Convert millimeters to twips (1 mm ≈ 56.69 twips)."""
-    return round(mm * 56.6929133858)
-
-
 # ── Title sanitization ───────────────────────────────────────
 
 _FILENAME_BAD_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
+# Longest title we keep. The name becomes the file name of the produced
+# document and must leave room for the directory it is stored in.
+MAX_TITLE_LENGTH = 120
+
 
 def sanitize_filename(name: str) -> str:
     """Replace characters illegal in filenames with underscores."""
-    return _FILENAME_BAD_CHARS_RE.sub("_", name).strip() or "Document"
+    cleaned = _FILENAME_BAD_CHARS_RE.sub("_", name).strip() or "Document"
+    return cleaned[:MAX_TITLE_LENGTH].strip() or "Document"
 
 
 # ── Mermaid preprocessing ────────────────────────────────────
@@ -331,26 +363,35 @@ def sanitize_filename(name: str) -> str:
 
 def _render_one_with_retry(index: int, diagram: str, temp_dir: str,
                             errors: list[str],
-                            api_url: str | None = None) -> tuple[int, str | None]:
-    """Render one Mermaid diagram with exponential-backoff retries.
+                            api_url: str | None = None,
+                            deadline: float | None = None) -> tuple[int, str | None, str | None]:
+    """Render one Mermaid diagram, retrying transient failures.
 
-    On final failure, records the error in `errors` and returns (index, None).
+    `deadline` is the `time.monotonic()` point after which no attempt is
+    started any more. Returns (index, png_path, error_message); the error is
+    also appended to `errors` so the caller keeps a complete record.
     """
-    last_err: Exception | None = None
-    for attempt in range(MERMAID_MAX_ATTEMPTS):
-        try:
-            png_bytes = render_mermaid_via_api(diagram, api_url=api_url)
-            png_path = os.path.join(temp_dir, f"diagram-{index}.png")
-            with open(png_path, "wb") as f:
-                f.write(png_bytes)
-            return index, png_path
-        except Exception as e:  # requests.RequestException, OSError, etc.
-            last_err = e
-            if attempt < MERMAID_MAX_ATTEMPTS - 1:
-                # 1s, 2s, 4s, ...
-                time.sleep(1 * (2 ** attempt))
-    errors.append(f"Diagram {index}: {last_err}")
-    return index, None
+    try:
+        png_bytes = render_mermaid_with_retry(
+            diagram,
+            api_url=api_url,
+            deadline=deadline,
+            renderer=render_mermaid_via_api,
+        )
+    except Exception as e:  # requests.RequestException, OSError, budget, ...
+        message = f"Diagram {index}: {e}"
+        errors.append(message)
+        return index, None, message
+
+    png_path = os.path.join(temp_dir, f"diagram-{index}.png")
+    try:
+        with open(png_path, "wb") as f:
+            f.write(png_bytes)
+    except OSError as e:
+        message = f"Diagram {index}: {e}"
+        errors.append(message)
+        return index, None, message
+    return index, png_path, None
 
 
 def preprocess_mermaid(markdown_text: str, enabled: bool = True,
@@ -360,8 +401,11 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True,
     Returns (processed_markdown, mermaid_count, temp_dir, errors).
     Caller must clean up temp_dir via shutil.rmtree after pandoc conversion.
 
-    Total wall-clock time is bounded by MERMAID_TOTAL_BUDGET_SECONDS. Diagrams
-    still running after the budget are cancelled and reported as failed.
+    Diagrams are rendered in parallel (MERMAID_MAX_WORKERS at a time) and the
+    whole step is bounded by MERMAID_TOTAL_BUDGET_SECONDS: once the budget is
+    exhausted no further attempt is started and the pending diagrams are
+    reported as failed. A diagram that cannot be rendered is kept as its
+    original code block so the conversion still succeeds.
     """
     if not enabled:
         return markdown_text, 0, "", []
@@ -372,6 +416,7 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True,
 
     temp_dir = tempfile.mkdtemp(prefix="mermaid-")
     errors: list[str] = []
+    deadline = time.monotonic() + MERMAID_TOTAL_BUDGET_SECONDS
 
     # Build segments interleaving non-mermaid text with mermaid-block markers.
     # The diagram index in the 4th slot is 0 for non-mermaid segments.
@@ -385,11 +430,31 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True,
     if last_end < len(markdown_text):
         segments.append((last_end, len(markdown_text), False, 0))
 
-    # Render diagrams sequentially with retry (safe in gevent-patched envs)
+    # Render the diagrams concurrently. Every worker writes to its own file,
+    # so no locking is needed.
     results: dict[int, str | None] = {}
-    for idx, match in enumerate(matches, 1):
-        _, png_path = _render_one_with_retry(idx, match.group(1).strip(), temp_dir, errors, api_url=api_url)
-        results[idx] = png_path
+    workers = max(1, min(MERMAID_MAX_WORKERS, len(matches)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(
+                _render_one_with_retry,
+                idx,
+                match.group("body").strip(),
+                temp_dir,
+                [],
+                api_url,
+                deadline,
+            ): idx
+            for idx, match in enumerate(matches, 1)
+        }
+        for future in as_completed(futures):
+            idx, png_path, message = future.result()
+            results[idx] = png_path
+            if message:
+                errors.append(message)
+
+    # Keep the warning order aligned with the order of the diagrams.
+    errors.sort(key=lambda message: int(message.split(":", 1)[0].split()[-1]))
 
     # Assemble output preserving original order
     parts: list[str] = []
@@ -410,9 +475,6 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True,
 
 
 # ── Pandoc conversion ────────────────────────────────────────
-
-_pandoc_lock = threading.Lock()
-
 
 def _ensure_pandoc() -> None:
     """Check for pandoc. With pypandoc-binary the binary is pre-installed."""
@@ -436,8 +498,11 @@ def build_pandoc_metadata(
     metadata = dict(PROFILE_METADATA.get(style_profile, {}))
 
     if body_font and body_font.strip():
-        metadata["mainfont"] = body_font.strip()
-        metadata["CJKmainfont"] = body_font.strip()
+        font = body_font.strip()
+        # The caller only passes a user-supplied font here, and an explicit
+        # font name fills both slots.
+        metadata["mainfont"] = font
+        metadata["CJKmainfont"] = font
     if body_size_pt:
         metadata["fontsize"] = f"{body_size_pt}pt"
     if line_spacing:
@@ -467,18 +532,68 @@ def _map_pandoc_error(message: str) -> str:
     return f"Pandoc conversion failed: {message}"
 
 
+class _PandocWarningCollector(logging.Handler):
+    """Collects pandoc's warnings.
+
+    pypandoc forwards pandoc's stderr to the ``pypandoc`` logger; without a
+    handler those messages vanish, so an image pandoc could not resolve would
+    be dropped from the DOCX without the caller ever learning about it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.levelno < logging.WARNING:
+            return
+        message = record.getMessage().strip()
+        if not message:
+            return
+        if "Could not fetch resource" in message:
+            message += (
+                " — images are resolved against the plugin's working directory; "
+                "use an absolute path or a data: URI to embed them."
+            )
+        self.messages.append(message)
+
+
+@contextmanager
+def _collect_pandoc_warnings(sink: Optional[list[str]]):
+    """Route pandoc warnings into `sink` for the duration of the block."""
+    if sink is None:
+        yield
+        return
+
+    logger = logging.getLogger("pypandoc")
+    handler = _PandocWarningCollector()
+    previous_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.WARNING)
+    try:
+        yield
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+        sink.extend(handler.messages)
+
+
 def convert_via_pandoc(
     markdown_text: str,
     reference_docx: str,
     source_dir: str,
     mermaid_dir: str,
     metadata: dict[str, str],
+    warnings: Optional[list[str]] = None,
 ) -> io.BytesIO:
     """Run pandoc to convert markdown to DOCX. Returns BytesIO of the docx content.
 
     pypandoc requires `outputfile=<path>` for binary targets like docx (it
     cannot return the bytes directly). We write to a private temp file and
     read it back into a BytesIO.
+
+    When `warnings` is given, pandoc's own warnings are appended to it — e.g.
+    "Could not fetch resource logo.png" when an image cannot be resolved.
     """
     _ensure_pandoc()
 
@@ -501,13 +616,14 @@ def convert_via_pandoc(
     os.close(fd)
     try:
         try:
-            pypandoc.convert_text(
-                markdown_text,
-                "docx",
-                format="gfm+raw_html",
-                extra_args=extra_args,
-                outputfile=out_path,
-            )
+            with _collect_pandoc_warnings(warnings):
+                pypandoc.convert_text(
+                    markdown_text,
+                    "docx",
+                    format="gfm+raw_html",
+                    extra_args=extra_args,
+                    outputfile=out_path,
+                )
         except Exception as e:
             raise RuntimeError(_map_pandoc_error(str(e))) from e
 
@@ -582,7 +698,54 @@ def _strip_dangling_image_rels(docx_bytes):
 
 # ── DOCX style overrides ─────────────────────────────────────
 
-def _set_font(run_or_style, font_name: str) -> None:
+def _is_cjk_font(font_name: str) -> bool:
+    """True when the font carries CJK glyphs.
+
+    The preset table uses the Latin names Word stores in OOXML — SimSun is
+    宋体, SimHei is 黑体 — so the presence of ideographs alone is not enough;
+    the known CJK font names are listed explicitly.
+    """
+    name = (font_name or "").strip()
+    if not name:
+        return False
+    if CJK_CHAR_RE.search(name):
+        return True
+    return name.lower() in _CJK_FONT_NAMES_LOWER
+
+
+def _cjk_font_for(font_name: Optional[str], profile_cjk_font: Optional[str],
+                  explicit: bool = False) -> Optional[str]:
+    """Pick the East Asian font to pair with a Latin font.
+
+    A font the user named explicitly fills both slots — they asked for that
+    font. A preset default keeps the profile's CJK font, so a Latin preset
+    font (Arial) does not take over the East Asian slot and send Chinese text
+    to an arbitrary system fallback.
+    """
+    if explicit:
+        return font_name
+    if not font_name:
+        return profile_cjk_font
+    if _is_cjk_font(font_name):
+        return font_name
+    return profile_cjk_font or font_name
+
+
+def _resolve_styles(doc: Document, names: tuple[str, ...],
+                     ids: tuple[str, ...] = ()) -> list:
+    """Find the styles an override applies to.
+
+    Names are matched against the style's display name. Style ids are only
+    consulted when no name matches, because ids are not portable between
+    templates and would otherwise hit unrelated styles.
+    """
+    by_name = [style for style in doc.styles if style.name in names]
+    if by_name:
+        return by_name
+    return [style for style in doc.styles if style.style_id in ids]
+
+
+def _set_font(run_or_style, font_name: str, cjk_font: str | None = None) -> None:
     """Set the font on a run or style element, including east-asia."""
     rPr = run_or_style._element.get_or_add_rPr()
     rFonts = rPr.find(qn("w:rFonts"))
@@ -590,17 +753,22 @@ def _set_font(run_or_style, font_name: str) -> None:
         rFonts = etree.SubElement(rPr, qn("w:rFonts"))
     rFonts.set(qn("w:ascii"), font_name)
     rFonts.set(qn("w:hAnsi"), font_name)
-    rFonts.set(qn("w:eastAsia"), font_name)
+    rFonts.set(qn("w:eastAsia"), cjk_font or font_name)
 
 
 def _set_font_size(run_or_style, size_pt: float) -> None:
     """Set font size on a run or style element."""
     rPr = run_or_style._element.get_or_add_rPr()
+    half_pts = str(int(round(size_pt * 2)))
     sz = rPr.find(qn("w:sz"))
     if sz is None:
         sz = etree.SubElement(rPr, qn("w:sz"))
-    half_pts = str(int(round(size_pt * 2)))
     sz.set(qn("w:val"), half_pts)
+    # Complex-script size travels separately from the Latin one.
+    szCs = rPr.find(qn("w:szCs"))
+    if szCs is None:
+        szCs = etree.SubElement(rPr, qn("w:szCs"))
+    szCs.set(qn("w:val"), half_pts)
 
 
 def _set_line_spacing(paragraph_format, spacing: float) -> None:
@@ -634,27 +802,31 @@ def _set_font_color(run_or_style, color_hex: str) -> None:
     color.set(qn("w:val"), color_hex)
 
 
-def _apply_to_styles(doc: Document, names: tuple[str, ...], *, font=None, size=None,
+def _apply_to_styles(doc: Document, names: tuple[str, ...], *, ids: tuple[str, ...] = (),
+                     font=None, cjk_font=None, size=None,
                      color=None, line_spacing=None) -> bool:
-    """Apply font/size/color/line_spacing to matching style names. Returns True
+    """Apply font/size/color/line_spacing to matching styles. Returns True
     if at least one style was found and modified.
     """
     matched = False
-    for name in names:
-        try:
-            style = doc.styles[name]
-            matched = True
-            if font:
-                _set_font(style, font)
-            if size:
-                _set_font_size(style, size)
-            if color:
-                _set_font_color(style, color)
-            if line_spacing:
-                _set_line_spacing(style.paragraph_format, line_spacing)
-        except KeyError:
-            pass
+    for style in _resolve_styles(doc, names, ids):
+        matched = True
+        if font:
+            _set_font(style, font, cjk_font)
+        if size:
+            _set_font_size(style, size)
+        if color:
+            _set_font_color(style, color)
+        if line_spacing and isinstance(style, ParagraphStyle):
+            _set_line_spacing(style.paragraph_format, line_spacing)
     return matched
+
+
+def apply_document_metadata(doc: Document, title: str) -> None:
+    """Write the document title into the DOCX core properties."""
+    if not title:
+        return
+    doc.core_properties.title = title
 
 
 def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> list[str]:
@@ -665,6 +837,7 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> li
     expected style names. Empty list on full success.
     """
     profile = PROFILE_DEFAULTS.get(style_profile, {})
+    profile_cjk_font = PROFILE_METADATA.get(style_profile, {}).get("CJKmainfont")
     warnings: list[str] = []
 
     # Resolve effective values: user param > profile default > None (skip)
@@ -679,9 +852,15 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> li
     h3_font = params.get("heading3_font") or profile.get("heading3_font")
     h3_size = parse_pt(params.get("heading3_size_pt")) or profile.get("heading3_size_pt")
 
+    body_cjk = _cjk_font_for(body_font, profile_cjk_font, bool(params.get("body_font")))
+    h1_cjk = _cjk_font_for(h1_font, profile_cjk_font, bool(params.get("heading1_font")))
+    h2_cjk = _cjk_font_for(h2_font, profile_cjk_font, bool(params.get("heading2_font")))
+    h3_cjk = _cjk_font_for(h3_font, profile_cjk_font, bool(params.get("heading3_font")))
+
     # Normal style + aliases (BodyText, Compact, etc.)
     effective_color = "000000" if style_profile != "template" else None
-    if not _apply_to_styles(doc, NORMAL_STYLE_NAMES, font=body_font, size=body_size,
+    if not _apply_to_styles(doc, NORMAL_STYLE_NAMES, ids=NORMAL_STYLE_IDS,
+                             font=body_font, cjk_font=body_cjk, size=body_size,
                              color=effective_color, line_spacing=line_spacing):
         if style_profile != "template":
             warnings.append(
@@ -690,19 +869,22 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> li
             )
 
     # Heading styles + aliases
-    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 1"], font=h1_font, size=h1_size,
+    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 1"], ids=HEADING_STYLE_IDS["Heading 1"],
+                             font=h1_font, cjk_font=h1_cjk, size=h1_size,
                              color=effective_color):
         if style_profile != "template":
             warnings.append(
                 f"Heading 1 style not found in reference template; heading 1 overrides were not applied."
             )
-    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 2"], font=h2_font, size=h2_size,
+    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 2"], ids=HEADING_STYLE_IDS["Heading 2"],
+                             font=h2_font, cjk_font=h2_cjk, size=h2_size,
                              color=effective_color):
         if style_profile != "template":
             warnings.append(
                 f"Heading 2 style not found in reference template; heading 2 overrides were not applied."
             )
-    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 3"], font=h3_font, size=h3_size,
+    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 3"], ids=HEADING_STYLE_IDS["Heading 3"],
+                             font=h3_font, cjk_font=h3_cjk, size=h3_size,
                              color=effective_color):
         if style_profile != "template":
             warnings.append(
@@ -711,18 +893,16 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> li
 
     # Technical profile: code styles
     if style_profile == "technical":
-        any_code_style = False
-        for code_style_name in CODE_STYLE_NAMES:
-            try:
-                cs = doc.styles[code_style_name]
-                any_code_style = True
-                _set_font(cs, "Consolas")
-                _set_font_size(cs, 10)
-                _set_font_color(cs, "000000")
+        code_styles = _resolve_styles(doc, CODE_STYLE_NAMES, CODE_STYLE_IDS)
+        for cs in code_styles:
+            _set_font(cs, "Consolas")
+            _set_font_size(cs, 10)
+            _set_font_color(cs, "000000")
+            # Shading is a paragraph property; character styles (e.g.
+            # VerbatimChar) have no paragraph_format and would raise.
+            if isinstance(cs, ParagraphStyle):
                 _set_shading(cs.paragraph_format, "F3F4F6")
-            except KeyError:
-                pass
-        if not any_code_style:
+        if not code_styles:
             warnings.append(
                 f"Technical profile: no code style ({CODE_STYLE_NAMES}) found in reference template."
             )
@@ -849,7 +1029,10 @@ class Md2DocxTool(Tool):
 
             # Mermaid preprocessing
             stage = "mermaid_preprocessing"
-            mermaid_api_url = parameters.get("mermaid_api_url") or None
+            try:
+                mermaid_api_url = validate_api_url(parameters.get("mermaid_api_url"))
+            except ValueError as e:
+                raise RuntimeError(str(e)) from e
             processed_md, mermaid_count, mermaid_dir, mermaid_errors = preprocess_mermaid(
                 markdown_content, enabled=mermaid_enabled, api_url=mermaid_api_url
             )
@@ -866,13 +1049,17 @@ class Md2DocxTool(Tool):
             # Convert via pandoc
             stage = "pandoc_conversion"
             source_dir = os.path.dirname(reference_docx)
+            pandoc_warnings: list[str] = []
             docx_io = convert_via_pandoc(
-                processed_md, reference_docx, source_dir, mermaid_dir, metadata
+                processed_md, reference_docx, source_dir, mermaid_dir, metadata,
+                warnings=pandoc_warnings,
             )
+            warnings.extend(pandoc_warnings)
 
             # Apply style overrides
             stage = "style_overrides"
             doc = Document(docx_io)
+            apply_document_metadata(doc, title)
             style_warnings = apply_style_overrides(doc, style_profile, parameters)
             warnings.extend(style_warnings)
 
@@ -897,14 +1084,20 @@ class Md2DocxTool(Tool):
                 )
 
             yield self.create_text_message("\n".join(summary_parts))
-            if warnings:
-                yield self.create_json_message({"warning": warnings})
-            yield self.create_json_message({"status": "success", "stage": "complete", "file": f"{title}.docx", "size_kb": round(size_kb, 1)})
+            # Dify treats every json message as a discrete output, so the whole
+            # result must be a single message.
+            yield self.create_json_message({
+                "status": "success",
+                "stage": "complete",
+                "file": f"{title}.docx",
+                "size_kb": round(size_kb, 1),
+                "warnings": warnings,
+            })
             yield self.create_blob_message(
                 blob=docx_bytes,
                 meta={
                     "mime_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    "file_name": f"{title}.docx",
+                    "filename": f"{title}.docx",
                 },
             )
 

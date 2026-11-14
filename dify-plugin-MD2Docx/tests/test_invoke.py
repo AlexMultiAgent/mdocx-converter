@@ -65,10 +65,16 @@ class _FakeSection:
     right_margin = None
 
 
+class _FakeCoreProperties:
+    def __init__(self):
+        self.title = None
+
+
 class _FakeDocument:
     def __init__(self):
         self.styles = _FakeStyles()
         self.sections = [_FakeSection()]
+        self.core_properties = _FakeCoreProperties()
 
     def save(self, stream):
         stream.write(b"fake-saved-docx")
@@ -140,9 +146,8 @@ class TestMd2DocxToolInvoke:
 
         assert len(blob_msgs) == 1
         success_jsons = [m for m in json_msgs if m.data.get("status") == "success"]
-        warning_jsons = [m for m in json_msgs if "warning" in m.data]
         assert len(success_jsons) == 1
-        assert len(warning_jsons) == 0
+        assert success_jsons[0].data["warnings"] == []
 
     def test_style_profile_template(self):
         """template profile should still produce a blob."""
@@ -213,9 +218,8 @@ class TestMd2DocxToolInvoke:
         }))
 
         json_msgs = [m for m in messages if m.type == "json"]
-        warning_jsons = [m for m in json_msgs if "warning" in m.data]
-        assert len(warning_jsons) == 1
-        assert "Connection timeout" in str(warning_jsons[0].data["warning"])
+        assert len(json_msgs) == 1
+        assert "Connection timeout" in " ".join(json_msgs[0].data["warnings"])
 
     def test_thesis_profile(self):
         """thesis profile should produce a blob."""
@@ -241,6 +245,91 @@ class TestMd2DocxToolInvoke:
         assert len(success_jsons) == 1
         assert success_jsons[0].data["file"] == "TestReport.docx"
         assert "size_kb" in success_jsons[0].data
+
+
+class TestDifyOutputContract:
+    """The Dify daemon treats each `json` message as a discrete output, so a
+    tool invocation must produce exactly one of them. Blob metadata is read
+    with the key `filename` — `file_name` is ignored by the backend.
+    """
+
+    @pytest.fixture(autouse=True)
+    def mock_externals(self, monkeypatch):
+        monkeypatch.setattr("md2docx._ensure_pandoc", lambda: None)
+        monkeypatch.setattr(
+            "md2docx.convert_via_pandoc",
+            lambda *a, **kw: io.BytesIO(b"fake-docx-content")
+        )
+        monkeypatch.setattr(
+            "md2docx.Document",
+            lambda *a, **kw: _FakeDocument()
+        )
+        monkeypatch.setattr(
+            "md2docx.apply_style_overrides",
+            lambda doc, profile, params: []
+        )
+        monkeypatch.setattr(
+            "md2docx.preprocess_mermaid",
+            lambda markdown_text, enabled=True, api_url=None: (markdown_text, 0, "", [])
+        )
+
+    def _make_tool(self):
+        from md2docx import Md2DocxTool
+        tool = Md2DocxTool.__new__(Md2DocxTool)
+        fake = FakeTool()
+        tool.create_text_message = fake.create_text_message
+        tool.create_json_message = fake.create_json_message
+        tool.create_blob_message = fake.create_blob_message
+        return tool
+
+    def test_blob_meta_uses_the_filename_key(self):
+        """The backend reads `filename`; `file_name` is silently dropped."""
+        tool = self._make_tool()
+        messages = list(tool._invoke({
+            "markdown_content": "# Hello",
+            "title": "TestReport",
+        }))
+
+        blob_msgs = [m for m in messages if m.type == "blob"]
+        assert len(blob_msgs) == 1
+        meta = blob_msgs[0].data["meta"]
+        assert meta["filename"] == "TestReport.docx"
+        assert "file_name" not in meta
+
+    def test_success_yields_exactly_one_json_message(self):
+        """Dify consumes one json message per invocation."""
+        tool = self._make_tool()
+        messages = list(tool._invoke({"markdown_content": "# Hello"}))
+
+        json_msgs = [m for m in messages if m.type == "json"]
+        assert len(json_msgs) == 1
+        assert json_msgs[0].data["status"] == "success"
+
+    def test_warnings_are_merged_into_the_single_json_message(self, monkeypatch):
+        """Warnings belong in the success payload, not a second json message."""
+        monkeypatch.setattr(
+            "md2docx.preprocess_mermaid",
+            lambda markdown_text, enabled=True, api_url=None: (
+                markdown_text, 0, "", ["Diagram 1: Connection timeout"]
+            ),
+        )
+        tool = self._make_tool()
+        messages = list(tool._invoke({"markdown_content": "# Hello"}))
+
+        json_msgs = [m for m in messages if m.type == "json"]
+        assert len(json_msgs) == 1
+        payload = json_msgs[0].data
+        assert payload["status"] == "success"
+        assert "Connection timeout" in " ".join(payload["warnings"])
+
+    def test_error_yields_exactly_one_json_message(self):
+        tool = self._make_tool()
+        messages = list(tool._invoke({"markdown_content": ""}))
+
+        json_msgs = [m for m in messages if m.type == "json"]
+        assert len(json_msgs) == 1
+        assert json_msgs[0].data["status"] == "error"
+
 
 class TestMd2DocxToolInvokeEdgeCases:
     """Edge-case tests for security and validation paths."""
@@ -314,11 +403,11 @@ class TestMd2DocxToolInvokeEdgeCases:
         }))
 
         blob_msgs = [m for m in messages if m.type == 'blob']
-        warning_msgs = [m for m in messages if m.type == 'json' and 'warning' in m.data]
+        json_msgs = [m for m in messages if m.type == 'json']
         # Should still produce a docx (using built-in template), and warn.
         assert len(blob_msgs) == 1
-        assert len(warning_msgs) == 1
-        assert 'string' in str(warning_msgs[0].data['warning']).lower()
+        assert len(json_msgs) == 1
+        assert 'string' in ' '.join(json_msgs[0].data['warnings']).lower()
 
     def test_custom_template_unsupported_type_rejected_with_warning(self):
         """custom_template with an unsupported type is rejected with a warning."""
@@ -328,9 +417,9 @@ class TestMd2DocxToolInvokeEdgeCases:
             "custom_template": {"key": "value"},
         }))
 
-        warning_msgs = [m for m in messages if m.type == 'json' and 'warning' in m.data]
-        assert len(warning_msgs) == 1
-        assert 'unsupported type' in str(warning_msgs[0].data['warning']).lower()
+        json_msgs = [m for m in messages if m.type == 'json']
+        assert len(json_msgs) == 1
+        assert 'unsupported type' in ' '.join(json_msgs[0].data['warnings']).lower()
 
     def test_style_override_warnings_yielded(self, monkeypatch):
         """When apply_style_overrides returns warnings, they are propagated as JSON."""
@@ -340,15 +429,15 @@ class TestMd2DocxToolInvokeEdgeCases:
         )
         tool, _ = self._make_tool()
         messages = list(tool._invoke({"markdown_content": "# Hi\n"}))
-        warning_msgs = [m for m in messages if m.type == 'json' and 'warning' in m.data]
-        assert len(warning_msgs) == 1
-        assert 'Heading 1' in str(warning_msgs[0].data['warning'])
+        json_msgs = [m for m in messages if m.type == 'json']
+        assert len(json_msgs) == 1
+        assert 'Heading 1' in ' '.join(json_msgs[0].data['warnings'])
 
     def test_mermaid_and_style_warnings_combined(self, monkeypatch):
         """Mermaid errors and style warnings are merged into a single warning JSON."""
         monkeypatch.setattr(
             "md2docx.preprocess_mermaid",
-            lambda md, enabled=True: (md, 0, "", ["Diagram 1: timeout"]),
+            lambda md, enabled=True, api_url=None: (md, 0, "", ["Diagram 1: timeout"]),
         )
         monkeypatch.setattr(
             "md2docx.apply_style_overrides",
@@ -358,8 +447,8 @@ class TestMd2DocxToolInvokeEdgeCases:
         messages = list(tool._invoke({
             "markdown_content": "# Hi\n```mermaid\ngraph TD; A-->B\n```\n",
         }))
-        warning_msgs = [m for m in messages if m.type == 'json' and 'warning' in m.data]
-        assert len(warning_msgs) == 1
-        joined = ' | '.join(warning_msgs[0].data['warning'])
+        json_msgs = [m for m in messages if m.type == 'json']
+        assert len(json_msgs) == 1
+        joined = ' | '.join(json_msgs[0].data['warnings'])
         assert 'Diagram 1' in joined
         assert 'Heading 2' in joined

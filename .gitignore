@@ -11,3 +11,5 @@ dify-plugin-MD2Docx/*.difypkg
 .claude/
 docs/
 .offline-markdown-preview/
+architecture.html
+.kilo/

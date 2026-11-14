@@ -8,9 +8,12 @@ because the SDK's class loader does not add the source file's directory to
 """
 
 import base64
+import ipaddress
 import json
 import os
+import time
 import zlib
+from urllib.parse import urlparse
 
 import requests
 
@@ -19,7 +22,7 @@ import requests
 MERMAID_INK_URL = os.environ.get("MERMAID_INK_URL", "https://mermaid.ink")
 
 PLUGIN_USER_AGENT = (
-    "md2docx-dify-plugin/0.0.1 "
+    "md2docx-dify-plugin/0.0.2 "
     "(+https://github.com/AlexMultiAgent/mdocx-converter)"
 )
 
@@ -28,6 +31,27 @@ PLUGIN_USER_AGENT = (
 # budget constants for retries/total time, but the per-request ceiling lives
 # here because the standalone Mermaid tool reuses the same call).
 MERMAID_REQUEST_TIMEOUT_SECONDS = 30
+
+# Number of attempts per diagram (1 initial + N retries).
+MERMAID_MAX_ATTEMPTS = 3
+
+# Every rendered diagram must be a PNG; anything else (an HTML error page from
+# a proxy, for instance) is rejected instead of being handed back as an image.
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+# Largest response we are willing to buffer from the rendering service.
+MAX_RESPONSE_BYTES = 20 * 1024 * 1024
+
+# Link-local addresses include the cloud instance metadata endpoint
+# (169.254.169.254), which must never be reachable through a user-supplied URL.
+_BLOCKED_HOSTNAMES = frozenset({
+    "metadata.google.internal",
+    "metadata.goog",
+})
+
+
+class MermaidRenderError(Exception):
+    """Raised when a diagram could not be rendered into a usable PNG."""
 
 
 def _encode_mermaid_pako(diagram: str) -> str:
@@ -42,7 +66,54 @@ def _encode_mermaid_pako(diagram: str) -> str:
     return base64.urlsafe_b64encode(compressed).decode("ascii").rstrip("=")
 
 
-def render_mermaid_via_api(diagram: str, api_url: str | None = None) -> bytes:
+def validate_api_url(api_url: str | None) -> str | None:
+    """Validate a user-supplied Mermaid Ink base URL.
+
+    Only http(s) is accepted, and link-local targets (which cover the cloud
+    metadata endpoint) are refused. Private ranges stay allowed because a
+    self-hosted instance commonly lives on an internal network.
+
+    Returns the URL to use, or None when the default should be used.
+    """
+    if not api_url or not api_url.strip():
+        return None
+
+    candidate = api_url.strip()
+    parsed = urlparse(candidate)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(
+            f"mermaid_api_url must use http or https, got '{parsed.scheme or 'no'} scheme'."
+        )
+
+    host = parsed.hostname
+    if not host:
+        raise ValueError("mermaid_api_url must include a host name.")
+
+    if host.lower() in _BLOCKED_HOSTNAMES:
+        raise ValueError(f"mermaid_api_url must not point at '{host}'.")
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None and address.is_link_local:
+        raise ValueError(
+            f"mermaid_api_url must not point at the link-local address {host}."
+        )
+
+    return candidate
+
+
+def is_png(data: bytes) -> bool:
+    """True when `data` starts with the PNG file signature."""
+    return data[:len(PNG_SIGNATURE)] == PNG_SIGNATURE
+
+
+def render_mermaid_via_api(
+    diagram: str,
+    api_url: str | None = None,
+    timeout: float | None = None,
+) -> bytes:
     """Render a Mermaid diagram via the Mermaid Ink API. Returns PNG bytes.
 
     Uses the GET /img/pako:<zlib+base64url> endpoint. If `api_url` is provided
@@ -54,7 +125,65 @@ def render_mermaid_via_api(diagram: str, api_url: str | None = None) -> bytes:
     resp = requests.get(
         f"{base_url}/img/pako:{encoded}",
         headers={"User-Agent": PLUGIN_USER_AGENT},
-        timeout=MERMAID_REQUEST_TIMEOUT_SECONDS,
+        timeout=timeout or MERMAID_REQUEST_TIMEOUT_SECONDS,
+        stream=True,
     )
-    resp.raise_for_status()
-    return resp.content
+    try:
+        resp.raise_for_status()
+        chunks = []
+        total = 0
+        for chunk in resp.iter_content(chunk_size=64 * 1024):
+            total += len(chunk)
+            if total > MAX_RESPONSE_BYTES:
+                raise MermaidRenderError(
+                    f"Mermaid response exceeded {MAX_RESPONSE_BYTES} bytes."
+                )
+            chunks.append(chunk)
+    finally:
+        resp.close()
+    return b"".join(chunks)
+
+
+def render_mermaid_with_retry(
+    diagram: str,
+    api_url: str | None = None,
+    attempts: int = MERMAID_MAX_ATTEMPTS,
+    timeout: float | None = None,
+    deadline: float | None = None,
+    renderer=None,
+) -> bytes:
+    """Render a diagram, retrying transient failures with exponential backoff.
+
+    `deadline` is a `time.monotonic()` timestamp after which no further attempt
+    is started and the per-request timeout is clamped to the time remaining.
+    `renderer` lets a caller inject its own `render_mermaid_via_api` binding.
+    Raises the last error if every attempt failed.
+    """
+    render = renderer or render_mermaid_via_api
+    last_error: Exception | None = None
+    for attempt in range(max(1, attempts)):
+        request_timeout = timeout
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise MermaidRenderError(
+                    "Mermaid rendering ran out of time before the diagram could be rendered."
+                )
+            request_timeout = min(
+                request_timeout or MERMAID_REQUEST_TIMEOUT_SECONDS, remaining
+            )
+
+        try:
+            png_bytes = render(diagram, api_url=api_url, timeout=request_timeout)
+            if not is_png(png_bytes):
+                raise MermaidRenderError(
+                    "The Mermaid service did not return a PNG image."
+                )
+            return png_bytes
+        except Exception as e:
+            last_error = e
+            if attempt < max(1, attempts) - 1:
+                # 1s, 2s, 4s, ...
+                time.sleep(1 * (2 ** attempt))
+
+    raise last_error if last_error else MermaidRenderError("Mermaid rendering failed.")

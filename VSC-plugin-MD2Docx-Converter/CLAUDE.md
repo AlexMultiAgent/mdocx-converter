@@ -69,7 +69,7 @@ Bundled template mapping lives in `BUNDLED_REFERENCE_DOCX_BY_PROFILE_AND_LANGUAG
 
 - `Normal` style (plus aliases: `a`, `a1`, `Text`, `BodyText`, `Body Text`, `FirstParagraph`, `Compact`) — font, size, line spacing
 - `Heading1`/`Heading2`/`Heading3` — font, size
-- `SourceCode` + `VerbatimChar` (technical profile only) — Consolas 10pt, color #1F2937, shading #F3F4F6
+- `SourceCode` + `VerbatimChar` (technical profile only) — Consolas 10pt, color #000000, shading #F3F4F6 (paragraph styles only)
 - Page margins — `w:pgMar` in `word/document.xml` (mm → twips conversion)
 
 Profile defaults are hardcoded in `getProfileDocxDefaults()`:

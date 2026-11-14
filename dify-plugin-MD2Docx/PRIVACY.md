@@ -17,6 +17,26 @@ code fences, no file metadata.
 **To disable:** Set the `mermaid_enabled` parameter to `false`. Mermaid code
 blocks will be preserved as plain text code blocks in the DOCX output.
 
+### Custom rendering endpoint
+
+The `mermaid_api_url` parameter lets a workflow point the plugin at a
+self-hosted Mermaid Ink instance. When it is set, the diagram source is sent
+to **that host instead** — review where it points before using it.
+
+The endpoint must use `http` or `https`, and link-local addresses are refused
+because they cover the cloud instance metadata endpoint
+(`169.254.169.254`). Private address ranges remain reachable on purpose: a
+self-hosted instance commonly lives on an internal network. A hostname that
+resolves to a link-local address is not detected, so do not point the
+parameter at a name you do not control.
+
+## Local images
+
+Images referenced by the Markdown are resolved by Pandoc against the plugin's
+working directory. Use an absolute path or a `data:` URI to embed an image.
+An image that cannot be resolved is reported in the tool's `warnings` field
+rather than being dropped silently.
+
 ## Pandoc Binary
 
 The Pandoc binary is **bundled** inside the `pypandoc-binary` Python wheel
