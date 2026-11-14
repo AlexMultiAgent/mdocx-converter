@@ -4749,21 +4749,11 @@ multi-templates/           # 10 reference.docx (5 profiles x 2 languages) — co
 
 - [ ] **Step 6b: 加一个 CI workflow**
 
-仓库目前没有任何 GitHub Actions workflow —— 测试只在本机跑就没有意义。新建 `.github/workflows/vsc-plugin-tests.yml`（在仓库根目录，不在插件目录里）：
+仓库已经有 `.github/workflows/ci.yml`（Dify 插件的 pytest、构建、模板同步检查）—— **在同一个文件里加一个 job**，不要另起一个 workflow：
 
 ```yaml
-name: VS Code plugin tests
-
-on:
-  push:
-    paths:
-      - 'VSC-plugin-MD2Docx-Converter/**'
-  pull_request:
-    paths:
-      - 'VSC-plugin-MD2Docx-Converter/**'
-
-jobs:
-  test:
+  vsc-plugin:
+    name: VS Code plugin tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -4772,12 +4762,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
-      - run: npm ci
-      - run: npm test
+          node-version: "24"
+      - name: Install dependencies
+        run: npm ci
+      - name: Compile and run the unit tests
+        run: npm test
 ```
 
 Node 版本必须是 24 —— `node --test` 的 glob 支持需要 Node 21+。
+
+`npm ci` 要求 `package-lock.json` 和 `package.json` 同步 —— **改版本号时两个文件都要改**，否则 CI 会直接失败。
 
 - [ ] **Step 6c: 加一个跨语言的预设对账脚本**
 
@@ -4816,7 +4810,7 @@ Expected: 编译无错误、测试全绿、模板生成无差异（`git status` 
 - [ ] **Step 8: 提交**
 
 ```bash
-git add package.json dify-plugin-MD2Docx/manifest.yaml CLAUDE.md VSC-plugin-MD2Docx-Converter/CLAUDE.md VSC-plugin-MD2Docx-Converter/README.md dify-plugin-MD2Docx/CLAUDE.md dify-plugin-MD2Docx/README.md .github/workflows/vsc-plugin-tests.yml scripts/check-preset-parity.py
+git add package.json package-lock.json dify-plugin-MD2Docx/manifest.yaml CLAUDE.md AGENTS.md VSC-plugin-MD2Docx-Converter/CLAUDE.md VSC-plugin-MD2Docx-Converter/README.md dify-plugin-MD2Docx/CLAUDE.md dify-plugin-MD2Docx/README.md .github/workflows/ci.yml scripts/check-preset-parity.py
 git commit -m "docs: document the new profiles, commands, settings and template pipeline"
 ```
 
