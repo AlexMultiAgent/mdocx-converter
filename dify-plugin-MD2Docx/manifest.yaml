@@ -4,6 +4,7 @@ author: "alexmultiagent"
 name: "md2docx"
 created_at: "2026-06-02T00:00:00.000000Z"
 repo: "https://github.com/AlexMultiAgent/mdocx-converter"
+contact: "zhangven@gmail.com"
 tags:
   - "utilities"
   - "productivity"
@@ -57,6 +58,13 @@ meta:
   minimum_dify_version: "1.14.0"
 
 privacy: "./PRIVACY.md"
+
+# Outbound domains this plugin may reach. Mermaid Ink is only contacted when
+# `mermaid_enabled` is true (or when the standalone Mermaid tool is used);
+# a self-hosted instance can be pointed at with `mermaid_api_url`.
+network:
+  domains:
+    - "mermaid.ink"
 
 # ── Package & network notes ──────────────────────────────────────────────────
 # Approx .difypkg size: ~250 KB (uncompressed ~320 KB). The Pandoc binary is
