@@ -2517,78 +2517,56 @@ the schema requires."
 
 ---
 
-### Task 6: Dify 侧同步
+### Task 6: Dify 侧对账（模板 + 预设值 + 文档）
+
+**背景变了。** 这个任务原先是「把 Dify 侧改成和 VS Code 侧一样」，但**另一个会话已经在 `main` 上把 Dify 侧加固完了**，本分支也已经 rebase 到 `main` 之上：
+
+| `main` 上已有的（不用再做） | 提交 |
+|---|---|
+| CJK 正则改成 ASCII 转义，下界 `U+F900` | `73831e0c` |
+| 字体分槽（`body_font` + `body_cjk_font`） | `40ae7758` |
+| 按显示名匹配样式，去掉 `a` / `a1` 这类 styleId 误伤 | `40ae7758` |
+| OOXML 子元素顺序（`_RPR_SEQUENCE` / `_PPR_SEQUENCE` / `_get_or_add_ordered` / `_normalize_order`） | `7401a4c3` |
+| `PROFILE_METADATA` 改为从 `PROFILE_DEFAULTS` 派生 | `40ae7758` |
+| 62 个 Dify 测试（含列表样式不误伤、字符样式、schema 顺序、字体分槽） | `40ae7758` / `7401a4c3` |
+
+**剩下真正的差异只有四项**，本任务就做这四项。
 
 **Files:**
-- Modify: `scripts/sync-templates.sh`
 - Modify: `dify-plugin-MD2Docx/src/md2docx.py`
-- Modify: `dify-plugin-MD2Docx/multi-templates/`（同步 10 个）
-- Create: `dify-plugin-MD2Docx/tests/test_style_overrides.py`
+- Modify: `dify-plugin-MD2Docx/tests/test_docx_output.py`
+- Delete: `dify-plugin-MD2Docx/tests/test_style_overrides.py`
+- Modify: `dify-plugin-MD2Docx/CLAUDE.md`
+- Modify: `CLAUDE.md`（根）
+- Modify: `AGENTS.md`（根）
 
-**背景：换模板后 Dify 侧的标题覆盖会整体失效。**
+- [ ] **Step 1: 恢复 `tests/test_docx_output.py`**
 
-实测 18 个模板（10 新 + 8 旧）的 `w:styleId` 与 `w:name`：
-
-| 显示名 (`w:name`) | 旧中文 id | 旧英文 id | 新模板 id |
-|---|---|---|---|
-| Normal | `a1` | `a` | `Normal` |
-| heading 1 / 2 / 3 | `1` / `21` / `31` | `1` / `2` / `3` | `Heading1` / `Heading2` / `Heading3` |
-| Body Text | `af` | 不存在 | `BodyText` |
-| Text | 不存在 | `Text` | 不存在 |
-| **List Number** | **`a`** | 不存在 | 不存在 |
-| **Normal Table** | `a3` | **`a1`** | 不存在 |
-| Source Code / Verbatim Char | `SourceCode` / `VerbatimChar` | 同左 | `SourceCode` / `VerbatimChar` |
-
-**所有 18 个模板的标题 `w:name` 都是小写 `heading 1`**（OOXML 规范写法）。Dify 现在的查找路径 `doc.styles["Heading 1"]` 走的是 python-docx 的 `get_by_name`，它对 XML 原样做**大小写敏感**比较，因此：
-
-- `doc.styles["Heading 1"]` → `get_by_name("Heading 1")` 找不到（XML 里是 `heading 1`）→ 回退 `get_by_id("Heading 1")` 也没有 → **KeyError**
-- `doc.styles["1"]` → 旧模板能靠 id 命中 heading 1，**新模板没有 id 为 `1` 的样式 → KeyError**
-
-结论：一旦同步新模板，Dify 侧的 Heading 1/2/3 覆盖**全部静默失效**。这不是推测，是按上表逐个模板核对出来的。
-
-同时 `NORMAL_STYLE_NAMES` 里的 `"a"` / `"a1"` 是 styleId 而非显示名：`doc.styles["a"]` 在旧中文模板上命中 **List Number**，在旧英文模板上命中 **Normal Table** —— 与 VS Code 侧修掉的那个缺陷完全同源。
-
-**修复方向与 VS Code 侧一致：按显示名匹配，大小写不敏感，styleId 只作兜底。**
-
-- [ ] **Step 1: 扩展同步脚本的模板清单**
-
-`scripts/sync-templates.sh` 里的 `TEMPLATES=( ... )` 改为：
+rebase 时这个文件被自动合并，把 `HEADING_ALIASES` 改成了 `HEADING_STYLE_NAMES` —— 那是基于旧版 Dify 代码写的重命名，现在的实现里没有 `HEADING_STYLE_NAMES`。
 
 ```bash
-TEMPLATES=(
-    "reference_english_academic.docx"
-    "reference_english_technical.docx"
-    "reference_english_business.docx"
-    "reference_english_official.docx"
-    "reference_english_thesis.docx"
-    "reference_chinese_academic.docx"
-    "reference_chinese_technical.docx"
-    "reference_chinese_business.docx"
-    "reference_chinese_official.docx"
-    "reference_chinese_thesis.docx"
-)
+git checkout main -- dify-plugin-MD2Docx/tests/test_docx_output.py
 ```
 
-同时把文件头注释里的 `# Template files (8 total):` 改为 `# Template files (10 total):`，并把下面的两行：
+- [ ] **Step 2: 删掉 `tests/test_style_overrides.py`**
+
+这个文件是针对旧版 Dify API 写的，而且和 `main` 上的 `tests/test_docx_output.py` 大量重复 —— 后者已经有：
+
+- `test_body_overrides_do_not_leak_into_list_styles`
+- `test_body_style_still_receives_the_overrides`
+- `test_code_style_overrides_survive_a_character_style`
+- `test_run_properties_are_in_schema_order`
+- `test_academic_uses_latin_and_cjk_font_slots`
+
+删之前**逐条对一遍**：如果这个文件里有一条 main 没覆盖的断言，把它挪进 `test_docx_output.py` 再删文件；确认全部重复就直接删。
 
 ```bash
-#   reference_{english,chinese}_{academic,technical,business,official}.docx
+git rm dify-plugin-MD2Docx/tests/test_style_overrides.py
 ```
 
-改为：
+- [ ] **Step 3: `thesis` 指向自己的模板**
 
-```bash
-#   reference_{english,chinese}_{academic,technical,business,official,thesis}.docx
-```
-
-- [ ] **Step 2: 运行同步脚本**
-
-Run: `bash scripts/sync-templates.sh`
-Expected: 报告复制 10 个文件，无 mismatch
-
-- [ ] **Step 3: 更新 Dify 的 TEMPLATE_MAP**
-
-`dify-plugin-MD2Docx/src/md2docx.py` 的 `TEMPLATE_MAP` 里，`thesis` 改为指向自己的模板（现在复用 academic）：
+`src/md2docx.py` 的 `TEMPLATE_MAP` 里，`thesis` 现在复用 academic：
 
 ```python
     "thesis": {
@@ -2597,265 +2575,33 @@ Expected: 报告复制 10 个文件，无 mismatch
     },
 ```
 
-其余 5 项不动。
+这两个文件已经随 10 个模板同步过来了（`scripts/sync-templates.sh --check` 已报 `OK: 10 template(s) in sync.`）。
 
-- [ ] **Step 4: Dify 的字体分槽**
+- [ ] **Step 4: `official` 的行距改成定值 29pt**
 
-`PROFILE_DEFAULTS` 里每个 profile 的 `body_font` / `headingN_font` 拆成两个字段，改成下面的结构（数值必须与 VS Code 侧 `src/profiles.ts` 的 `PROFILE_PRESETS` **逐项一致**）：
+GB/T 9704 要求固定行高。VS Code 侧已经是 `lineSpacingTwips: 580` / `exact`，Dify 侧还是 `line_spacing: 1.75`（倍数），两边不一致。
+
+`PROFILE_DEFAULTS` 的 `official` 条目：
 
 ```python
-PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
-    "academic": {
-        "body_ascii_font": "Times New Roman",
-        "body_east_asia_font": "SimSun",
-        "body_size_pt": 12,
-        "heading1_ascii_font": "Times New Roman",
-        "heading1_east_asia_font": "SimHei",
-        "heading1_size_pt": 16,
-        "heading2_ascii_font": "Times New Roman",
-        "heading2_east_asia_font": "SimHei",
-        "heading2_size_pt": 14,
-        "heading3_ascii_font": "Times New Roman",
-        "heading3_east_asia_font": "SimHei",
-        "heading3_size_pt": 12,
-        "line_spacing": 1.5,
-        "margin_top_mm": 25.4,
-        "margin_bottom_mm": 25.4,
-        "margin_left_mm": 31.75,
-        "margin_right_mm": 31.75,
-    },
-    "business": {
-        "body_ascii_font": "Arial",
-        "body_east_asia_font": "Microsoft YaHei",
-        "body_size_pt": 11,
-        "heading1_ascii_font": "Arial",
-        "heading1_east_asia_font": "Microsoft YaHei",
-        "heading1_size_pt": 18,
-        "heading2_ascii_font": "Arial",
-        "heading2_east_asia_font": "Microsoft YaHei",
-        "heading2_size_pt": 14,
-        "heading3_ascii_font": "Arial",
-        "heading3_east_asia_font": "Microsoft YaHei",
-        "heading3_size_pt": 12,
-        "line_spacing": 1.5,
-        "margin_top_mm": 25.4,
-        "margin_bottom_mm": 25.4,
-        "margin_left_mm": 25.4,
-        "margin_right_mm": 25.4,
-    },
-    "technical": {
-        "body_ascii_font": "Arial",
-        "body_east_asia_font": "Microsoft YaHei",
-        "body_size_pt": 11,
-        "heading1_ascii_font": "Arial",
-        "heading1_east_asia_font": "Microsoft YaHei",
-        "heading1_size_pt": 16,
-        "heading2_ascii_font": "Arial",
-        "heading2_east_asia_font": "Microsoft YaHei",
-        "heading2_size_pt": 14,
-        "heading3_ascii_font": "Arial",
-        "heading3_east_asia_font": "Microsoft YaHei",
-        "heading3_size_pt": 12,
-        "mono_font": "Consolas",
-        "line_spacing": 1.35,
-        "margin_top_mm": 19,
-        "margin_bottom_mm": 19,
-        "margin_left_mm": 19,
-        "margin_right_mm": 19,
-    },
-    "official": {
-        "body_ascii_font": "Times New Roman",
-        "body_east_asia_font": "FangSong",
-        "body_size_pt": 16,
-        "heading1_ascii_font": "Times New Roman",
-        "heading1_east_asia_font": "SimHei",
-        "heading1_size_pt": 16,
-        "heading2_ascii_font": "Times New Roman",
-        "heading2_east_asia_font": "KaiTi",
-        "heading2_size_pt": 16,
-        "heading3_ascii_font": "Times New Roman",
-        "heading3_east_asia_font": "FangSong",
-        "heading3_size_pt": 16,
         "line_spacing_twips": 580,
         "line_spacing_rule": "exact",
-        "margin_top_mm": 37,
-        "margin_bottom_mm": 35,
-        "margin_left_mm": 28,
-        "margin_right_mm": 26,
-    },
-    "thesis": {
-        "body_ascii_font": "Times New Roman",
-        "body_east_asia_font": "SimSun",
-        "body_size_pt": 12,
-        "heading1_ascii_font": "Times New Roman",
-        "heading1_east_asia_font": "SimHei",
-        "heading1_size_pt": 22,
-        "heading2_ascii_font": "Times New Roman",
-        "heading2_east_asia_font": "SimHei",
-        "heading2_size_pt": 16,
-        "heading3_ascii_font": "Times New Roman",
-        "heading3_east_asia_font": "SimHei",
-        "heading3_size_pt": 14,
-        "line_spacing": 1.5,
-        "margin_top_mm": 30,
-        "margin_bottom_mm": 30,
-        "margin_left_mm": 30,
-        "margin_right_mm": 30,
-    },
-    "template": {},
-}
 ```
 
-> ⚠️ **`official` 的行距是定值 29pt（`w:line=580` + `w:lineRule="exact"`），不是 1.75 倍。** GB/T 9704 要求固定行高；VS Code 侧已经是 `lineSpacingTwips: 580 / exact`，这里必须对齐，旧值 `1.75` 是两边不一致的根源。
+（删掉原来的 `"line_spacing": 1.75`。）
 
-`_set_font` 改为接受两个字体名：
-
-```python
-def _set_font(run_or_style, ascii_font: str | None = None,
-              east_asia_font: str | None = None) -> None:
-    """Set the latin and east-asian fonts on a run or style element."""
-    rPr = run_or_style._element.get_or_add_rPr()
-    rFonts = rPr.find(qn("w:rFonts"))
-    if rFonts is None:
-        rFonts = etree.SubElement(rPr, qn("w:rFonts"))
-    if ascii_font:
-        rFonts.set(qn("w:ascii"), ascii_font)
-        rFonts.set(qn("w:hAnsi"), ascii_font)
-        rFonts.set(qn("w:cs"), ascii_font)
-    if east_asia_font:
-        rFonts.set(qn("w:eastAsia"), east_asia_font)
-```
-
-注意：旧实现把同一个字体写进 `w:ascii`/`w:hAnsi`/`w:eastAsia`，所以英文正文会被迫用 SimSun / FangSong。分槽后英文正文走 `w:ascii`（Times New Roman / Arial），中文走 `w:eastAsia`。
-
-技术档的代码样式调用点也要跟着改，否则 `eastAsia` 槽位会留空：
-
-```python
-                _set_font(cs, "Consolas", "Consolas")
-```
-
-- [ ] **Step 5: 按显示名匹配样式（核心修复）**
-
-新增一个按显示名查找的辅助函数，替换所有 `doc.styles[...]` 的直接索引：
-
-```python
-def _find_styles(doc: Document, names: tuple[str, ...],
-                 style_ids: tuple[str, ...] = ()) -> list:
-    """Return the styles whose display name matches *names* (case-insensitively),
-    falling back to styles whose style id matches *style_ids*.
-
-    python-docx's ``doc.styles[name]`` compares the raw ``w:name`` value
-    case-sensitively, so a template that spells the built-in heading styles
-    ``heading 1`` is not found by ``doc.styles["Heading 1"]``.  Reading
-    ``style.name`` instead applies python-docx's BabelFish translation, and
-    comparing case-insensitively covers both spellings.
-    """
-    wanted_names = {n.lower() for n in names}
-    wanted_ids = set(style_ids)
-    found = []
-    for style in doc.styles:
-        name = style.name
-        if name and name.lower() in wanted_names:
-            found.append(style)
-        elif style.style_id in wanted_ids:
-            found.append(style)
-    return found
-```
-
-常量改为只列**显示名**，styleId 单独放兜底表：
-
-```python
-NORMAL_STYLE_NAMES = ("Normal", "Body Text", "Text", "First Paragraph", "Compact")
-HEADING_STYLE_NAMES = {
-    "Heading 1": ("Heading 1",),
-    "Heading 2": ("Heading 2",),
-    "Heading 3": ("Heading 3",),
-}
-# Style ids of the legacy reference templates, used only as a fallback.
-LEGACY_HEADING_STYLE_IDS = {
-    "Heading 1": ("1",),
-    "Heading 2": ("2", "21"),
-    "Heading 3": ("3", "31"),
-}
-CODE_STYLE_NAMES = ("Source Code", "Verbatim Char")
-LEGACY_CODE_STYLE_IDS = ("SourceCode", "VerbatimChar", "Code")
-```
-
-> ⚠️ **`NORMAL_STYLE_NAMES` 里不能有 `List Number` 或 `Normal Table`。** 旧列表里的 `"a"`（旧中文模板 = List Number）和 `"a1"`（旧英文模板 = Normal Table）就是正文字体被套到无关样式上的原因。
-
-`_apply_to_styles` 改为：
-
-```python
-def _apply_to_styles(doc: Document, names: tuple[str, ...], *, style_ids=(),
-                     ascii_font=None, east_asia_font=None, size=None,
-                     color=None, line_spacing=None) -> bool:
-    """Apply font/size/color/line_spacing to matching styles. Returns True
-    if at least one style was found and modified.
-    """
-    matched = False
-    for style in _find_styles(doc, names, style_ids):
-        matched = True
-        if ascii_font or east_asia_font:
-            _set_font(style, ascii_font, east_asia_font)
-        if size:
-            _set_font_size(style, size)
-        if color:
-            _set_font_color(style, color)
-        if line_spacing:
-            _set_line_spacing(style.paragraph_format, line_spacing)
-    return matched
-```
-
-代码样式那段的查找同样改用 `_find_styles(doc, CODE_STYLE_NAMES, LEGACY_CODE_STYLE_IDS)`。
-
-- [ ] **Step 6: `apply_style_overrides` 的取值改成双槽**
-
-```python
-    body_ascii = params.get("body_font") or profile.get("body_ascii_font")
-    body_east_asia = params.get("body_font") or profile.get("body_east_asia_font")
-    body_size = parse_pt(params.get("body_size_pt")) or profile.get("body_size_pt")
-    line_spacing = parse_spacing(params.get("line_spacing")) or profile.get("line_spacing")
-
-    h1_ascii = params.get("heading1_font") or profile.get("heading1_ascii_font")
-    h1_east_asia = params.get("heading1_font") or profile.get("heading1_east_asia_font")
-    h1_size = parse_pt(params.get("heading1_size_pt")) or profile.get("heading1_size_pt")
-    h2_ascii = params.get("heading2_font") or profile.get("heading2_ascii_font")
-    h2_east_asia = params.get("heading2_font") or profile.get("heading2_east_asia_font")
-    h2_size = parse_pt(params.get("heading2_size_pt")) or profile.get("heading2_size_pt")
-    h3_ascii = params.get("heading3_font") or profile.get("heading3_ascii_font")
-    h3_east_asia = params.get("heading3_font") or profile.get("heading3_east_asia_font")
-    h3_size = parse_pt(params.get("heading3_size_pt")) or profile.get("heading3_size_pt")
-```
-
-用户显式传的 `body_font` / `headingN_font` 同时填两个槽（与 VS Code 侧 `resolveFontPair` 一致）。
-
-三处标题调用改为传 `ascii_font=` / `east_asia_font=`，并带上 styleId 兜底：
-
-```python
-    if not _apply_to_styles(doc, HEADING_STYLE_NAMES["Heading 1"],
-                             style_ids=LEGACY_HEADING_STYLE_IDS["Heading 1"],
-                             ascii_font=h1_ascii, east_asia_font=h1_east_asia,
-                             size=h1_size, color=effective_color):
-```
-
-Heading 2 / Heading 3 同理。警告文案里的 `HEADING_ALIASES` 改成 `HEADING_STYLE_NAMES`。
-
-- [ ] **Step 7: 定值行距**
-
-`_set_line_spacing` 改为接受 twips 与规则：
+`_set_line_spacing` 现在只支持倍数，改成接受 twips 和规则：
 
 ```python
 def _set_line_spacing(paragraph_format, twips: int, rule: str = "auto") -> None:
     """Set line spacing on a paragraph format."""
     pPr = paragraph_format._element.get_or_add_pPr()
-    spacing_el = pPr.find(qn("w:spacing"))
-    if spacing_el is None:
-        spacing_el = etree.SubElement(pPr, qn("w:spacing"))
+    spacing_el = _get_or_add_ordered(pPr, "w:spacing", _PPR_SEQUENCE)
     spacing_el.set(qn("w:line"), str(int(twips)))
     spacing_el.set(qn("w:lineRule"), rule)
 ```
 
-新增解析函数（与 VS Code 侧 `resolveLineSpacingTwips` 同构）：
+有效行距的解析（用户参数 > 预设）：
 
 ```python
 def _resolve_line_spacing(profile: dict, user_spacing: Optional[float]) -> Optional[tuple[int, str]]:
@@ -2869,93 +2615,68 @@ def _resolve_line_spacing(profile: dict, user_spacing: Optional[float]) -> Optio
     return None
 ```
 
-`apply_style_overrides` 里用它替换 `line_spacing` 的传递。
+`apply_style_overrides` 里把 `line_spacing = parse_spacing(params.get("line_spacing")) or profile.get("line_spacing")` 换成 `_resolve_line_spacing(profile, parse_spacing(params.get("line_spacing")))`，并把 `_apply_to_styles` 的 `line_spacing=` 参数类型改成 `(twips, rule)` 元组。
 
-- [ ] **Step 8: `PROFILE_METADATA` 改为派生**
+> 用户显式传 `line_spacing` 时切回倍数（`auto`）—— 与 VS Code 侧 `resolveLineSpacingTwips` 的行为一致。
 
-现在 `PROFILE_METADATA` 和 `PROFILE_DEFAULTS` 各存一份同样的字体/字号/行距，两边已经漂移过一次（`official` 的 1.75）。删掉 `PROFILE_METADATA` 常量，改为从 `PROFILE_DEFAULTS` 派生：
+- [ ] **Step 5: `academic` 的页边距对齐**
 
-```python
-def _profile_metadata(style_profile: str) -> dict[str, str]:
-    """Pandoc metadata derived from PROFILE_DEFAULTS — never stored twice."""
-    profile = PROFILE_DEFAULTS.get(style_profile, {})
-    metadata: dict[str, str] = {}
-    ascii_font = profile.get("body_ascii_font")
-    east_asia_font = profile.get("body_east_asia_font")
-    if ascii_font:
-        metadata["mainfont"] = ascii_font
-    if east_asia_font:
-        metadata["CJKmainfont"] = east_asia_font
-    size = profile.get("body_size_pt")
-    if size:
-        metadata["fontsize"] = f"{size}pt"
-    spacing = profile.get("line_spacing")
-    if spacing:
-        metadata["linestretch"] = str(spacing)
-    mono = profile.get("mono_font")
-    if mono:
-        metadata["monofont"] = mono
-    return metadata
-```
-
-`build_pandoc_metadata` 里的 `dict(PROFILE_METADATA.get(style_profile, {}))` 换成 `_profile_metadata(style_profile)`。用户参数覆盖 `mainfont` / `CJKmainfont` 的行为不变。
-
-> `official` 没有 `line_spacing` 倍数（只有定值 580 twips），因此它的 pandoc metadata 不带 `linestretch` —— 与 VS Code 侧一致。
-
-- [ ] **Step 9: 修正 Dify 侧 CJK 正则的下界**
-
-`dify-plugin-MD2Docx/src/md2docx.py` 里这一行的区间下界是错的：
+VS Code 侧的 `academic` 是 25.4 / 25.4 / **31.75 / 31.75** mm，Dify 侧还是四边 25.4。
 
 ```python
-CJK_CHAR_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\u8C48-\uFAFF]")
+        "margin_left_mm": 31.75,
+        "margin_right_mm": 31.75,
 ```
 
-第三段区间实际是 `U+8C48`–`U+FAFF`（下界抄成了「豈」而不是 `U+F900` 的 CJK 兼容汉字），因此**谚文音节 U+AC00–U+D7AF 和彝文音节都被算成中文** —— 韩文文档会被判成中文而选到中文模板，而 VS Code 侧（修正后的 `U+F900`）会判成英文。两端行为不一致。
+其余 preset 数值逐项对照 `VSC-plugin-MD2Docx-Converter/src/profiles.ts` 的 `PROFILE_PRESETS`，确认两边完全一致。
 
-改成显式转义，与 VS Code 侧完全一致：
+- [ ] **Step 6: 文档**
 
-```python
-CJK_CHAR_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
-```
+`dify-plugin-MD2Docx/CLAUDE.md`：
 
-注意这里是 Python 原始字符串，`\u` 在 `r"..."` 里会原样保留成反斜杠+u，Python 的 `re` 模块自己会解析成码位 —— 所以正则层面是正确的。
+- 「built-in 8 ref.docx (profile × language)」→ 10
+- `multi-templates/  # 8 reference.docx (6 shared with VSC plugin + 2 official)` → `multi-templates/           # 10 reference.docx (5 profiles x 2 languages) — copied from the VSC plugin by scripts/sync-templates.sh`
+- 「Academic, `template`, and `thesis` profiles share the same academic reference files.」→ thesis 现在有自己的模板
+- 删掉「`reference_{english,chinese}_official.docx` are byte-identical copies of the academic files」那段 —— 重建后的模板不再相同
+- `- \`official\`: … 1.75x, margins 37/35/28/26mm (GB/T 9704)` → 固定 29pt 行高
 
-- [ ] **Step 10: 新增测试**
+根 `CLAUDE.md`：
 
-新建 `dify-plugin-MD2Docx/tests/test_style_overrides.py`，覆盖：
+- 「The Dify plugin ships **8** files …, the VS Code extension ships **6** (no `official` yet). The `official` files are byte-identical copies of the academic ones」→ 改成两边都是同一套 10 个文件
 
-1. 标题覆盖能在 `w:name` 为小写 `heading 1` 的样式上命中（新模板与旧模板各一份）
-2. 正文覆盖**不会**落到 `List Number` / `Normal Table` 上
-3. `w:ascii` 与 `w:eastAsia` 分别写入两个不同的字体
-4. `official` 档写出 `w:line="580"` + `w:lineRule="exact"`
-5. `CJK_CHAR_RE` 不把谚文音节算成中文
-6. `thesis` 档的 `TEMPLATE_MAP` 指向 `reference_{english,chinese}_thesis.docx`
+根 `AGENTS.md`：
 
-测试可以直接用 `python-docx` 现场造一个最小 docx（带 `w:name="heading 1"` 的样式），不必依赖打包的模板。
+- 「copy 8 files (skips VSC-only)」→ 10
+- 「The script copies 8 files by name (`reference_{en,zh}_{academic,technical,business,official}.docx`)」→ 10 个，名字列表补上 thesis
 
-- [ ] **Step 11: 语法检查与测试**
+- [ ] **Step 7: 验证**
 
-Run:
 ```bash
 cd dify-plugin-MD2Docx
 python -c "import ast; ast.parse(open('src/md2docx.py', encoding='utf-8').read()); print('Syntax OK')"
 pytest tests/ -q
+cd ../..
+bash scripts/sync-templates.sh --check
 ```
-Expected: `Syntax OK`，测试全绿（若 pytest 未安装，先 `pip install -r requirements-dev.txt`）
 
-- [ ] **Step 12: 提交**
+Expected：语法 OK、测试全绿、同步检查 `OK: 10 template(s) in sync.`
+
+**再做一次端到端抽查**：用 `thesis` 和 `official` 两个档各转一份 Markdown，把产物的 `word/styles.xml` 解出来，确认：
+
+- `thesis` 档用的是 `reference_*_thesis.docx`（不是 academic）—— 可以通过产物里有 thesis 模板特有的样式来确认
+- `official` 档的 `Normal` 上有 `w:line="580"` 和 `w:lineRule="exact"`
+- 两个档的 `w:ascii` / `w:eastAsia` 是分开的两个字体
+- 样式数量前后一致，没有多出孤儿样式
+
+- [ ] **Step 8: 提交**
 
 ```bash
-git add scripts/sync-templates.sh dify-plugin-MD2Docx/src/md2docx.py dify-plugin-MD2Docx/multi-templates/ dify-plugin-MD2Docx/tests/test_style_overrides.py
-git commit -m "feat: sync templates and match DOCX styles by display name on the Dify side
+git add dify-plugin-MD2Docx/src/md2docx.py dify-plugin-MD2Docx/tests/ dify-plugin-MD2Docx/CLAUDE.md CLAUDE.md AGENTS.md
+git commit -m "feat: align the Dify plugin with the regenerated templates
 
 thesis now points at its own GB/T 7713 template instead of reusing the
-academic one. Styles resolve by display name with a case-insensitive
-comparison, because python-docx compares the raw w:name value and every
-template spells the built-in headings \"heading 1\" — the old lookup
-silently missed all three heading levels once the regenerated templates
-landed. The DOCX override also writes w:ascii and w:eastAsia separately
-so English documents stop inheriting SimSun."
+academic one, the official profile uses the 29pt fixed line height the
+standard requires, and the academic margins match the VS Code side."
 ```
 
 
