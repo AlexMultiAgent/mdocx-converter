@@ -4320,7 +4320,7 @@ function execExecutable(
 
 留着的话 `noUnusedLocals` 会直接编译失败。
 
-⚠️ **错误对象上要保留 `stdout` / `stderr`。** `getProcessErrorMessage()` 靠 `error.stdout` / `error.stderr` / `error.message` 三个字段拼出给用户看的提示（其中包含 pandoc 报错的模式匹配）。`spawn` 的版本必须像下面这样把两个输出挂在错误对象上，否则 pandoc 的报错会退化成一��「导出失败，请看输出面板」。
+⚠️ **错误对象上要保留 `stdout` / `stderr`。** `getProcessErrorMessage()` 靠 `error.stdout` / `error.stderr` / `error.message` 三个字段拼出给用户看的提示（其中包含 pandoc 报错的模式匹配）。`spawn` 的版本必须像下面这样把两个输出挂在错误对象上，否则 pandoc 的报错会退化成一句「导出失败，请看输出面板」。
 
 在 `runPandoc` 的 `try` 块开头插入：
 
