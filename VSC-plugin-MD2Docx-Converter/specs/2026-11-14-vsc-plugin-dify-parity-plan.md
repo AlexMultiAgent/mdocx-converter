@@ -176,7 +176,14 @@ test('detectMarkdownLanguage picks english for latin text', () => {
 
 test('detectMarkdownLanguage picks chinese at the 40-character threshold', () => {
     assert.equal(detectMarkdownLanguage('中'.repeat(40)), 'chinese');
-    assert.equal(detectMarkdownLanguage('中'.repeat(39)), 'english');
+    assert.equal(detectMarkdownLanguage('中'.repeat(39) + 'a'.repeat(300)), 'english');
+});
+
+test('detectMarkdownLanguage picks chinese below the threshold when there is no latin text', () => {
+    // The detection rule is "CJK count >= 40 OR CJK count > 15% of the latin count".
+    // With zero latin characters the ratio clause is already satisfied, so a
+    // Chinese-only text stays chinese even below the 40-character threshold.
+    assert.equal(detectMarkdownLanguage('中'.repeat(39)), 'chinese');
 });
 
 test('detectMarkdownLanguage falls back to english for empty text', () => {
@@ -232,6 +239,16 @@ export function sanitizeFileName(name: string): string {
     return cleaned.length > 0 ? cleaned : 'document';
 }
 ```
+
+- [ ] **Step 3b: 注意 CJK 正则的字面量陷阱**
+
+正文字符区间必须写成**字节精确的转义序列**，不要直接把字符本身抄进源码：
+
+```ts
+const CJK_CHAR_REGEX = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]/g;
+```
+
+如果直接写字符区间，最后一段会被抄成 `U+8C48`（豈）而不是 `U+F900`（CJK 兼容汉字），区间就会把谚文音节（U+AC00–U+D7AF）和彝文音节一起吞进去，韩文文档会被误判为中文。Write 工具会把 `\uXXXX` 序列解释成真实字符，所以落盘后要确认文件里没有裸的控制字节。
 
 - [ ] **Step 4: 创建 `src/language.ts`**
 
@@ -1690,6 +1707,24 @@ def _apply_to_styles(doc: Document, names: tuple[str, ...], *, ascii_font=None,
 - **不要**用 `git checkout` / `git restore` 丢弃它们。
 - 本任务的编辑要叠加在这些改动之上，`_set_font` 的签名变化要同时适配代码样式的调用点。
 - 提交时只 `git add` 本任务真正改到的文件与行；如果上述未提交改动与本任务落在同一文件里，提交前先确认 diff 内容是否属于本任务，把不属于本任务的 hunk 留在工作区。
+
+- [ ] **Step 4c: 修正 Dify 侧 CJK 正则的下界**
+
+Dify 的 `src/md2docx.py` 里这一行的区间下界是错的：
+
+```python
+CJK_CHAR_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
+```
+
+第三段区间实际是 `U+8C48`–`U+FAFF`（下界抄成了「豈」而不是 `U+F900` 的 CJK 兼容汉字），因此**谚文音节 U+AC00–U+D7AF 和彝文音节都被算成中文** —— 韩文文档会被判成中文而选到中文模板，而 VS Code 侧（修正后的 `U+F900`）会判成英文。两端行为不一致。
+
+改成显式转义，与 VS Code 侧完全一致：
+
+```python
+CJK_CHAR_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
+```
+
+注意这里是 Python 原始字符串，`\u` 在 `r"..."` 里会原样保留成反斜杠+u，Python 的 `re` 模块自己会解析成码位 —— 所以正则层面是正确的。
 
 - [ ] **Step 5: 语法检查与测试**
 
