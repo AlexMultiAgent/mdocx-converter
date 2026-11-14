@@ -27,7 +27,7 @@ Unit tests live in `test/unit/*.test.js` and run on Node's built-in `node:test` 
 
 ## Architecture
 
-This is a **VS Code extension** that exports Markdown files to DOCX. The extension host entry point lives in `src/extension.ts` (~1200 lines); pure helper modules are being split out beside it — currently `src/document.ts` (document title and filename sanitising) and `src/language.ts` (reference-language detection and normalisation). Everything compiles to `out/` via TypeScript.
+This is a **VS Code extension** that exports Markdown files to DOCX. The extension host entry point lives in `src/extension.ts` (~1200 lines); pure helper modules are being split out beside it — currently `src/document.ts` (document title and filename sanitising), `src/language.ts` (reference-language detection and normalisation), `src/profiles.ts` (style presets and the pure resolution helpers) and `src/templates.ts` (bundled reference DOCX paths). Everything compiles to `out/` via TypeScript.
 
 **Only `src/extension.ts` may import `vscode`.** Every other module must stay pure so that `node --test` can load the compiled output directly outside the Extension Host.
 
@@ -68,7 +68,7 @@ The 3 submenu commands override `styleProfile` and `referenceLanguage` regardles
 2. `reference.docx` next to the Markdown file (if present)
 3. Bundled template from `multi-templates/` selected by `referenceLanguage` × `styleProfile`
 
-Bundled template mapping lives in `BUNDLED_REFERENCE_DOCX_BY_PROFILE_AND_LANGUAGE` constant. Academic and `template` profiles share the same academic reference files. Technical and business each have their own English/Chinese pair.
+Bundled template mapping lives in the `BUNDLED_REFERENCE_DOCX` constant in `src/templates.ts`. Academic and `template` profiles share the same academic reference files. Technical, business, official and thesis each have their own English/Chinese pair.
 
 This extension ships **6** templates — it has no `thesis` or `official` profile yet, while the Dify plugin has both. **The VS Code side is the source of truth for the template files**: `scripts/sync-templates.sh` copies them into `dify-plugin-MD2Docx/multi-templates/`, and `scripts/sync-templates.sh --check` (run by CI) fails when they drift.
 
@@ -76,9 +76,11 @@ This extension ships **6** templates — it has no `thesis` or `official` profil
 
 `detectMarkdownLanguage()` samples the first 20,000 characters. Chinese is selected when CJK character count ≥ 40 OR > 15% of Latin letter count. Otherwise English.
 
-### Style system (two layers)
+### Style system (two layers, one source of truth)
 
-**Layer 1 — Pandoc metadata** (`buildPandocMetadata`): Sets `mainfont`, `CJKmainfont`, `fontsize`, `linestretch` via `--metadata`. These come from `STYLE_PROFILE_METADATA` plus per-setting overrides.
+Both layers read the same preset table, `PROFILE_PRESETS` in `src/profiles.ts`. A preset stores each fact exactly once — the pandoc metadata is *derived* from the typed fields by `buildPandocMetadata()` in `src/profiles.ts`, never stored a second time. Fonts are split into `ascii` (→ `w:ascii`/`w:hAnsi`/`w:cs`) and `eastAsia` (→ `w:eastAsia`) slots so English text is no longer forced into the CJK font.
+
+**Layer 1 — Pandoc metadata** (`buildPandocMetadata` in `src/profiles.ts`): Sets `mainfont`, `CJKmainfont`, `fontsize`, `linestretch` and `monofont` via `--metadata`, derived from the preset's `body`, `bodySizePt`, `lineSpacing` and `monoFont` plus per-setting overrides.
 
 > ⚠️ **Layer 1 never reaches the output.** Pandoc's docx writer ignores `mainfont` / `CJKmainfont` / `fontsize` / `linestretch` once a `--reference-doc` is supplied: with any of the 6 bundled templates, `word/document.xml` and `word/styles.xml` come out **byte-identical** with and without the metadata. The template's own `docDefaults` set the base font, so **Layer 2 is what actually formats the document**. Change Layer 2 when you change how a document looks.
 
@@ -86,14 +88,23 @@ This extension ships **6** templates — it has no `thesis` or `official` profil
 
 - `Normal` style (plus aliases: `a`, `a1`, `Text`, `BodyText`, `Body Text`, `FirstParagraph`, `Compact`) — font, size, line spacing
 - `Heading1`/`Heading2`/`Heading3` — font, size
-- `SourceCode` + `VerbatimChar` (technical profile only) — Consolas 10pt, color #000000, shading #F3F4F6 (paragraph styles only)
-- Page margins — `w:pgMar` in `word/document.xml` (mm → twips conversion)
+- `SourceCode` + `VerbatimChar` (paragraph styles only) — Consolas 10pt, color #000000, shading #F3F4F6, for every profile whose preset declares a `codeStyle`
+- Page margins — `w:pgMar` in `word/document.xml` (mm → twips conversion), defaulting to the preset's margins
 
-Profile defaults are hardcoded in `getProfileDocxDefaults()`:
-- `academic`: SimSun body 12pt, SimHei headings, 1.5 line spacing
-- `business`: Arial body 11pt, Arial headings, 1.3 line spacing
-- `technical`: Arial body 11pt, Arial headings, 1.25 line spacing, Consolas code
-- `template`: no defaults (rely on reference.docx entirely)
+Profile defaults live in `PROFILE_PRESETS` (`src/profiles.ts`):
+
+| Profile | Body | Headings | Line spacing | Margins (top/bottom/left/right, mm) |
+|---|---|---|---|---|
+| `template` | none | none | none | none |
+| `academic` | Times New Roman / SimSun 12pt | SimHei 16/14/12pt | 1.5 | 25.4 / 25.4 / 31.75 / 31.75 |
+| `business` | Arial / Microsoft YaHei 11pt | Microsoft YaHei 18/14/12pt | 1.5 | 25.4 / 25.4 / 25.4 / 25.4 |
+| `technical` | Arial / Microsoft YaHei 11pt | Microsoft YaHei 16/14/12pt | 1.35 | 19 / 19 / 19 / 19 |
+| `official` | Times New Roman / FangSong 16pt | SimHei / KaiTi / FangSong 16pt | fixed 29pt (`w:line=580`, `exact`) | 37 / 35 / 28 / 26 |
+| `thesis` | Times New Roman / SimSun 12pt | SimHei 22/16/14pt | 1.5 | 30 / 30 / 30 / 30 |
+
+`official` (GB/T 9704 公务公文) and `thesis` (GB/T 7713 学位论文) are defined but not yet exposed in `package.json` or the command palette — that lands with the new commands in a later task, together with the generated template files.
+
+`template` is an empty preset, so it applies **no** style overrides at all and relies entirely on the reference DOCX. Its zero-override behaviour is a consequence of the empty preset, not a special case in the consumer.
 
 > ⚠️ **The two preset tables disagree, and the Layer-2 one wins.** `STYLE_PROFILE_METADATA` (Layer 1) and `getProfileDocxDefaults()` (Layer 2) carry independent line-spacing numbers:
 >
@@ -139,7 +150,8 @@ The Dify plugin already avoids this by matching on the **display name** (`w:name
 - `openAfterExport` uses `explorer.exe /select,` on Windows instead of `vscode.env.openExternal` to avoid shell association errors
 - Error messages are pattern-matched from pandoc stderr/stdout to produce user-friendly guidance (permission denied, image not found, unknown syntax)
 - Temp files are cleaned up unless `keepIntermediateFiles` is set
-- Logic is split into pure modules under `src/` (e.g. `src/document.ts`, `src/language.ts`) with `src/extension.ts` as the only module allowed to import `vscode` — this keeps the helpers unit-testable via `node --test`
+- Logic is split into pure modules under `src/` (e.g. `src/document.ts`, `src/language.ts`, `src/profiles.ts`, `src/templates.ts`) with `src/extension.ts` as the only module allowed to import `vscode` — this keeps the helpers unit-testable via `node --test`
+- Style presets live in exactly one place (`PROFILE_PRESETS` in `src/profiles.ts`); both the pandoc layer and the DOCX layer read it, and pandoc metadata is derived from it rather than stored alongside it
 - No bundler: TypeScript compiles `src/` to CommonJS in `out/`, and the unit tests live in `test/unit/`
 
 ### VSIX packaging

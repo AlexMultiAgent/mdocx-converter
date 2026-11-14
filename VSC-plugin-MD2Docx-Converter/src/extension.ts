@@ -8,8 +8,15 @@ import { promisify } from 'util';
 import AdmZip = require('adm-zip');
 import { normalizeReferenceLanguageSetting, resolveReferenceLanguage } from './language';
 import type { ReferenceLanguage, ReferenceLanguageSetting } from './language';
-import { PROFILE_PRESETS, normalizeStyleProfile } from './profiles';
-import type { FontPair, ProfilePreset, StyleProfile } from './profiles';
+import {
+    PROFILE_PRESETS,
+    buildPandocMetadata as buildProfileMetadata,
+    normalizeStyleProfile,
+    resolveFontPair,
+    resolveLineSpacingTwips,
+    resolveMarginsMm
+} from './profiles';
+import type { CodeStyle, StyleProfile } from './profiles';
 import { getBundledReferenceDocxCandidates } from './templates';
 
 const execFileAsync = promisify(execFile);
@@ -670,23 +677,12 @@ async function runPandoc(options: {
 }
 
 function buildPandocMetadata(settings: ExportSettings): Record<string, string> {
-    const preset = PROFILE_PRESETS[settings.styleProfile];
-    const metadata: Record<string, string> = { ...preset.metadata };
-
-    if (settings.bodyFont) {
-        metadata.mainfont = settings.bodyFont;
-        metadata.CJKmainfont = settings.bodyFont;
-    }
-
-    if (settings.bodySizePt) {
-        metadata.fontsize = `${settings.bodySizePt}pt`;
-    }
-
-    if (settings.lineSpacing) {
-        metadata.linestretch = String(settings.lineSpacing);
-    }
-
-    return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value.trim().length > 0));
+    return buildProfileMetadata({
+        profile: settings.styleProfile,
+        bodyFont: settings.bodyFont,
+        bodySizePt: settings.bodySizePt,
+        lineSpacing: settings.lineSpacing
+    });
 }
 
 interface DocxStyleOverride {
@@ -701,39 +697,14 @@ interface DocxStyleOverride {
     shadingFill?: string;
 }
 
-function resolveFontPair(explicitFont: string, presetPair?: FontPair): FontPair | undefined {
-    const explicit = explicitFont.trim();
-    if (explicit) {
-        return { ascii: explicit, eastAsia: explicit };
-    }
-
-    return presetPair;
-}
-
-function resolveLineSpacingTwips(settings: ExportSettings, preset: ProfilePreset): { twips: number; rule: 'auto' | 'exact' } | undefined {
-    if (settings.lineSpacing) {
-        return { twips: Math.round(settings.lineSpacing * 240), rule: 'auto' };
-    }
-
-    if (preset.lineSpacingTwips) {
-        return { twips: preset.lineSpacingTwips, rule: preset.lineSpacingRule ?? 'exact' };
-    }
-
-    if (preset.lineSpacing) {
-        return { twips: Math.round(preset.lineSpacing * 240), rule: 'auto' };
-    }
-
-    return undefined;
-}
-
 function buildDocxStyleOverrides(settings: ExportSettings): DocxStyleOverride[] {
     const preset = PROFILE_PRESETS[settings.styleProfile];
-    const effectiveColor = settings.styleProfile === 'template' ? undefined : '000000';
+    const effectiveColor = preset.color;
     const bodyFont = resolveFontPair(settings.bodyFont, preset.body);
     const heading1Font = resolveFontPair(settings.heading1Font, preset.heading1);
     const heading2Font = resolveFontPair(settings.heading2Font, preset.heading2);
     const heading3Font = resolveFontPair(settings.heading3Font, preset.heading3);
-    const lineSpacing = resolveLineSpacingTwips(settings, preset);
+    const lineSpacing = resolveLineSpacingTwips(settings.styleProfile, settings.lineSpacing);
 
     const overrides: DocxStyleOverride[] = [
         {
@@ -772,31 +743,31 @@ function buildDocxStyleOverrides(settings: ExportSettings): DocxStyleOverride[] 
         }
     ];
 
-    if (settings.styleProfile === 'technical') {
-        overrides.push(...buildTechnicalCodeStyleOverrides());
+    if (preset.codeStyle) {
+        overrides.push(...buildCodeStyleOverrides(preset.codeStyle));
     }
 
     return overrides.filter((override) => hasDocxStyleOverrideValue(override));
 }
 
-function buildTechnicalCodeStyleOverrides(): DocxStyleOverride[] {
+function buildCodeStyleOverrides(codeStyle: CodeStyle): DocxStyleOverride[] {
     return [
         {
             styleId: 'SourceCode',
             aliases: ['Code'],
-            asciiFont: 'Consolas',
-            eastAsiaFont: 'Consolas',
-            sizePt: 10,
-            lineSpacingTwips: 252,
+            asciiFont: codeStyle.font,
+            eastAsiaFont: codeStyle.font,
+            sizePt: codeStyle.sizePt,
+            lineSpacingTwips: Math.round(codeStyle.lineSpacing * 240),
             lineSpacingRule: 'auto',
             color: '000000',
-            shadingFill: 'F3F4F6'
+            shadingFill: codeStyle.shadingFill
         },
         {
             styleId: 'VerbatimChar',
-            asciiFont: 'Consolas',
-            eastAsiaFont: 'Consolas',
-            sizePt: 10,
+            asciiFont: codeStyle.font,
+            eastAsiaFont: codeStyle.font,
+            sizePt: codeStyle.sizePt,
             color: '000000'
         }
     ];
@@ -882,8 +853,8 @@ function updateStyleXml(styleXml: string, override: DocxStyleOverride): string {
     }
 
     if (override.asciiFont || override.eastAsiaFont) {
-        const ascii = override.asciiFont ?? override.eastAsiaFont ?? '';
-        const eastAsia = override.eastAsiaFont ?? override.asciiFont ?? '';
+        const ascii = override.asciiFont || override.eastAsiaFont || '';
+        const eastAsia = override.eastAsiaFont || override.asciiFont || '';
         const fontXml = `<w:rFonts w:ascii="${escapeXmlAttribute(ascii)}" w:hAnsi="${escapeXmlAttribute(ascii)}" w:eastAsia="${escapeXmlAttribute(eastAsia)}" w:cs="${escapeXmlAttribute(ascii)}"/>`;
         updated = upsertInsideElement(updated, 'w:rPr', /<w:rFonts\b[^>]*\/>/, fontXml);
     }
@@ -896,7 +867,7 @@ function updateStyleXml(styleXml: string, override: DocxStyleOverride): string {
 
     if (override.lineSpacingTwips) {
         const rule = override.lineSpacingRule ?? 'auto';
-        updated = upsertInsideElement(updated, 'w:pPr', /<w:spacing\b[^>]*\/>/, `<w:spacing w:line="${override.lineSpacingTwips}" w:lineRule="${rule}"/>`);
+        updated = upsertLineSpacingAttributes(updated, override.lineSpacingTwips, rule);
     }
 
     if (override.color) {
@@ -933,22 +904,53 @@ function upsertInsideElement(xml: string, tagName: string, childRegex: RegExp, c
     });
 }
 
-function resolveMarginMm(settings: ExportSettings, preset: ProfilePreset) {
-    return {
-        top: settings.marginTopMm ?? preset.marginTopMm,
-        bottom: settings.marginBottomMm ?? preset.marginBottomMm,
-        left: settings.marginLeftMm ?? preset.marginLeftMm,
-        right: settings.marginRightMm ?? preset.marginRightMm
-    };
+/**
+ * Set `w:line` / `w:lineRule` on the style's `w:spacing` element while keeping the
+ * template's `w:before` / `w:after` paragraph spacing intact. Only the two line
+ * attributes are touched; a missing `w:spacing` element is inserted into `w:pPr`.
+ */
+function upsertLineSpacingAttributes(styleXml: string, lineTwips: number, rule: 'auto' | 'exact'): string {
+    const pPrRegex = /<w:pPr\b[^>]*(?:\/>|>[\s\S]*?<\/w:pPr>)/;
+    if (!pPrRegex.test(styleXml)) {
+        return styleXml;
+    }
+
+    return styleXml.replace(pPrRegex, (pPrXml) => {
+        const spacingRegex = /<w:spacing\b[^>]*\/>/;
+        if (spacingRegex.test(pPrXml)) {
+            return pPrXml.replace(spacingRegex, (spacingXml) => {
+                let updated = spacingXml;
+                updated = upsertXmlAttribute(updated, 'w:line', String(lineTwips));
+                updated = upsertXmlAttribute(updated, 'w:lineRule', rule);
+                return updated;
+            });
+        }
+
+        const spacingXml = `<w:spacing w:line="${lineTwips}" w:lineRule="${rule}"/>`;
+        if (pPrXml.endsWith('/>')) {
+            return pPrXml.replace(/\/>$/, `>${spacingXml}</w:pPr>`);
+        }
+
+        return pPrXml.replace(/<\/w:pPr>$/, `${spacingXml}</w:pPr>`);
+    });
+}
+
+function resolveMarginMm(settings: ExportSettings) {
+    return resolveMarginsMm(settings.styleProfile, {
+        top: settings.marginTopMm,
+        bottom: settings.marginBottomMm,
+        left: settings.marginLeftMm,
+        right: settings.marginRightMm
+    });
 }
 
 function hasMarginOverrides(settings: ExportSettings): boolean {
-    const margins = resolveMarginMm(settings, PROFILE_PRESETS[settings.styleProfile]);
+    const margins = resolveMarginMm(settings);
     return Boolean(margins.top || margins.bottom || margins.left || margins.right);
 }
 
 function updateDocumentMargins(documentXml: string, settings: ExportSettings): string {
-    const margins = resolveMarginMm(settings, PROFILE_PRESETS[settings.styleProfile]);
+    const margins = resolveMarginMm(settings);
     return documentXml.replace(/<w:pgMar\b[^>]*\/>/g, (pgMarXml) => {
         const marginUpdates = [
             { attr: 'w:top', value: margins.top },

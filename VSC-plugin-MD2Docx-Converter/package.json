@@ -191,9 +191,9 @@
           ],
           "enumDescriptions": [
             "Template only: use the selected reference DOCX without extra metadata overrides.",
-            "Academic paper: 12 pt, 1.5 line spacing, SimSun/SimHei-oriented Chinese paper defaults.",
-            "Business report: 11 pt, 1.25 line spacing, Microsoft YaHei/Arial-oriented report defaults.",
-            "Technical document: compact spacing, Arial body text, and Consolas-oriented code styles."
+            "Academic paper: 12 pt, 1.5 line spacing, Times New Roman/SimSun body with SimHei headings.",
+            "Business report: 11 pt, 1.5 line spacing, Arial body with Microsoft YaHei headings.",
+            "Technical document: 11 pt, 1.35 line spacing, Arial body text, and Consolas-oriented code styles."
           ],
           "default": "template",
           "description": "Optional FlexMD-style document preset layered on top of the selected reference DOCX."
