@@ -4647,6 +4647,14 @@ git commit -m "test: replace the stale pipeline script with a per-profile e2e ex
 
 `package.json` 的 `"version"` 改为 `"0.3.0"`。
 
+- [ ] **Step 2b: Dify 插件的版本号**
+
+`dify-plugin-MD2Docx/manifest.yaml` 的 `version` 从 `"0.0.3"` 改成 `"0.0.4"`。
+
+这次 Dify 侧的用户可见变化：10 个重建过的模板（`thesis` 换成自己的 GB/T 7713 模板）、`official` 档改成定值 29pt 行高、`academic` 档页边距调整。
+
+> **只改版本号，不发布。** 上架是另一条流程（在 `AlexMultiAgent/dify-plugins` 分支上提交 `.difypkg` 再提 PR），不在本任务范围内。
+
 - [ ] **Step 3: 根 CLAUDE.md**
 
 模板说明段落改为：
@@ -4792,7 +4800,7 @@ Expected: 编译无错误、测试全绿、模板生成无差异（`git status` 
 - [ ] **Step 8: 提交**
 
 ```bash
-git add package.json CLAUDE.md VSC-plugin-MD2Docx-Converter/CLAUDE.md VSC-plugin-MD2Docx-Converter/README.md dify-plugin-MD2Docx/CLAUDE.md dify-plugin-MD2Docx/README.md .github/workflows/vsc-plugin-tests.yml scripts/check-preset-parity.py
+git add package.json dify-plugin-MD2Docx/manifest.yaml CLAUDE.md VSC-plugin-MD2Docx-Converter/CLAUDE.md VSC-plugin-MD2Docx-Converter/README.md dify-plugin-MD2Docx/CLAUDE.md dify-plugin-MD2Docx/README.md .github/workflows/vsc-plugin-tests.yml scripts/check-preset-parity.py
 git commit -m "docs: document the new profiles, commands, settings and template pipeline"
 ```
 
