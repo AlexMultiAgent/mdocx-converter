@@ -18,14 +18,14 @@ Press `F5` in VS Code to launch an Extension Development Host for manual testing
 
 ## Testing
 
-Unit tests live in `test/unit/*.test.js` and run on Node's built-in `node:test` runner — no test framework dependency.
+Unit tests live in `test/unit/*.test.js` — 10 files — and run on Node's built-in `node:test` runner — no test framework dependency.
 
 - The test glob is `test/unit/**/*.test.js`, so **every test file must be named `*.test.js`** or it will be silently skipped.
 - `npm test` compiles `src/` to `out/` first, then the tests `require()` the compiled output (e.g. `require('../../out/document.js')`). `test/` is not part of the TypeScript build.
 - A glob that matches nothing exits 0, so a renamed test file looks like a passing run. If `npm test` reports zero tests, the naming convention was broken.
 - Node 18/20 lack `--test` glob support; use Node >= 22.
 
-`test_full_pipeline.js` is a **manual integration script** — it spawns the real `pandoc` and `mmdc` binaries against a sample Markdown file. It is **not** wired into the repo CI (`.github/workflows/ci.yml` covers only the Dify plugin's pytest suite and `scripts/sync-templates.sh --check`) because it needs pandoc and mmdc installed on the runner.
+`npm run test:e2e` (`test/e2e/run.js`) is a **manual end-to-end check** — it drives the real `pandoc` for each of the 5 profiles × 2 languages against the bundled templates, then asserts the exported body font, body size, heading font, heading size, page size and all four margins. It needs pandoc on the runner, so it is **not** wired into CI. The repo CI (`.github/workflows/ci.yml`) runs three jobs: the Dify plugin's pytest suite, this extension's `npm test`, and `scripts/sync-templates.sh --check`.
 
 ## Architecture
 
@@ -52,6 +52,7 @@ This is a **VS Code extension** that exports Markdown files to DOCX. Everything 
 Markdown file
   │
   ├─ 1. Mermaid preprocessing: regex-extract ```mermaid blocks → mmdc → PNG/SVG
+  │     Falls back to the Mermaid Ink API when mmdc is unavailable
   │     Replaces each fenced block with ![Mermaid Diagram N](path/to/rendered.png)
   │     Produces a temp Markdown file in os.tmpdir()
   │
@@ -61,7 +62,7 @@ Markdown file
   │     NOT sandboxed — local image paths and remote URLs still resolve
   │
   └─ 3. DOCX style overrides: adm-zip opens the generated .docx
-        Edits word/styles.xml  — font, size, spacing, color, shading per style ID
+        Edits word/styles.xml  — font, size, spacing, color, shading, resolved by display name
         Edits word/document.xml — page margins (w:pgMar)
 ```
 
@@ -100,7 +101,7 @@ Both layers read the same preset table, `PROFILE_PRESETS` in `src/profiles.ts`. 
 
 **Layer 1 — Pandoc metadata** (`buildPandocMetadata` in `src/profiles.ts`): Sets `mainfont`, `CJKmainfont`, `fontsize`, `linestretch` and `monofont` via `--metadata`, derived from the preset's `body`, `bodySizePt`, `lineSpacing` and `monoFont` plus per-setting overrides.
 
-> ⚠️ **Layer 1 never reaches the output.** Pandoc's docx writer ignores `mainfont` / `CJKmainfont` / `fontsize` / `linestretch` once a `--reference-doc` is supplied: with any of the 6 bundled templates, `word/document.xml` and `word/styles.xml` come out **byte-identical** with and without the metadata. The template's own `docDefaults` set the base font, so **Layer 2 is what actually formats the document**. Change Layer 2 when you change how a document looks.
+> ⚠️ **Layer 1 never reaches the output.** Pandoc's docx writer ignores `mainfont` / `CJKmainfont` / `fontsize` / `linestretch` once a `--reference-doc` is supplied: with any of the 10 bundled templates, `word/document.xml` and `word/styles.xml` come out **byte-identical** with and without the metadata. The template's own `docDefaults` set the base font, so **Layer 2 is what actually formats the document**. Change Layer 2 when you change how a document looks.
 
 **Layer 2 — DOCX XML overrides** (`applyDocxStyleOverrides`): After pandoc finishes, opens the .docx as a ZIP via `adm-zip` and directly edits `word/styles.xml` and `word/document.xml`. This handles:
 

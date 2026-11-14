@@ -19,7 +19,7 @@ Tests live in `tests/`: `smoke_test.py` (pure functions), `test_invoke.py` (Dify
 
 ## Architecture
 
-This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + three Python modules: `src/md2docx.py` (core conversion, ~1270 lines), `src/_mermaid_render.py` (shared Mermaid HTTP client), `src/mermaid_converter.py` (standalone Mermaid tool).
+This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + three Python modules: `src/md2docx.py` (core conversion, ~1310 lines), `src/_mermaid_render.py` (shared Mermaid HTTP client), `src/mermaid_converter.py` (standalone Mermaid tool).
 
 ### Conversion pipeline
 
@@ -167,7 +167,7 @@ Rules the layer depends on:
 | Aspect | VS Code | Dify |
 |---|---|---|
 | Pandoc invocation | spawn child_process | pypandoc Python API |
-| Mermaid rendering | spawn mmdc | Mermaid Ink HTTP API |
+| Mermaid rendering | spawn mmdc, falling back to the Mermaid Ink API when mmdc is missing | Mermaid Ink HTTP API |
 | Image handling | local paths and URLs resolve (`--resource-path`) | `--sandbox`: only `data:` URIs resolve |
 | DOCX XML editing | adm-zip raw string replace | python-docx + lxml style API |
 | Temp file cleanup | `keepIntermediateFiles` setting | Always clean (ephemeral storage) |

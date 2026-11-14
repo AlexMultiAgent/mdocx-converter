@@ -1,5 +1,5 @@
 # CLAUDE.md
-<!-- last_updated: 2026-11-14 -->
+<!-- last_updated: 2026-11-15 -->
 
 Monorepo for **MD2Docx Converter** — tools that export Markdown to Word documents with templates, Mermaid diagram rendering, and style presets.
 
@@ -19,7 +19,10 @@ Each subdirectory has its own `CLAUDE.md` with architecture details and build co
 cd VSC-plugin-MD2Docx-Converter
 npm install
 npm run compile          # tsc -p ./
+npm test                 # compile + node:test unit suite (needs Node >= 22)
 npm run package          # vsce package → .vsix
+npm run build:templates  # regenerate multi-templates/ from src/profiles.ts
+npm run test:e2e         # per-profile export check against the real pandoc
 
 # Dify plugin
 cd dify-plugin-MD2Docx
@@ -62,10 +65,13 @@ Templates are at `multi-templates/` under each subdirectory. **Both plugins ship
 
 ## 模板修改流程 (Template modification workflow)
 
-1. 在 `VSC-plugin-MD2Docx-Converter/multi-templates/` 修改源模板
-2. 复制到 `dify-plugin-MD2Docx/multi-templates/`（保持文件名一致）
-3. 同一 PR 内同时提交两侧，确保两边模板始终同步
-4. 更新两边的 `CLAUDE.md` 中的模板数量说明
+模板是**生成**出来的，不要手工编辑 `.docx`：
+
+1. 改 `VSC-plugin-MD2Docx-Converter/src/profiles.ts` 里的 `PROFILE_PRESETS`（样式数值）或 `TEMPLATE_LAYOUT`（版式）
+2. `cd VSC-plugin-MD2Docx-Converter && npm run build:templates` 重新生成 `multi-templates/`
+3. `bash scripts/sync-templates.sh` 复制到 `dify-plugin-MD2Docx/multi-templates/`
+4. 同一 PR 内同时提交两侧；`bash scripts/sync-templates.sh --check`（CI 会跑）在两侧不一致时失败
+5. 改了两端 preset 的数值后，跑 `python scripts/check-preset-parity.py` 核对两端逐项一致（**当前未接入 CI**）
 
 ## Git
 
