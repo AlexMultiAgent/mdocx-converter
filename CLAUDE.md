@@ -37,7 +37,7 @@ bash scripts/sync-templates.sh              # copy the VSC templates into the Di
 bash scripts/sync-templates.sh --check      # CI gate: fail when they drift
 ```
 
-`CI` runs on every push and pull request: the Dify plugin's pytest suite (against both the minimum and the current `dify_plugin` SDK), the package build, the VS Code plugin's `node:test` suite, and `scripts/sync-templates.sh --check` (see `.github/workflows/ci.yml`).
+`CI` runs on every push and pull request: the Dify plugin's pytest suite (against both the minimum and the current `dify_plugin` SDK), the package build, the VS Code plugin's `node:test` suite, `scripts/sync-templates.sh --check`, and `scripts/check-preset-parity.py` (see `.github/workflows/ci.yml`).
 
 The Dify `.difypkg` cannot be built with the `dify-plugin` CLI — it is not on PyPI. `scripts/package.py` builds it instead; see "Publishing to the Dify Marketplace" in `dify-plugin-MD2Docx/CLAUDE.md` for the packaging contract and for the CI gates a marketplace PR has to pass.
 
@@ -76,7 +76,7 @@ Templates are at `multi-templates/` under each subdirectory. **Both plugins ship
 2. `cd VSC-plugin-MD2Docx-Converter && npm run build:templates` 重新生成 `multi-templates/` 下的 10 个文件
 3. `bash scripts/sync-templates.sh` 复制到 `dify-plugin-MD2Docx/multi-templates/`
 4. 同一 PR 内同时提交两侧；`bash scripts/sync-templates.sh --check`（CI 会跑）在两侧不一致时失败
-5. 改了两端 preset 的数值后，跑 `python scripts/check-preset-parity.py` 核对两端逐项一致（**当前未接入 CI**）
+5. CI 会跑 `python scripts/check-preset-parity.py` 核对两端 preset 逐项一致；改了任一端后可本地运行同一命令快速定位漂移
 6. 更新两边 `CLAUDE.md` 中的模板数量说明
 
 ## Git
