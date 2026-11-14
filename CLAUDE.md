@@ -27,11 +27,12 @@ pip install -r requirements.txt            # runtime deps (pypandoc-binary bundl
 pip install -r requirements-dev.txt        # dev deps (pytest, dify_plugin for local testing)
 python -c "import ast; ast.parse(open('src/md2docx.py', encoding='utf-8').read()); print('Syntax OK')"
 pytest tests/ -v                           # run test suite (pandoc provided by pypandoc-binary)
+python scripts/package.py --output MD2Docx.difypkg   # build the plugin package
 ```
 
-`CI` runs on every push and pull request: the Dify plugin's pytest suite plus `scripts/sync-templates.sh --check` (see `.github/workflows/ci.yml`).
+`CI` runs on every push and pull request: the Dify plugin's pytest suite (against both the minimum and the current `dify_plugin` SDK), the package build, and `scripts/sync-templates.sh --check` (see `.github/workflows/ci.yml`).
 
-The Dify `.difypkg` cannot be built with the `dify-plugin` CLI — it is not on PyPI. The package is a plain zip of the plugin directory honouring `.difyignore`; see "Publishing to the Dify Marketplace" in `dify-plugin-MD2Docx/CLAUDE.md` for the recipe and for the CI gates a marketplace PR has to pass.
+The Dify `.difypkg` cannot be built with the `dify-plugin` CLI — it is not on PyPI. `scripts/package.py` builds it instead; see "Publishing to the Dify Marketplace" in `dify-plugin-MD2Docx/CLAUDE.md` for the packaging contract and for the CI gates a marketplace PR has to pass.
 
 ## Releasing
 
@@ -43,11 +44,15 @@ The Dify `.difypkg` cannot be built with the `dify-plugin` CLI — it is not on 
 ```
 Markdown text
   ├─ 1. Language detection (CJK vs Latin, first 20K chars)
-  ├─ 2. Template resolution (custom > built-in, profile x language → 8 ref.docx)
-  ├─ 3. Mermaid preprocessing (Mermaid Ink API → PNG, or mmdc in VS Code)
-  ├─ 4. Pandoc conversion (gfm+raw_html → docx via --reference-doc)
+  ├─ 2. Template resolution (built-in profile x language → 8 ref.docx)
+  ├─ 3. Mermaid preprocessing (Mermaid Ink API → PNG embedded as data: URIs; mmdc in VS Code)
+  ├─ 4. Pandoc conversion (gfm+raw_html → docx via --reference-doc; the Dify plugin runs it with --sandbox)
   └─ 5. Style overrides (font, size, spacing, margins, code styles)
 ```
+
+⚠️ **Pandoc's `--metadata` font/size/spacing never reaches the DOCX.** With every bundled reference template, `word/document.xml` and `word/styles.xml` come out byte-identical with and without it — the template's own `docDefaults` set the base font. **Step 5 is the only layer that formats the document**; the metadata step only leaves a trail in `docProps/custom.xml`. Each plugin's style-system section documents the details.
+
+⚠️ **The Dify plugin sandboxes pandoc.** `--sandbox` blocks URL fetches and local-file reads, so images in the Markdown must be `data:` URIs — Mermaid output is inlined that way automatically, but a user's own `![](logo.png)` no longer resolves. The VS Code extension is not sandboxed and still resolves local files via `--resource-path`.
 
 Templates are at `multi-templates/` under each subdirectory. The Dify plugin ships **8** files (academic/technical/business/official x Chinese/English; `thesis` and `template` reuse the academic pair), the VS Code extension ships **6** (no `official` yet). The `official` files are byte-identical copies of the academic ones — the `official` preset differs only through its style defaults.
 

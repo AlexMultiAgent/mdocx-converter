@@ -19,7 +19,7 @@ Tests live in `tests/`: `smoke_test.py` (pure functions), `test_invoke.py` (Dify
 
 ## Architecture
 
-This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + three Python modules: `src/md2docx.py` (core conversion, ~1220 lines), `src/_mermaid_render.py` (shared Mermaid HTTP client), `src/mermaid_converter.py` (standalone Mermaid tool).
+This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + three Python modules: `src/md2docx.py` (core conversion, ~1270 lines), `src/_mermaid_render.py` (shared Mermaid HTTP client), `src/mermaid_converter.py` (standalone Mermaid tool).
 
 ### Conversion pipeline
 
@@ -59,7 +59,7 @@ dify-plugin-MD2Docx/
 ├── main.py                    # Plugin entry point
 ├── requirements.txt           # pypandoc-binary, python-docx, requests, lxml
 ├── PRIVACY.md                 # Mermaid Ink API & Pandoc download disclosure
-├── scripts/package.py         # deterministic .difypkg builder (excluded from package)
+├── scripts/package.py         # .difypkg builder (excluded from the package itself)
 ├── icon.svg                   # Referenced by manifest `icon:` — keep byte-identical to _assets/icon.svg
 ├── _assets/
 │   └── icon.svg               # Canonical icon location (the marketplace check resolves _assets/<icon>)
@@ -157,7 +157,8 @@ Rules the layer depends on:
 - **Pandoc warnings are surfaced**: pypandoc forwards pandoc's stderr to the `pypandoc` logger; a handler installed once per process collects it so an image that could not be resolved is reported instead of being silently dropped from the DOCX. The destination lives in a `ContextVar`, because the daemon runs tool calls concurrently and a conversion must only see its own pandoc warnings.
 - **Pandoc output cleanup**: `_strip_dangling_image_rels` removes image/oleObject relationships inherited from reference templates whose target files are missing, so python-docx can always open the produced DOCX
 - **custom_template safety**: A `str` value for `custom_template` is rejected with a clear warning instead of being written as a corrupted binary
-- **Title length**: `title` is capped at 120 characters (`MAX_TITLE_LENGTH`) because it becomes the name of the produced file
+- **Title sanitising**: `title` becomes the name of the produced file, so `sanitize_filename()` replaces the characters that are illegal in a file name (`<>:"/|?*` plus control characters) with `_`, trims, truncates to 120 characters (`MAX_TITLE_LENGTH`), and falls back to `"Document"`. The sanitised name is what the JSON `file` field and the blob `filename` carry.
+- **Boolean coercion**: Dify form parameters arrive as strings, so `mermaid_enabled` is read through `_coerce_bool()`, which treats `"false"`, `"0"`, `"no"`, `"off"`, `"disabled"`, `"n"` and `""` as False. A plain truthiness check would keep Mermaid **on** for `mermaid_enabled: "false"`.
 
 ## Differences from VS Code extension
 
@@ -165,6 +166,7 @@ Rules the layer depends on:
 |---|---|---|
 | Pandoc invocation | spawn child_process | pypandoc Python API |
 | Mermaid rendering | spawn mmdc | Mermaid Ink HTTP API |
+| Image handling | local paths and URLs resolve (`--resource-path`) | `--sandbox`: only `data:` URIs resolve |
 | DOCX XML editing | adm-zip raw string replace | python-docx + lxml style API |
 | Temp file cleanup | `keepIntermediateFiles` setting | Always clean (ephemeral storage) |
 | Output | Write to filesystem | Return blob to Dify |
@@ -187,13 +189,13 @@ The validators live in `langgenius/dify-marketplace-toolkit` under `toolkit/chec
 
 ### Packaging without the CLI
 
-`dify-plugin-cli` is not on PyPI, so `dify-plugin plugin package` is unavailable. Build with the checked-in deterministic script:
+`dify-plugin-cli` is not on PyPI, so `dify-plugin plugin package` is unavailable. Build with the checked-in script:
 
 ```bash
 python scripts/package.py --output MD2Docx.difypkg
 ```
 
-The script walks this directory, applies `.difyignore`, keeps `.difyignore` itself, sorts entries by ASCII path, and writes them with `ZIP_DEFLATED` and no directory entries. CI builds and uploads the package for both the minimum supported SDK and the current tested SDK.
+The script walks this directory, applies `.difyignore`, keeps `.difyignore` itself, sorts entries by ASCII path, writes them with `ZIP_DEFLATED` and no directory entries, and refuses to build unless every entry in `REQUIRED_ENTRIES` is present (manifest, `main.py`, both icons, the three tool YAMLs, the three `src/` modules). The entry **order and contents** are reproducible, but each zip entry embeds the source file's mtime — two builds of the same tree are **not** byte-identical. CI builds and uploads the package for both the minimum supported SDK and the current tested SDK.
 
 The daemon rejects a package whose **uncompressed** size exceeds `MAX_PLUGIN_PACKAGE_SIZE` (50 MB by default, `internal/types/app/default.go` in `dify-plugin-daemon`). The current package is ~255 KB compressed / ~335 KB uncompressed — never vendor the Pandoc binary into it.
 

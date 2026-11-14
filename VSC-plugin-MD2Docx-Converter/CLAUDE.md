@@ -33,6 +33,7 @@ Markdown file
   ├─ 2. Pandoc: gfm+raw_html → docx via --reference-doc (template)
   │     Metadata injected via --metadata (mainfont, CJKmainfont, fontsize, linestretch)
   │     --resource-path set to both the original Markdown dir and the temp dir
+  │     NOT sandboxed — local image paths and remote URLs still resolve
   │
   └─ 3. DOCX style overrides: adm-zip opens the generated .docx
         Edits word/styles.xml  — font, size, spacing, color, shading per style ID
@@ -124,6 +125,7 @@ The Dify plugin already avoids this by matching on the **display name** (`w:name
 ### Key design decisions
 
 - The extension does **not** bundle pandoc or mmdc — it discovers them at runtime and fails with install guidance
+- **Pandoc is not sandboxed here.** Unlike the Dify plugin, no `--sandbox` is passed, so local image paths and remote image URLs resolve normally and the Mermaid PNGs are found through `--resource-path`. The same Markdown therefore behaves differently in the two products: the Dify plugin requires `data:` URIs for every image.
 - `openAfterExport` uses `explorer.exe /select,` on Windows instead of `vscode.env.openExternal` to avoid shell association errors
 - Error messages are pattern-matched from pandoc stderr/stdout to produce user-friendly guidance (permission denied, image not found, unknown syntax)
 - Temp files are cleaned up unless `keepIntermediateFiles` is set
