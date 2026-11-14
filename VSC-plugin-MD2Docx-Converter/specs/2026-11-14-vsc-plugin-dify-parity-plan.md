@@ -4818,8 +4818,9 @@ git commit -m "docs: document the new profiles, commands, settings and template 
 
 ## 自查清单
 
-- [ ] spec 的每一节都有对应任务：模块划分 → Task 2/4；单一数据源 → Task 3；预设表 → Task 3；命令 → Task 10；模板重建 → Task 5；Dify 同步 → Task 6；Mermaid → Task 7/8；标题 → Task 9；进度 → Task 11；诊断 → Task 12；测试 → Task 1/13；文档 → Task 14
-- [ ] 无 TBD / TODO / “similar to Task N” 占位
-- [ ] 类型名一致：`FontPair`、`ProfilePreset`、`StyleProfile`、`MermaidBlock`、`DocxStyleOverride`
-- [ ] `PROFILE_PRESETS` 的字段名在生成器、扩展、测试三处一致
-- [ ] 模板文件清单在三处一致（生成器、模板映射、同步脚本）：10 个
+- [x] spec 的每一节都有对应任务：模块划分 → Task 2/4；单一数据源 → Task 3；预设表 → Task 3；命令 → Task 10；模板重建 → Task 5；Dify 同步 → Task 6；Mermaid → Task 7/8；标题 → Task 9；进度 → Task 11；诊断 → Task 12；测试 → Task 1/13；文档 → Task 14
+- [x] 无 TBD / TODO / "similar to Task N" 占位
+- [x] 类型名一致：`FontPair`、`ProfilePreset`、`StyleProfile`、`MermaidBlock`、`DocxStyleOverride`
+- [x] `PROFILE_PRESETS` 的字段名在生成器、扩展、测试三处一致
+- [x] 模板文件清单在三处一致（生成器、模板映射、同步脚本）：10 个
+- [x] 两端的字体、字号、页边距、行距、模板文件逐项一致 —— `scripts/check-preset-parity.py` 会核对
