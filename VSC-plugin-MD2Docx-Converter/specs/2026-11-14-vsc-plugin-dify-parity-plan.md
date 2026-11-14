@@ -1145,6 +1145,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
+const { buildDocxStyleOverrides, upsertStyleOverride, normalizeDocxStyleOrder } = require('../../out/docxStyles.js');
 
 const TEMPLATE_DIR = path.join(__dirname, '..', '..', 'multi-templates');
 const { PROFILE_PRESETS, TEMPLATE_LAYOUT } = require('../../out/profiles.js');
@@ -4495,7 +4496,30 @@ async function exportOne(profile, language, workDir) {
         '--reference-doc', referenceDocx
     ], { cwd: workDir });
 
+    // Apply the extension's own style override layer, the way
+    // applyDocxStyleOverrides does, so the assertions below cover the whole
+    // pipeline rather than just the template.
     const zip = new AdmZip(outputPath);
+    const stylesEntry = zip.getEntry('word/styles.xml');
+    let stylesXml = stylesEntry.getData().toString('utf8');
+    const overrides = buildDocxStyleOverrides({
+        styleProfile: profile,
+        bodyFont: '',
+        bodySizePt: undefined,
+        heading1Font: '',
+        heading1SizePt: undefined,
+        heading2Font: '',
+        heading2SizePt: undefined,
+        heading3Font: '',
+        heading3SizePt: undefined,
+        lineSpacing: undefined
+    });
+    for (const override of overrides) {
+        stylesXml = upsertStyleOverride(stylesXml, override);
+    }
+    stylesXml = normalizeDocxStyleOrder(stylesXml);
+    zip.updateFile(stylesEntry, Buffer.from(stylesXml, 'utf8'));
+    zip.writeZip(outputPath);
     const document = zip.readAsText('word/document.xml');
     const sectPr = document.match(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/)[0];
 
