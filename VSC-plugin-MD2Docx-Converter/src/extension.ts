@@ -19,7 +19,7 @@ import type { DocxStyleOverride } from './docxStyles';
 import { findDocxPart } from './docxParts';
 import { getBundledReferenceDocxCandidates } from './templates';
 import { resolveDocumentTitle } from './document';
-import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, parseMermaidBlocks, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
+import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, parseMermaidBlocks, renderMermaidViaInk, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
 const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
@@ -144,7 +144,7 @@ export function activate(context: vscode.ExtensionContext): void {
         });
     });
     const checkEnvironmentDisposable = vscode.commands.registerCommand(CHECK_ENVIRONMENT_COMMAND_ID, async (uri?: vscode.Uri) => {
-        await checkEnvironment(uri, outputChannel);
+        await checkEnvironment(uri, outputChannel, context.extensionPath);
     });
     const exportOfficialDocumentDisposable = vscode.commands.registerCommand(EXPORT_OFFICIAL_DOCUMENT_COMMAND_ID, async (uri?: vscode.Uri) => {
         await runExport(uri, outputChannel, context.extensionPath, {
@@ -314,7 +314,7 @@ interface ExportOverrides {
     referenceLanguage?: ReferenceLanguageSetting;
 }
 
-async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vscode.OutputChannel): Promise<void> {
+async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vscode.OutputChannel, extensionPath: string): Promise<void> {
     const markdownUri = getMarkdownUri(uri) ?? vscode.Uri.file(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd());
     const settings = readSettings(markdownUri);
 
@@ -341,13 +341,54 @@ async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vsco
         outputChannel.appendLine('   Or set mdocxConverter.mermaidCliPath.');
     }
 
-    if (pandoc && mermaid) {
+    outputChannel.appendLine(`Mermaid renderer: ${settings.mermaidRenderer}`);
+
+    // The API is only a fallback when the renderer allows it — the 'local'
+    // renderer never talks to the network.
+    if (settings.mermaidRenderer !== 'local') {
+        const reachable = await checkMermaidApiReachable(settings.mermaidApiUrl);
+        outputChannel.appendLine(reachable
+            ? `OK Mermaid Ink API: ${settings.mermaidApiUrl}`
+            : `UNREACHABLE Mermaid Ink API: ${settings.mermaidApiUrl}`);
+    }
+
+    outputChannel.appendLine(`Bundled templates: ${countBundledTemplates(extensionPath)}`);
+    outputChannel.appendLine(`Active style profile: ${settings.styleProfile}`);
+
+    if (pandoc && (mermaid || settings.mermaidRenderer !== 'local')) {
         void vscode.window.showInformationMessage('mdocx-converter export environment looks ready.');
     } else if (pandoc) {
-        void vscode.window.showWarningMessage('Pandoc is ready. Mermaid CLI is missing, so Mermaid diagrams will not export until mmdc is installed.');
+        // Only the 'local' renderer gets here: with 'auto' or 'api' the
+        // Mermaid Ink API covers for the missing CLI.
+        void vscode.window.showWarningMessage('Pandoc is ready. The Mermaid CLI is missing and the renderer is set to "local", so Mermaid diagrams will not export until mmdc is installed.');
     } else {
         void vscode.window.showWarningMessage('Pandoc is missing. Install Pandoc before exporting DOCX files.');
     }
+}
+
+/**
+ * Probe the Mermaid Ink API with a trivial diagram.
+ *
+ * A broken URL, a host that does not resolve and a service that is down all
+ * mean the same thing to the user: the API cannot be used right now.
+ */
+async function checkMermaidApiReachable(apiUrl: string): Promise<boolean> {
+    try {
+        const validatedUrl = validateMermaidApiUrl(apiUrl);
+        await renderMermaidViaInk('graph TD; A-->B', { apiUrl: validatedUrl, timeoutMs: 10000 });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+function countBundledTemplates(extensionPath: string): number {
+    const templateDir = path.join(extensionPath, 'multi-templates');
+    if (!fs.existsSync(templateDir)) {
+        return 0;
+    }
+
+    return fs.readdirSync(templateDir).filter((name) => name.endsWith('.docx')).length;
 }
 
 function getMarkdownUri(uri?: vscode.Uri): vscode.Uri | undefined {

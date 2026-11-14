@@ -76,7 +76,7 @@ Markdown file
 | `mdocxConverter.exportOfficialDocument` | Right-click submenu — forces `styleProfile=official, referenceLanguage=auto` (GB/T 9704) |
 | `mdocxConverter.exportThesis` | Right-click submenu — forces `styleProfile=thesis, referenceLanguage=auto` (GB/T 7713) |
 | `mdocxConverter.renderMermaidToImage` | Command palette and editor context menu — renders the selected Mermaid block (or the one under the cursor) to a PNG next to the document and inserts the reference |
-| `mdocxConverter.checkEnvironment` | Checks pandoc and mmdc availability, prints versions |
+| `mdocxConverter.checkEnvironment` | Checks pandoc and mmdc availability, the Mermaid renderer mode, the Mermaid Ink API reachability, the number of bundled templates and the active style profile |
 
 The 5 submenu commands override `styleProfile` and `referenceLanguage` regardless of user settings. This is the primary UX: right-click an `.md` file → choose document type → get auto language detection + template selection.
 
