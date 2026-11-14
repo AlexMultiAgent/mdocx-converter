@@ -3228,7 +3228,7 @@ const RENDER_MERMAID_COMMAND_ID = 'mdocxConverter.renderMermaidToImage';
         });
     });
     const renderMermaidDisposable = vscode.commands.registerCommand(RENDER_MERMAID_COMMAND_ID, async () => {
-        await renderMermaidToImage(outputChannel, context);
+        await renderMermaidToImage(outputChannel);
     });
 ```
 
@@ -3239,7 +3239,7 @@ const RENDER_MERMAID_COMMAND_ID = 'mdocxConverter.renderMermaidToImage';
 在 `src/extension.ts` 加入：
 
 ```ts
-async function renderMermaidToImage(outputChannel: vscode.OutputChannel, context: vscode.ExtensionContext): Promise<void> {
+async function renderMermaidToImage(outputChannel: vscode.OutputChannel): Promise<void> {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
         void vscode.window.showErrorMessage('Open a Markdown file to render a Mermaid diagram.');
@@ -3272,10 +3272,7 @@ async function renderMermaidToImage(outputChannel: vscode.OutputChannel, context
     const outputPath = path.join(outputDirectory, fileName);
 
     try {
-        const image = await renderDiagramToFile(code, outputPath, settings, outputChannel, context);
-        if (!image) {
-            return;
-        }
+        await renderDiagramToFile(code, outputPath, settings, outputChannel);
 
         const relativePath = `mermaid-images/${fileName}`.replace(/\\/g, '/');
         await editor.edit((builder) => {
@@ -3301,20 +3298,22 @@ async function renderDiagramToFile(
     code: string,
     outputPath: string,
     settings: ExportSettings,
-    outputChannel: vscode.OutputChannel,
-    context: vscode.ExtensionContext
-): Promise<boolean> {
+    outputChannel: vscode.OutputChannel
+): Promise<void> {
     if (settings.mermaidRenderer !== 'api') {
         const localMermaid = await resolveMermaidCli(settings.mermaidCliPath, path.dirname(outputPath));
         if (localMermaid) {
             const inputPath = `${outputPath}.mmd`;
             await fsp.writeFile(inputPath, code.trim(), 'utf8');
-            await runExecutable(localMermaid.command, ['-i', inputPath, '-o', outputPath, '-b', 'transparent'], {
-                shell: localMermaid.useShell,
-                cwd: path.dirname(outputPath)
-            });
-            await fsp.rm(inputPath, { force: true });
-            return true;
+            try {
+                await runExecutable(localMermaid.command, ['-i', inputPath, '-o', outputPath, '-b', 'transparent'], {
+                    shell: localMermaid.useShell,
+                    cwd: path.dirname(outputPath)
+                });
+            } finally {
+                await fsp.rm(inputPath, { force: true });
+            }
+            return;
         }
 
         if (settings.mermaidRenderer === 'local') {
@@ -3327,8 +3326,7 @@ async function renderDiagramToFile(
     const image = await renderMermaidWithRetry(code, { apiUrl: settings.mermaidApiUrl });
     await fsp.writeFile(outputPath, image);
     outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${settings.mermaidApiUrl}`);
-    await notifyMermaidApiUsage(context);
-    return true;
+    await notifyMermaidApiFallback(settings.mermaidApiUrl);
 }
 ```
 
@@ -3342,7 +3340,7 @@ export interface MermaidBlockRange {
 }
 
 export function findMermaidBlockAtPosition(markdownText: string, offset: number): MermaidBlockRange | undefined {
-    const regex = /^```mermaid[^\n]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gim;
+    const regex = new RegExp(MERMAID_BLOCK_REGEX.source, MERMAID_BLOCK_REGEX.flags);
     let match = regex.exec(markdownText);
     while (match) {
         const start = match.index;
@@ -3356,6 +3354,10 @@ export function findMermaidBlockAtPosition(markdownText: string, offset: number)
     return undefined;
 }
 ```
+
+> ⚠️ **复用 `MERMAID_BLOCK_REGEX`，不要另写一份正则字面量。** 两份正则一旦漂移，命令面板里的「渲染 Mermaid」和导出流程就会用不同的切分规则。
+>
+> `MERMAID_BLOCK_REGEX` 带 `g` 标志，是**有状态**的。`parseMermaidBlocks` 和 `findMermaidBlockAtPosition` 都必须用 `new RegExp(MERMAID_BLOCK_REGEX.source, MERMAID_BLOCK_REGEX.flags)` 建一个新的实例再 `exec`，否则第二次调用会接着上次的 `lastIndex` 往下找。
 
 `src/document.ts` 的 import 段无需改动。
 
@@ -3384,28 +3386,23 @@ Expected: PASS
 
 - [ ] **Step 3: 远程渲染的用户告知**
 
-在 `src/extension.ts` 加入：
+**Task 8 已经实现了这个通知，不要再写第二份。**
+
+Task 8 里定义的是：
 
 ```ts
-async function notifyMermaidApiUsage(context: vscode.ExtensionContext): Promise<void> {
-    const noticeKey = 'mdocxConverter.mermaidApiNoticeShown';
-    if (context.globalState.get(noticeKey)) {
-        return;
-    }
-
-    const choice = await vscode.window.showInformationMessage(
-        'Mermaid diagrams were rendered by mermaid.ink — the diagram content was sent to an external service.',
-        'Open Settings'
-    );
-
-    await context.globalState.update(noticeKey, true);
-    if (choice === 'Open Settings') {
-        await vscode.commands.executeCommand('workbench.action.openSettings', 'mdocxConverter.mermaidRenderer');
-    }
-}
+async function notifyMermaidApiFallback(host: string): Promise<void>
 ```
 
-在 `prepareMarkdown` 的 API 成功分支之后也调用一次 `notifyMermaidApiUsage(context)`（需要把 `context` 传进 `prepareMarkdown`；为最小改动，可在 `runExport` 里于 `prepareMarkdown` 返回后判断是否发生过 API 回退——为此在 `PreparedMarkdown` 上加 `usedApiFallback: boolean`）。
+它用模块级的 `extensionContext.globalState` 记住「已提示过」，键是 `mdocxConverter.mermaidApiNoticeShown`。本任务里：
+
+- `renderDiagramToFile` 走 API 成功后调用 `await notifyMermaidApiFallback(settings.mermaidApiUrl);`
+- `renderDiagramToFile` 的 `context` 参数可以删掉 —— 通知函数不再需要它
+- 输出面板那行日志统一用 Task 8 的文案（含实际 host，不要硬编码 `mermaid.ink`，自建实例时那个文案是错的）
+
+⚠️ **两处不要各写一份通知逻辑。** 一次性提示的状态键只有一个，逻辑分裂会出现「导出时提示了、独立命令不提示」这种不一致。
+
+`renderDiagramToFile` 改成 `Promise<void>` —— 它要么成功返回、要么抛错，不会返回 `false`，调用点里 `if (!image) return;` 是死代码。
 
 - [ ] **Step 4: package.json 声明命令与菜单**
 
