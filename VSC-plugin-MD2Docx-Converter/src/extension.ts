@@ -8,6 +8,9 @@ import { promisify } from 'util';
 import AdmZip = require('adm-zip');
 import { normalizeReferenceLanguageSetting, resolveReferenceLanguage } from './language';
 import type { ReferenceLanguage, ReferenceLanguageSetting } from './language';
+import { PROFILE_PRESETS, normalizeStyleProfile } from './profiles';
+import type { FontPair, ProfilePreset, StyleProfile } from './profiles';
+import { getBundledReferenceDocxCandidates } from './templates';
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
@@ -19,48 +22,6 @@ const CHECK_ENVIRONMENT_COMMAND_ID = 'mdocxConverter.checkEnvironment';
 const CONFIGURATION_SECTION = 'mdocxConverter';
 const LEGACY_CONFIGURATION_SECTION = 'paperifyMd';
 const MERMAID_BLOCK_REGEX = /```mermaid[^\n]*\r?\n([\s\S]*?)```/gi;
-const BUNDLED_REFERENCE_DOCX_BY_PROFILE_AND_LANGUAGE: Record<StyleProfile, Record<ReferenceLanguage, string>> = {
-    template: {
-        english: path.join('multi-templates', 'reference_english_academic.docx'),
-        chinese: path.join('multi-templates', 'reference_chinese_academic.docx')
-    },
-    academic: {
-        english: path.join('multi-templates', 'reference_english_academic.docx'),
-        chinese: path.join('multi-templates', 'reference_chinese_academic.docx')
-    },
-    technical: {
-        english: path.join('multi-templates', 'reference_english_technical.docx'),
-        chinese: path.join('multi-templates', 'reference_chinese_technical.docx')
-    },
-    business: {
-        english: path.join('multi-templates', 'reference_english_business.docx'),
-        chinese: path.join('multi-templates', 'reference_chinese_business.docx')
-    }
-};
-const STYLE_PROFILE_METADATA: Record<StyleProfile, Record<string, string>> = {
-    template: {},
-    academic: {
-        'mainfont': 'Times New Roman',
-        'CJKmainfont': 'SimSun',
-        'fontsize': '12pt',
-        'linestretch': '1.5'
-    },
-    business: {
-        'mainfont': 'Arial',
-        'CJKmainfont': 'Microsoft YaHei',
-        'fontsize': '11pt',
-        'linestretch': '1.25'
-    },
-    technical: {
-        'mainfont': 'Arial',
-        'CJKmainfont': 'Microsoft YaHei',
-        'monofont': 'Consolas',
-        'fontsize': '11pt',
-        'linestretch': '1.2'
-    }
-};
-
-type StyleProfile = 'template' | 'academic' | 'business' | 'technical';
 
 interface ExportSettings {
     pandocPath: string;
@@ -321,14 +282,6 @@ function readConfigValue<T>(
     return legacyConfig.get<T>(key, defaultValue);
 }
 
-function normalizeStyleProfile(value: string | undefined): StyleProfile {
-    if (value === 'academic' || value === 'business' || value === 'technical') {
-        return value;
-    }
-
-    return 'template';
-}
-
 function normalizePositiveNumber(value: number | undefined): number | undefined {
     if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
         return undefined;
@@ -391,15 +344,6 @@ async function resolveReferenceDocx(
     }
 
     throw new UserFacingError(`Bundled ${referenceLanguage} reference DOCX was not found: ${bundledReferenceDocxCandidates.join(', ')}`);
-}
-
-function getBundledReferenceDocxCandidates(
-    extensionPath: string,
-    referenceLanguage: ReferenceLanguage,
-    styleProfile: StyleProfile
-): string[] {
-    const primary = BUNDLED_REFERENCE_DOCX_BY_PROFILE_AND_LANGUAGE[styleProfile][referenceLanguage];
-    return [path.join(extensionPath, primary)];
 }
 
 async function prepareMarkdown(
@@ -726,9 +670,8 @@ async function runPandoc(options: {
 }
 
 function buildPandocMetadata(settings: ExportSettings): Record<string, string> {
-    const metadata: Record<string, string> = {
-        ...STYLE_PROFILE_METADATA[settings.styleProfile]
-    };
+    const preset = PROFILE_PRESETS[settings.styleProfile];
+    const metadata: Record<string, string> = { ...preset.metadata };
 
     if (settings.bodyFont) {
         metadata.mainfont = settings.bodyFont;
@@ -749,44 +692,82 @@ function buildPandocMetadata(settings: ExportSettings): Record<string, string> {
 interface DocxStyleOverride {
     styleId: string;
     aliases?: string[];
-    font?: string;
+    asciiFont?: string;
+    eastAsiaFont?: string;
     sizePt?: number;
-    lineSpacing?: number;
+    lineSpacingTwips?: number;
+    lineSpacingRule?: 'auto' | 'exact';
     color?: string;
     shadingFill?: string;
 }
 
+function resolveFontPair(explicitFont: string, presetPair?: FontPair): FontPair | undefined {
+    const explicit = explicitFont.trim();
+    if (explicit) {
+        return { ascii: explicit, eastAsia: explicit };
+    }
+
+    return presetPair;
+}
+
+function resolveLineSpacingTwips(settings: ExportSettings, preset: ProfilePreset): { twips: number; rule: 'auto' | 'exact' } | undefined {
+    if (settings.lineSpacing) {
+        return { twips: Math.round(settings.lineSpacing * 240), rule: 'auto' };
+    }
+
+    if (preset.lineSpacingTwips) {
+        return { twips: preset.lineSpacingTwips, rule: preset.lineSpacingRule ?? 'exact' };
+    }
+
+    if (preset.lineSpacing) {
+        return { twips: Math.round(preset.lineSpacing * 240), rule: 'auto' };
+    }
+
+    return undefined;
+}
+
 function buildDocxStyleOverrides(settings: ExportSettings): DocxStyleOverride[] {
-    const profileDefaults = getProfileDocxDefaults(settings.styleProfile);
+    const preset = PROFILE_PRESETS[settings.styleProfile];
     const effectiveColor = settings.styleProfile === 'template' ? undefined : '000000';
+    const bodyFont = resolveFontPair(settings.bodyFont, preset.body);
+    const heading1Font = resolveFontPair(settings.heading1Font, preset.heading1);
+    const heading2Font = resolveFontPair(settings.heading2Font, preset.heading2);
+    const heading3Font = resolveFontPair(settings.heading3Font, preset.heading3);
+    const lineSpacing = resolveLineSpacingTwips(settings, preset);
+
     const overrides: DocxStyleOverride[] = [
         {
             styleId: 'Normal',
             aliases: ['a', 'a1', 'Text', 'BodyText', 'Body Text', 'FirstParagraph', 'Compact'],
-            font: settings.bodyFont || profileDefaults.bodyFont,
-            sizePt: settings.bodySizePt ?? profileDefaults.bodySizePt,
-            lineSpacing: settings.lineSpacing ?? profileDefaults.lineSpacing,
+            asciiFont: bodyFont?.ascii,
+            eastAsiaFont: bodyFont?.eastAsia,
+            sizePt: settings.bodySizePt ?? preset.bodySizePt,
+            lineSpacingTwips: lineSpacing?.twips,
+            lineSpacingRule: lineSpacing?.rule,
             color: effectiveColor
         },
         {
             styleId: 'Heading1',
             aliases: ['1'],
-            font: settings.heading1Font || profileDefaults.heading1Font,
-            sizePt: settings.heading1SizePt ?? profileDefaults.heading1SizePt,
+            asciiFont: heading1Font?.ascii,
+            eastAsiaFont: heading1Font?.eastAsia,
+            sizePt: settings.heading1SizePt ?? preset.heading1SizePt,
             color: effectiveColor
         },
         {
             styleId: 'Heading2',
             aliases: ['2', '21'],
-            font: settings.heading2Font || profileDefaults.heading2Font,
-            sizePt: settings.heading2SizePt ?? profileDefaults.heading2SizePt,
+            asciiFont: heading2Font?.ascii,
+            eastAsiaFont: heading2Font?.eastAsia,
+            sizePt: settings.heading2SizePt ?? preset.heading2SizePt,
             color: effectiveColor
         },
         {
             styleId: 'Heading3',
             aliases: ['3', '31'],
-            font: settings.heading3Font || profileDefaults.heading3Font,
-            sizePt: settings.heading3SizePt ?? profileDefaults.heading3SizePt,
+            asciiFont: heading3Font?.ascii,
+            eastAsiaFont: heading3Font?.eastAsia,
+            sizePt: settings.heading3SizePt ?? preset.heading3SizePt,
             color: effectiveColor
         }
     ];
@@ -803,15 +784,18 @@ function buildTechnicalCodeStyleOverrides(): DocxStyleOverride[] {
         {
             styleId: 'SourceCode',
             aliases: ['Code'],
-            font: 'Consolas',
+            asciiFont: 'Consolas',
+            eastAsiaFont: 'Consolas',
             sizePt: 10,
-            lineSpacing: 1.05,
+            lineSpacingTwips: 252,
+            lineSpacingRule: 'auto',
             color: '000000',
             shadingFill: 'F3F4F6'
         },
         {
             styleId: 'VerbatimChar',
-            font: 'Consolas',
+            asciiFont: 'Consolas',
+            eastAsiaFont: 'Consolas',
             sizePt: 10,
             color: '000000'
         }
@@ -820,68 +804,13 @@ function buildTechnicalCodeStyleOverrides(): DocxStyleOverride[] {
 
 function hasDocxStyleOverrideValue(override: DocxStyleOverride): boolean {
     return Boolean(
-        override.font
+        override.asciiFont
+        || override.eastAsiaFont
         || override.sizePt
-        || override.lineSpacing
+        || override.lineSpacingTwips
         || override.color
         || override.shadingFill
     );
-}
-
-function getProfileDocxDefaults(styleProfile: StyleProfile): {
-    bodyFont?: string;
-    bodySizePt?: number;
-    heading1Font?: string;
-    heading1SizePt?: number;
-    heading2Font?: string;
-    heading2SizePt?: number;
-    heading3Font?: string;
-    heading3SizePt?: number;
-    lineSpacing?: number;
-} {
-    if (styleProfile === 'academic') {
-        return {
-            bodyFont: 'SimSun',
-            bodySizePt: 12,
-            heading1Font: 'SimHei',
-            heading1SizePt: 16,
-            heading2Font: 'SimHei',
-            heading2SizePt: 14,
-            heading3Font: 'SimHei',
-            heading3SizePt: 12,
-            lineSpacing: 1.5
-        };
-    }
-
-    if (styleProfile === 'business') {
-        return {
-            bodyFont: 'Arial',
-            bodySizePt: 11,
-            heading1Font: 'Arial',
-            heading1SizePt: 18,
-            heading2Font: 'Arial',
-            heading2SizePt: 14,
-            heading3Font: 'Arial',
-            heading3SizePt: 12,
-            lineSpacing: 1.3
-        };
-    }
-
-    if (styleProfile === 'technical') {
-        return {
-            bodyFont: 'Arial',
-            bodySizePt: 11,
-            heading1Font: 'Arial',
-            heading1SizePt: 16,
-            heading2Font: 'Arial',
-            heading2SizePt: 14,
-            heading3Font: 'Arial',
-            heading3SizePt: 12,
-            lineSpacing: 1.25
-        };
-    }
-
-    return {};
 }
 
 async function applyDocxStyleOverrides(
@@ -948,12 +877,14 @@ function updateStyleXml(styleXml: string, override: DocxStyleOverride): string {
     let updated = styleXml;
     updated = ensureChildElement(updated, 'w:rPr');
 
-    if (override.lineSpacing || override.shadingFill) {
+    if (override.lineSpacingTwips || override.shadingFill) {
         updated = ensureChildElement(updated, 'w:pPr');
     }
 
-    if (override.font) {
-        const fontXml = `<w:rFonts w:ascii="${escapeXmlAttribute(override.font)}" w:hAnsi="${escapeXmlAttribute(override.font)}" w:eastAsia="${escapeXmlAttribute(override.font)}" w:cs="${escapeXmlAttribute(override.font)}"/>`;
+    if (override.asciiFont || override.eastAsiaFont) {
+        const ascii = override.asciiFont ?? override.eastAsiaFont ?? '';
+        const eastAsia = override.eastAsiaFont ?? override.asciiFont ?? '';
+        const fontXml = `<w:rFonts w:ascii="${escapeXmlAttribute(ascii)}" w:hAnsi="${escapeXmlAttribute(ascii)}" w:eastAsia="${escapeXmlAttribute(eastAsia)}" w:cs="${escapeXmlAttribute(ascii)}"/>`;
         updated = upsertInsideElement(updated, 'w:rPr', /<w:rFonts\b[^>]*\/>/, fontXml);
     }
 
@@ -963,9 +894,9 @@ function updateStyleXml(styleXml: string, override: DocxStyleOverride): string {
         updated = upsertInsideElement(updated, 'w:rPr', /<w:szCs\b[^>]*\/>/, `<w:szCs w:val="${halfPoints}"/>`);
     }
 
-    if (override.lineSpacing) {
-        const lineTwips = String(Math.round(override.lineSpacing * 240));
-        updated = upsertInsideElement(updated, 'w:pPr', /<w:spacing\b[^>]*\/>/, `<w:spacing w:line="${lineTwips}" w:lineRule="auto"/>`);
+    if (override.lineSpacingTwips) {
+        const rule = override.lineSpacingRule ?? 'auto';
+        updated = upsertInsideElement(updated, 'w:pPr', /<w:spacing\b[^>]*\/>/, `<w:spacing w:line="${override.lineSpacingTwips}" w:lineRule="${rule}"/>`);
     }
 
     if (override.color) {
@@ -1002,17 +933,28 @@ function upsertInsideElement(xml: string, tagName: string, childRegex: RegExp, c
     });
 }
 
+function resolveMarginMm(settings: ExportSettings, preset: ProfilePreset) {
+    return {
+        top: settings.marginTopMm ?? preset.marginTopMm,
+        bottom: settings.marginBottomMm ?? preset.marginBottomMm,
+        left: settings.marginLeftMm ?? preset.marginLeftMm,
+        right: settings.marginRightMm ?? preset.marginRightMm
+    };
+}
+
 function hasMarginOverrides(settings: ExportSettings): boolean {
-    return Boolean(settings.marginTopMm || settings.marginBottomMm || settings.marginLeftMm || settings.marginRightMm);
+    const margins = resolveMarginMm(settings, PROFILE_PRESETS[settings.styleProfile]);
+    return Boolean(margins.top || margins.bottom || margins.left || margins.right);
 }
 
 function updateDocumentMargins(documentXml: string, settings: ExportSettings): string {
+    const margins = resolveMarginMm(settings, PROFILE_PRESETS[settings.styleProfile]);
     return documentXml.replace(/<w:pgMar\b[^>]*\/>/g, (pgMarXml) => {
         const marginUpdates = [
-            { attr: 'w:top', value: settings.marginTopMm },
-            { attr: 'w:bottom', value: settings.marginBottomMm },
-            { attr: 'w:left', value: settings.marginLeftMm },
-            { attr: 'w:right', value: settings.marginRightMm }
+            { attr: 'w:top', value: margins.top },
+            { attr: 'w:bottom', value: margins.bottom },
+            { attr: 'w:left', value: margins.left },
+            { attr: 'w:right', value: margins.right }
         ];
 
         let updated = pgMarXml;
