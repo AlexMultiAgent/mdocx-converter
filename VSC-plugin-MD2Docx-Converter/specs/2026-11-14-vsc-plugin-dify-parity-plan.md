@@ -2674,6 +2674,207 @@ templates the user brings themselves."
 
 ---
 
+### Task 5e: 按规范化名查找 DOCX 部件（反斜杠条目名的静默失效）
+
+**Files:**
+- Modify: `src/extension.ts`
+- Test: `test/unit/` （新增一个针对查找逻辑的测试文件，或并入现有的）
+
+**背景。** 扩展用 `adm-zip` 打开 pandoc 产出的 .docx，直接编辑 `word/styles.xml` 和 `word/document.xml`。它用 `zip.getEntry('word/styles.xml')` 按名字精确查找条目。
+
+**有些 zip 写出来的条目名用的是反斜杠。** 实测仓库历史里的旧英文模板（`1c5e247b:VSC-plugin-MD2Docx-Converter/multi-templates/reference_english_academic.docx`）：
+
+```
+raw central-directory names:
+    b'[Content_Types].xml'
+    b'docProps\\app.xml'
+    b'word\\document.xml'
+    ...
+    names containing a backslash: 19
+    names containing a slash: 0
+```
+
+OPC 格式要求用正斜杠，所以这是不合规的 zip（某些 Windows 工具会这样写）。后果：
+
+```
+getEntry("word/styles.xml")  -> null
+getEntry("word\\styles.xml") -> 找到，34116 字节
+```
+
+Python 的 `zipfile` 在读的时候会把 `os.sep` 规范化成 `/`（Windows 上是反斜杠），所以 `python-docx` 能正常打开这类文件 —— **Dify 插件不受影响**。`adm-zip` 不做这个规范化，于是：
+
+1. `zip.getEntry('word/styles.xml')` 返回 `null`
+2. 扩展的 `if (stylesEntry)` 判断为假 → **样式覆盖和页边距被静默跳过**
+3. 用户选了 academic 档，导出结果却带着模板自己的格式 —— 没有报错，没有任何提示
+
+更糟的是 `adm-zip` 的 `updateFile` 实现：
+
+```js
+updateFile: function (entry, content) {
+    var item = getEntry(entry);
+    if (item) {
+        item.setData(content);
+    }
+}
+```
+
+**找不到就什么都不做**，连新增条目都不会 —— 所以就算将来绕过了查找那一步，直接 `updateFile` 也不会生效。
+
+- [ ] **Step 1: 写失败的测试**
+
+新建 `test/unit/docxParts.test.js`（或者并入现有的 zip 相关测试文件）。测试需要一个条目名带反斜杠的 docx —— 用 `adm-zip` 现场造一个：
+
+```js
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const AdmZip = require('adm-zip');
+
+const { findDocxPart } = require('../../out/extension.js');
+```
+
+> ⚠️ **`src/extension.ts` 只能 import `vscode` 一次，而且 `node --test` 在 Extension Host 之外加载不了 `vscode`。** 所以 `findDocxPart` 要放在一个**纯模块**里 —— 建议放 `src/docxStyles.ts`（已经是纯模块），或者新建 `src/docxParts.ts`。
+
+新建 `src/docxParts.ts` 更干净（这个模块只管 zip 部件的定位）：
+
+```ts
+import AdmZip = require('adm-zip');
+
+/**
+ * Find a part inside the archive, tolerating the backslash separators some
+ * zip writers use.
+ *
+ * The OPC format requires forward slashes, but archives written by some
+ * Windows tools store `word\styles.xml` instead. Python's zipfile
+ * normalises those on read — which is why the Dify plugin opens such files
+ * without trouble — but adm-zip matches names literally, so a plain
+ * getEntry() misses the part and the style overrides are skipped in
+ * silence.
+ */
+export function findDocxPart(zip: AdmZip, partName: string): AdmZip.IZipEntry | undefined {
+    const direct = zip.getEntry(partName);
+    if (direct) {
+        return direct;
+    }
+
+    const wanted = partName.replace(/\\/g, '/');
+    return zip.getEntries().find((entry) => entry.entryName.replace(/\\/g, '/') === wanted);
+}
+```
+
+测试用例（**fixture 要用字节替换造** —— `adm-zip` 的 `addFile` 会把反斜杠吃掉，存成 `wordstyles.xml`，所以不能直接用 `addFile` 造）：
+
+```js
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const AdmZip = require('adm-zip');
+
+const { findDocxPart } = require('../../out/docxParts.js');
+
+const BACKSLASH = String.fromCharCode(92);
+
+/** A zip whose part names use backslashes, the way some Windows writers do. */
+function buildZipWithBackslashNames() {
+    const zip = new AdmZip();
+    zip.addFile('word/styles.xml', Buffer.from('<w:styles/>', 'utf8'));
+    zip.addFile('word/document.xml', Buffer.from('<w:document/>', 'utf8'));
+
+    // 'word/styles.xml' and 'word\styles.xml' are the same length, so
+    // replacing the bytes in place keeps every offset valid.
+    const buffer = zip.toBuffer();
+    const from = Buffer.from('word/styles.xml', 'utf8');
+    const to = Buffer.from('word' + BACKSLASH + 'styles.xml', 'utf8');
+    for (let i = 0; i + from.length <= buffer.length; i += 1) {
+        if (buffer.subarray(i, i + from.length).equals(from)) {
+            to.copy(buffer, i);
+        }
+    }
+
+    return new AdmZip(buffer);
+}
+
+test('findDocxPart finds a conventionally named part', () => {
+    const zip = new AdmZip();
+    zip.addFile('word/styles.xml', Buffer.from('<w:styles/>', 'utf8'));
+    assert.ok(findDocxPart(zip, 'word/styles.xml'));
+});
+
+test('findDocxPart finds a part stored with backslashes', () => {
+    const zip = buildZipWithBackslashNames();
+    assert.equal(zip.getEntry('word/styles.xml'), null, 'the fixture must reproduce the miss');
+    const entry = findDocxPart(zip, 'word/styles.xml');
+    assert.ok(entry, 'the part must be found despite the backslash separators');
+    assert.equal(entry.entryName, 'word' + BACKSLASH + 'styles.xml');
+});
+
+test('findDocxPart returns undefined for a part that is not there', () => {
+    const zip = new AdmZip();
+    zip.addFile('word/document.xml', Buffer.from('<w:document/>', 'utf8'));
+    assert.equal(findDocxPart(zip, 'word/styles.xml'), undefined);
+});
+```
+
+- [ ] **Step 2: 在扩展里用上它**
+
+`src/extension.ts` 的 `applyDocxStyleOverrides`：
+
+```ts
+    const zip = new AdmZip(outputPath);
+    const stylesEntry = findDocxPart(zip, 'word/styles.xml');
+    if (stylesEntry) {
+        let stylesXml = stylesEntry.getData().toString('utf8');
+        for (const override of styleOverrides) {
+            stylesXml = upsertStyleOverride(stylesXml, override);
+        }
+        stylesXml = normalizeDocxStyleOrder(stylesXml);
+        stylesEntry.setData(Buffer.from(stylesXml, 'utf8'));
+    }
+
+    if (hasMarginOverrides(settings)) {
+        const documentEntry = findDocxPart(zip, 'word/document.xml');
+        if (documentEntry) {
+            const documentXml = updateDocumentMargins(documentEntry.getData().toString('utf8'), settings);
+            documentEntry.setData(Buffer.from(documentXml, 'utf8'));
+        }
+    }
+
+    zip.writeZip(outputPath);
+```
+
+⚠️ **用 `entry.setData(...)`，不要用 `zip.updateFile(...)`。** `updateFile` 找不到条目时是静默空操作 —— 正是这个 bug 的一部分。`setData` 直接作用在已经找到的条目上，两个路径下行为一致。
+
+- [ ] **Step 3: 端到端验证**
+
+拿一个条目名带反斜杠的 docx（仓库历史里的 `1c5e247b:VSC-plugin-MD2Docx-Converter/multi-templates/reference_english_academic.docx` 就是一个现成的），走一遍完整的导出流程，确认：
+
+- `word/styles.xml` 里 `Normal` 的字体被写上了（不是模板原来的）
+- 页边距被写成了预设的值
+- 产出文件仍然是一个合法的 docx（用 Python 的 `zipfile` 读，条目能列出、`styles.xml` 长度不为 0）
+
+- [ ] **Step 4: 跑测试**
+
+```bash
+npm test
+npm run compile
+```
+
+**断言要非恒真** —— 把 `findDocxPart` 改成只做 `getEntry` 的话测试必须变红。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add src/docxParts.ts src/extension.ts test/unit/
+git commit -m "fix: find DOCX parts whose zip entries use backslash separators
+
+Some zip writers store OPC part names as word\\styles.xml instead of
+word/styles.xml. adm-zip matches names literally, so the style overrides
+and the page margins were skipped without a word and the export kept the
+template's own formatting. Python's zipfile normalises those separators,
+which is why the Dify plugin never saw it."
+```
+
+
+---
+
 ### Task 6: Dify 侧对账（模板 + 预设值 + 文档）
 
 **背景变了。** 这个任务原先是「把 Dify 侧改成和 VS Code 侧一样」，但**另一个会话已经在 `main` 上把 Dify 侧加固完了**，本分支也已经 rebase 到 `main` 之上：
