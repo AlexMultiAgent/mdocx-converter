@@ -2856,6 +2856,8 @@ const zlib = require('zlib');
 const {
     parseMermaidBlocks,
     encodeMermaidPako,
+    isPngImage,
+    validateMermaidApiUrl,
     renderMermaidWithRetry,
     MERMAID_BLOCK_REGEX,
     MERMAID_MAX_ATTEMPTS,
@@ -2943,6 +2945,24 @@ test('encodeMermaidPako matches the Dify plugin payload format', () => {
     assert.equal(json, '{"code":"graph TD; A-->B"}', 'must match Python json.dumps separators');
 });
 
+test('isPngImage recognises the PNG signature', () => {
+    assert.equal(isPngImage(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), true);
+    assert.equal(isPngImage(Buffer.from('<html>not a png</html>')), false);
+    assert.equal(isPngImage(Buffer.alloc(0)), false);
+});
+
+test('validateMermaidApiUrl accepts http and https', () => {
+    assert.equal(validateMermaidApiUrl('https://mermaid.ink'), 'https://mermaid.ink');
+    assert.equal(validateMermaidApiUrl('http://127.0.0.1:3000'), 'http://127.0.0.1:3000');
+});
+
+test('validateMermaidApiUrl rejects anything else', () => {
+    assert.throws(() => validateMermaidApiUrl('ftp://mermaid.ink'));
+    assert.throws(() => validateMermaidApiUrl('mermaid.ink'));
+    assert.throws(() => validateMermaidApiUrl('https://mermaid.ink?x=1'));
+    assert.throws(() => validateMermaidApiUrl('https://mermaid.ink#frag'));
+});
+
 test('the block regex is anchored to line starts', () => {
     assert.ok(MERMAID_BLOCK_REGEX.flags.includes('m'));
     assert.ok(MERMAID_BLOCK_REGEX.flags.includes('g'));
@@ -2997,6 +3017,15 @@ test('renderMermaidWithRetry stops when the shared budget is exhausted', async (
     assert.ok(calls < 5, `must stop early, made ${calls} attempts`);
 });
 
+test('renderMermaidWithRetry rejects a response that is not a PNG', async () => {
+    const options = {
+        apiUrl: 'https://mermaid.ink',
+        maxAttempts: 1,
+        fetchImage: async () => Buffer.from('<html>502 Bad Gateway</html>')
+    };
+    await assert.rejects(() => renderMermaidWithRetry('graph TD', options), /PNG/);
+});
+
 test('the retry defaults match the Dify plugin', () => {
     assert.equal(MERMAID_MAX_ATTEMPTS, 3);
     assert.deepEqual(MERMAID_RETRY_DELAYS_MS, [1000, 2000]);
@@ -3006,9 +3035,14 @@ test('the retry defaults match the Dify plugin', () => {
 - [ ] **Step 2: 运行测试确认失败**
 
 Run: `npm test`
-Expected: FAIL — `Cannot find module '../../out/mermaid.js'`
+Expected: FAIL —— `Cannot find module '../../out/mermaid.js'`
 
 - [ ] **Step 3: 创建 `src/mermaid.ts`**
+
+```ts
+import * as http from 'http';
+import * as https from 'https';
+import * as zlib from 'zlib';
 
 > ⚠️ **围栏识别规则要和 Dify 侧一致。** Dify 的 `MERMAID_BLOCK_RE` 是：
 >
@@ -3022,14 +3056,9 @@ Expected: FAIL — `Cannot find module '../../out/mermaid.js'`
 >
 > 逐条对应：允许 0–3 个空格缩进（4 个空格及以上是缩进代码块，不是围栏）、支持 ``` 和 ~~~ 两种围栏、info string 必须**正好**是 `mermaid`、闭合围栏必须和开启围栏**同一种字符**。
 >
-> **一个刻意的差异**：Dify 的 `body` 捕获组**包含**结尾换行（`"graph TD\n"`），这里的捕获组**不含**（`"graph TD"`）—— 闭合围栏前的 `\r?\n` 在捕获组外面。对渲染没有影响，但 VSC 侧在渲染失败时会把代码块原样写回去，少一个尾换行更干净。
->
 > VS Code 侧现在的旧正则 `/```mermaid[^\n]*\r?\n([\s\S]*?)```/gi` 有两个毛病：波浪线围栏的图**完全不渲染**；`[^\n]*` 会把 ```` ```mermaidjs ```` 也当成 Mermaid 图。
-
-```ts
-import * as http from 'http';
-import * as https from 'https';
-import * as zlib from 'zlib';
+>
+> **一个刻意的差异**：Dify 的 `body` 捕获组**包含**结尾换行（`"graph TD\n"`），这里的捕获组**不含**（`"graph TD"`）—— 闭合围栏前的 `\r?\n` 在捕获组外面。对渲染没有影响，但 VSC 侧在渲染失败时会把代码块原样写回去，少一个尾换行更干净。
 
 export const MERMAID_BLOCK_REGEX = /^[ \t]{0,3}(```+|~~~+)[ \t]*mermaid[ \t]*\r?\n([\s\S]*?)\r?\n^[ \t]{0,3}\1[ \t]*\r?$/gim;
 
@@ -3037,6 +3066,11 @@ export const MERMAID_REQUEST_TIMEOUT_MS = 30_000;
 export const MERMAID_MAX_ATTEMPTS = 3;
 export const MERMAID_RETRY_DELAYS_MS = [1000, 2000];
 export const MERMAID_TOTAL_BUDGET_MS = 120_000;
+
+/** Largest response the client is willing to buffer. */
+export const MERMAID_MAX_RESPONSE_BYTES = 20 * 1024 * 1024;
+
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export interface MermaidBlock {
     code: string;
@@ -3080,6 +3114,44 @@ export function encodeMermaidPako(diagram: string): string {
     return zlib.deflateSync(Buffer.from(payload, 'utf8'), { level: 9 }).toString('base64url');
 }
 
+/** True when the bytes start with the PNG file signature. */
+export function isPngImage(data: Buffer): boolean {
+    return data.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE);
+}
+
+/**
+ * Validate the configured Mermaid Ink base URL.
+ *
+ * The Dify plugin additionally refuses link-local targets and hostnames that
+ * resolve to them, because its URL arrives as an LLM-supplied tool parameter.
+ * Here the URL comes from the user's own settings, so only the cheap
+ * structural checks are worth doing.
+ */
+export function validateMermaidApiUrl(apiUrl: string): string {
+    const candidate = apiUrl.trim();
+    let parsed: URL;
+    try {
+        parsed = new URL(candidate);
+    } catch {
+        throw new Error(`Invalid Mermaid Ink URL: ${apiUrl}`);
+    }
+
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error(`The Mermaid Ink URL must use http or https, got ${parsed.protocol}`);
+    }
+    if (!parsed.hostname) {
+        throw new Error('The Mermaid Ink URL must include a host name');
+    }
+    if (parsed.search) {
+        throw new Error('The Mermaid Ink URL must not contain a query string');
+    }
+    if (parsed.hash) {
+        throw new Error('The Mermaid Ink URL must not contain a fragment');
+    }
+
+    return candidate;
+}
+
 function httpGet(url: string, timeoutMs: number): Promise<Buffer> {
     const transport = url.startsWith('http://') ? http : https;
 
@@ -3100,7 +3172,16 @@ function httpGet(url: string, timeoutMs: number): Promise<Buffer> {
             }
 
             const chunks: Buffer[] = [];
-            response.on('data', (chunk: Buffer) => chunks.push(chunk));
+            let total = 0;
+            response.on('data', (chunk: Buffer) => {
+                total += chunk.length;
+                if (total > MERMAID_MAX_RESPONSE_BYTES) {
+                    response.destroy();
+                    reject(new Error(`Mermaid Ink response exceeded ${MERMAID_MAX_RESPONSE_BYTES} bytes`));
+                    return;
+                }
+                chunks.push(chunk);
+            });
             response.on('end', () => resolve(Buffer.concat(chunks)));
         });
 
@@ -3115,7 +3196,9 @@ function httpGet(url: string, timeoutMs: number): Promise<Buffer> {
 export function renderMermaidViaInk(diagram: string, options: MermaidRenderOptions): Promise<Buffer> {
     const timeoutMs = options.timeoutMs ?? MERMAID_REQUEST_TIMEOUT_MS;
     const baseUrl = options.apiUrl.replace(/\/+$/, '');
-    const url = `${baseUrl}/img/pako:${encodeMermaidPako(diagram)}`;
+    // `type=png` asks the service for a PNG explicitly; without it the
+    // response format depends on the service's Accept handling.
+    const url = `${baseUrl}/img/pako:${encodeMermaidPako(diagram)}?type=png`;
 
     return options.fetchImage
         ? options.fetchImage(url, timeoutMs)
@@ -3137,7 +3220,11 @@ export async function renderMermaidWithRetry(
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
-            return await renderMermaidViaInk(diagram, options);
+            const image = await renderMermaidViaInk(diagram, options);
+            if (!isPngImage(image)) {
+                throw new Error('Mermaid Ink returned a response that is not a PNG');
+            }
+            return image;
         } catch (error) {
             lastError = error;
             if (attempt >= maxAttempts) {
