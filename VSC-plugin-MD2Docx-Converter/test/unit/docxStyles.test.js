@@ -6,6 +6,7 @@ const {
     ensureChildElement,
     upsertInsideElement,
     upsertLineSpacingAttributes,
+    normalizeDocxStyleOrder,
     BODY_STYLE_NAMES,
     HEADING_1_STYLE_NAMES
 } = require('../../out/docxStyles.js');
@@ -238,6 +239,93 @@ test('a missing w:shd is inserted before w:spacing and w:jc', () => {
         });
     assert.ok(updated.indexOf('<w:shd') < updated.indexOf('<w:spacing'));
     assert.ok(updated.indexOf('<w:shd') < updated.indexOf('<w:jc'));
+});
+
+// --- normalising an inherited out-of-order style ------------------------
+
+test('a w:b that follows w:sz is moved in front of it', () => {
+    const styles = '<w:styles><w:style w:type="paragraph" w:styleId="Heading1">'
+        + '<w:name w:val="heading 1"/>'
+        + '<w:rPr><w:rFonts w:ascii="Arial"/><w:sz w:val="32"/><w:szCs w:val="32"/><w:b/><w:bCs/></w:rPr>'
+        + '</w:style></w:styles>';
+
+    const updated = normalizeDocxStyleOrder(styles);
+    const rPr = updated.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)[0];
+
+    assert.ok(rPr.indexOf('<w:b/>') < rPr.indexOf('<w:sz'), 'w:b must come before w:sz');
+    assert.ok(rPr.indexOf('<w:bCs/>') < rPr.indexOf('<w:sz'), 'w:bCs must come before w:sz');
+    assert.ok(rPr.indexOf('<w:rFonts') < rPr.indexOf('<w:b/>'), 'w:rFonts stays in front of w:b');
+});
+
+test('a w:shd that follows w:jc is moved in front of it', () => {
+    const styles = '<w:styles><w:style w:type="paragraph" w:styleId="SourceCode">'
+        + '<w:name w:val="Source Code"/>'
+        + '<w:pPr><w:wordWrap w:val="off"/><w:spacing w:after="60"/><w:ind w:left="280"/>'
+        + '<w:jc w:val="left"/><w:shd w:val="clear" w:color="auto" w:fill="F3F4F6"/></w:pPr>'
+        + '</w:style></w:styles>';
+
+    const updated = normalizeDocxStyleOrder(styles);
+    const pPr = updated.match(/<w:pPr>[\s\S]*?<\/w:pPr>/)[0];
+
+    assert.ok(pPr.indexOf('<w:shd') < pPr.indexOf('<w:wordWrap'), 'w:shd must come before w:wordWrap');
+    assert.ok(pPr.indexOf('<w:shd') < pPr.indexOf('<w:spacing'), 'w:shd must come before w:spacing');
+    assert.ok(pPr.indexOf('<w:shd') < pPr.indexOf('<w:jc'), 'w:shd must come before w:jc');
+});
+
+test('an already ordered style is left byte for byte alone', () => {
+    const styles = '<w:styles><w:style w:type="paragraph" w:styleId="Normal">'
+        + '<w:name w:val="Normal"/>'
+        + '<w:pPr><w:spacing w:after="0"/><w:ind w:firstLine="480"/><w:jc w:val="both"/></w:pPr>'
+        + '<w:rPr><w:rFonts w:ascii="Arial"/><w:sz w:val="24"/><w:lang w:val="en-US"/></w:rPr>'
+        + '</w:style></w:styles>';
+
+    assert.equal(normalizeDocxStyleOrder(styles), styles);
+});
+
+test('a tag the schema does not know goes last and keeps its relative order', () => {
+    const styles = '<w:styles><w:style w:type="paragraph" w:styleId="Normal">'
+        + '<w:name w:val="Normal"/>'
+        + '<w:rPr><w:mysteryOne/><w:sz w:val="24"/><w:mysteryTwo/></w:rPr>'
+        + '</w:style></w:styles>';
+
+    const updated = normalizeDocxStyleOrder(styles);
+    const rPr = updated.match(/<w:rPr>[\s\S]*?<\/w:rPr>/)[0];
+
+    assert.ok(rPr.indexOf('<w:sz') < rPr.indexOf('<w:mysteryOne'), 'the unknown tag goes last');
+    assert.ok(rPr.indexOf('<w:mysteryOne') < rPr.indexOf('<w:mysteryTwo'), 'the unknown tags keep their order');
+});
+
+test('the paragraph mark run properties are normalised too', () => {
+    const styles = '<w:styles><w:style w:type="paragraph" w:styleId="Normal">'
+        + '<w:name w:val="Normal"/>'
+        + '<w:pPr><w:spacing w:after="0"/><w:rPr><w:sz w:val="24"/><w:b/></w:rPr></w:pPr>'
+        + '</w:style></w:styles>';
+
+    const updated = normalizeDocxStyleOrder(styles);
+    const pPr = updated.match(/<w:pPr>[\s\S]*?<\/w:pPr>/)[0];
+
+    assert.ok(pPr.indexOf('<w:b/>') < pPr.indexOf('<w:sz'), 'w:b must come before w:sz');
+    assert.ok(pPr.indexOf('<w:spacing') < pPr.indexOf('<w:rPr'), 'the paragraph mark stays behind the spacing');
+});
+
+test('normalising keeps the style block itself untouched', () => {
+    const styles = '<w:styles><w:style w:type="paragraph" w:styleId="Normal">'
+        + '<w:name w:val="Normal"/><w:qFormat/>'
+        + '<w:rPr><w:sz w:val="24"/><w:b/></w:rPr>'
+        + '</w:style></w:styles>';
+
+    const updated = normalizeDocxStyleOrder(styles);
+
+    assert.ok(updated.indexOf('<w:name') < updated.indexOf('<w:rPr'), 'w:name stays the first child');
+    assert.ok(updated.includes('<w:qFormat/>'), 'the other style children survive');
+});
+
+test('a style without run or paragraph properties is left alone', () => {
+    const styles = '<w:styles><w:style w:type="paragraph" w:styleId="Empty">'
+        + '<w:name w:val="Empty"/>'
+        + '</w:style></w:styles>';
+
+    assert.equal(normalizeDocxStyleOrder(styles), styles);
 });
 
 // --- self-closing style blocks and created styles -----------------------

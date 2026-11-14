@@ -143,7 +143,7 @@ function buildStyles(profile, language) {
                 + `<w:ind w:firstLine="${HEADING_FIRST_LINE_INDENT_TWIPS}"/>`
                 + `<w:jc w:val="${layout.headingAlign[index]}"/>`
                 + `<w:outlineLvl w:val="${index}"/>`,
-            rPr: fontXml(heading.font.ascii, heading.font.eastAsia) + sizeXml(heading.sizePt) + '<w:b/><w:bCs/>'
+            rPr: fontXml(heading.font.ascii, heading.font.eastAsia) + '<w:b/><w:bCs/>' + sizeXml(heading.sizePt)
         }));
     });
 
@@ -154,11 +154,11 @@ function buildStyles(profile, language) {
     definitions.push(paragraphStyle({
         id: 'SourceCode',
         name: 'Source Code',
-        pPr: '<w:wordWrap w:val="off"/>'
+        pPr: codeShading
+            + '<w:wordWrap w:val="off"/>'
             + `<w:spacing w:before="${CODE_SPACING_BEFORE_TWIPS}" w:after="${CODE_SPACING_AFTER_TWIPS}" w:line="${Math.round(codeStyle.lineSpacing * 240)}" w:lineRule="auto"/>`
             + `<w:ind w:left="${CODE_INDENT_TWIPS}" w:right="${CODE_INDENT_TWIPS}" w:firstLine="${HEADING_FIRST_LINE_INDENT_TWIPS}"/>`
-            + `<w:jc w:val="${CODE_JUSTIFICATION}"/>`
-            + codeShading,
+            + `<w:jc w:val="${CODE_JUSTIFICATION}"/>`,
         rPr: fontXml(codeStyle.font, codeStyle.font) + sizeXml(codeStyle.sizePt)
     }));
 

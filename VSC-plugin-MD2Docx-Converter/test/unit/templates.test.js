@@ -146,3 +146,159 @@ test('the footer is wired into the section properties', () => {
     assert.match(document, /<w:footerReference w:type="default" r:id="[^"]+"\/>/);
     assert.match(zip.readAsText('word/_rels/document.xml.rels'), /footer1\.xml/);
 });
+
+// --- OOXML child order of the generated templates ----------------------
+//
+// The order tables live here rather than in the implementation, so the check
+// stays independent of the code that writes the templates.
+
+const CT_RPR_ORDER = [
+    'w:rStyle', 'w:rFonts', 'w:b', 'w:bCs', 'w:i', 'w:iCs', 'w:caps', 'w:smallCaps',
+    'w:strike', 'w:dstrike', 'w:outline', 'w:shadow', 'w:emboss', 'w:imprint',
+    'w:noProof', 'w:snapToGrid', 'w:vanish', 'w:webHidden', 'w:color', 'w:spacing',
+    'w:w', 'w:kern', 'w:position', 'w:sz', 'w:szCs', 'w:highlight', 'w:u', 'w:effect',
+    'w:bdr', 'w:shd', 'w:fitText', 'w:vertAlign', 'w:rtl', 'w:cs', 'w:em', 'w:lang',
+    'w:eastAsianLayout', 'w:specVanish', 'w:oMath'
+];
+
+const CT_PPR_ORDER = [
+    'w:pStyle', 'w:keepNext', 'w:keepLines', 'w:pageBreakBefore', 'w:framePr',
+    'w:widowControl', 'w:numPr', 'w:suppressLineNumbers', 'w:pBdr', 'w:shd', 'w:tabs',
+    'w:suppressAutoHyphens', 'w:kinsoku', 'w:wordWrap', 'w:overflowPunct',
+    'w:topLinePunct', 'w:autoSpaceDE', 'w:autoSpaceDN', 'w:bidi', 'w:adjustRightInd',
+    'w:snapToGrid', 'w:spacing', 'w:ind', 'w:contextualSpacing', 'w:mirrorIndents',
+    'w:suppressOverlap', 'w:jc', 'w:textDirection', 'w:textAlignment',
+    'w:textboxTightWrap', 'w:outlineLvl', 'w:divId', 'w:cnfStyle', 'w:rPr', 'w:sectPr',
+    'w:pPrChange'
+];
+
+const STYLE_BLOCK_REGEX = /<w:style\b[^>]*?(?:\/>|>[\s\S]*?<\/w:style>)/g;
+
+/** Index just past the `>` that closes the tag starting at `lt`. */
+function findTagEnd(xml, lt) {
+    let quote;
+    for (let i = lt + 1; i < xml.length; i++) {
+        const ch = xml[i];
+        if (quote) {
+            if (ch === quote) {
+                quote = undefined;
+            }
+        } else if (ch === '"' || ch === "'") {
+            quote = ch;
+        } else if (ch === '>') {
+            return i + 1;
+        }
+    }
+    return xml.length;
+}
+
+/**
+ * The direct children of `elementXml` — a whole element such as
+ * `<w:pPr …>…</w:pPr>`. A nested element counts as one child, so the `w:rPr`
+ * inside a `w:pPr` is not mistaken for a child of the `w:pPr`.
+ */
+function directChildren(elementXml) {
+    const lt = elementXml.indexOf('<');
+    if (lt < 0) {
+        return [];
+    }
+
+    const openEnd = findTagEnd(elementXml, lt);
+    if (elementXml.slice(lt, openEnd).endsWith('/>')) {
+        return [];
+    }
+
+    const closeStart = elementXml.lastIndexOf('</');
+    if (closeStart < openEnd) {
+        return [];
+    }
+
+    const inner = elementXml.slice(openEnd, closeStart);
+    const children = [];
+    let depth = 0;
+    let open;
+    let i = 0;
+
+    while (i < inner.length) {
+        const tagStart = inner.indexOf('<', i);
+        if (tagStart < 0) {
+            break;
+        }
+        if (inner.startsWith('<!--', tagStart)) {
+            const end = inner.indexOf('-->', tagStart);
+            i = end < 0 ? inner.length : end + 3;
+            continue;
+        }
+
+        const tagEnd = findTagEnd(inner, tagStart);
+        const isClose = inner[tagStart + 1] === '/';
+        const isSelfClosing = inner[tagEnd - 2] === '/';
+        const name = inner.slice(tagStart + 1 + (isClose ? 1 : 0)).split(/[\s/>]/)[0];
+
+        if (isClose) {
+            depth--;
+            if (depth === 0 && open) {
+                open.end = openEnd + tagEnd;
+                children.push(open);
+                open = undefined;
+            }
+        } else if (isSelfClosing) {
+            if (depth === 0) {
+                children.push({ name, start: openEnd + tagStart, end: openEnd + tagEnd });
+            }
+        } else {
+            if (depth === 0) {
+                open = { name, start: openEnd + tagStart, end: openEnd + tagEnd };
+            }
+            depth++;
+        }
+
+        i = tagEnd;
+    }
+
+    return children;
+}
+
+/** The style blocks whose run or paragraph properties break the schema order. */
+function outOfOrderBlocks(stylesXml) {
+    const violations = [];
+
+    for (const block of stylesXml.match(STYLE_BLOCK_REGEX) || []) {
+        const label = (block.match(/<w:name w:val="([^"]+)"/) || [])[1]
+            || (block.match(/w:styleId="([^"]+)"/) || [])[1];
+
+        for (const child of directChildren(block)) {
+            if (child.name !== 'w:rPr' && child.name !== 'w:pPr') {
+                continue;
+            }
+
+            const order = child.name === 'w:rPr' ? CT_RPR_ORDER : CT_PPR_ORDER;
+            const names = directChildren(block.slice(child.start, child.end)).map((c) => c.name);
+            let previous = -1;
+
+            for (const name of names) {
+                const index = order.indexOf(name);
+                if (index < 0) {
+                    continue;
+                }
+                if (index < previous) {
+                    violations.push(`${label} ${child.name}: ${names.join(' ')}`);
+                    break;
+                }
+                previous = index;
+            }
+        }
+    }
+
+    return violations;
+}
+
+test('every bundled template keeps its style properties in schema order', () => {
+    for (const profile of GENERATED_PROFILES) {
+        for (const language of ['english', 'chinese']) {
+            const zip = readTemplate(profile, language);
+            const violations = outOfOrderBlocks(zip.readAsText('word/styles.xml'));
+            assert.deepEqual(violations, [], `${profile}/${language} has out-of-order style properties`);
+        }
+    }
+});

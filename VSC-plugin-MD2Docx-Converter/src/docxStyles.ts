@@ -91,6 +91,32 @@ export interface XmlChildSpan {
     end: number;
 }
 
+/**
+ * The direct children of a whole element such as `<w:pPr …>…</w:pPr>`.
+ *
+ * Unlike `listStyleChildren` this keeps every child, not only the `w:`
+ * prefixed ones — dropping an element would lose content rather than just
+ * leave it out of the order check.
+ */
+function listDirectChildren(elementXml: string): XmlChildSpan[] {
+    const lt = elementXml.indexOf('<');
+    if (lt < 0) {
+        return [];
+    }
+
+    const openEnd = findTagEnd(elementXml, lt);
+    if (elementXml.slice(lt, openEnd).endsWith('/>')) {
+        return [];
+    }
+
+    const closeStart = elementXml.lastIndexOf('</');
+    if (closeStart < openEnd) {
+        return [];
+    }
+
+    return listChildrenInRange(elementXml, openEnd, closeStart);
+}
+
 interface XmlTagToken {
     kind: 'open' | 'close' | 'selfclose';
     name: string;
@@ -479,6 +505,121 @@ export function upsertStyleOverride(stylesXml: string, override: DocxStyleOverri
     }
 
     return insertDocxStyle(updated, override);
+}
+
+/**
+ * Sort the children of a whole element into the order the schema requires.
+ *
+ * The sort is stable: a tag the order table does not know goes last and
+ * keeps its place relative to the other unknown tags. An element that is
+ * already in order comes back unchanged, byte for byte.
+ */
+function sortChildrenByOrder(elementXml: string, order: string[]): string {
+    const lt = elementXml.indexOf('<');
+    if (lt < 0) {
+        return elementXml;
+    }
+
+    const openEnd = findTagEnd(elementXml, lt);
+    if (elementXml.slice(lt, openEnd).endsWith('/>')) {
+        return elementXml;
+    }
+
+    const closeStart = elementXml.lastIndexOf('</');
+    if (closeStart < openEnd) {
+        return elementXml;
+    }
+
+    const children = listChildrenInRange(elementXml, openEnd, closeStart);
+    if (children.length < 2) {
+        return elementXml;
+    }
+
+    const pieces = children.map((child, index) => {
+        const gapStart = index === 0 ? openEnd : children[index - 1].end;
+        const position = order.indexOf(child.name);
+        return {
+            text: elementXml.slice(child.start, child.end),
+            gap: elementXml.slice(gapStart, child.start),
+            key: position >= 0 ? position : order.length,
+            index
+        };
+    });
+
+    const sorted = [...pieces].sort((a, b) => (a.key - b.key) || (a.index - b.index));
+    if (sorted.every((piece, position) => piece.index === position)) {
+        return elementXml;
+    }
+
+    const trailing = elementXml.slice(children[children.length - 1].end, closeStart);
+    const inner = sorted.map((piece) => piece.gap + piece.text).join('') + trailing;
+
+    return elementXml.slice(0, openEnd) + inner + elementXml.slice(closeStart);
+}
+
+/**
+ * Normalise one property element.
+ *
+ * A `w:pPr` may carry the run properties of the paragraph mark in a nested
+ * `w:rPr`; those follow the run property order, not the paragraph one.
+ */
+function normalizePropertyElement(elementXml: string, tagName: string): string {
+    const order = tagName === 'w:rPr' ? RPR_CHILD_ORDER : PPR_CHILD_ORDER;
+    let normalized = sortChildrenByOrder(elementXml, order);
+
+    if (tagName === 'w:pPr') {
+        const children = listDirectChildren(normalized);
+        for (let index = children.length - 1; index >= 0; index--) {
+            const child = children[index];
+            if (child.name !== 'w:rPr') {
+                continue;
+            }
+
+            const nested = normalized.slice(child.start, child.end);
+            const fixed = sortChildrenByOrder(nested, RPR_CHILD_ORDER);
+            normalized = normalized.slice(0, child.start) + fixed + normalized.slice(child.end);
+        }
+    }
+
+    return normalized;
+}
+
+/**
+ * Normalise the run and paragraph properties of one style block.
+ *
+ * The block's own children — `w:name` and the rest — are left alone; only
+ * the properties inside `w:rPr` and `w:pPr` are sorted.
+ */
+function normalizeStyleBlockOrder(styleXml: string): string {
+    const children = listStyleChildren(styleXml);
+    let updated = styleXml;
+
+    // Back to front, so that the positions of the blocks still to come are
+    // not invalidated by the rewrites.
+    for (let index = children.length - 1; index >= 0; index--) {
+        const child = children[index];
+        if (child.name !== 'w:rPr' && child.name !== 'w:pPr') {
+            continue;
+        }
+
+        const elementXml = updated.slice(child.start, child.end);
+        const normalized = normalizePropertyElement(elementXml, child.name);
+        updated = updated.slice(0, child.start) + normalized + updated.slice(child.end);
+    }
+
+    return updated;
+}
+
+/**
+ * Bring the run and paragraph properties of every style into the order the
+ * OOXML schema requires.
+ *
+ * A template the user brings themselves may carry its style properties out
+ * of order — Word offers to repair such a document. The Dify plugin does the
+ * same with `_normalize_order`.
+ */
+export function normalizeDocxStyleOrder(stylesXml: string): string {
+    return stylesXml.replace(STYLE_BLOCK_REGEX, (styleXml) => normalizeStyleBlockOrder(styleXml));
 }
 
 export interface StyleOverrideInput {

@@ -14,7 +14,7 @@ import {
     resolveMarginsMm
 } from './profiles';
 import type { StyleProfile } from './profiles';
-import { buildDocxStyleOverrides, upsertStyleOverride, upsertXmlAttribute } from './docxStyles';
+import { buildDocxStyleOverrides, upsertStyleOverride, upsertXmlAttribute, normalizeDocxStyleOrder } from './docxStyles';
 import type { DocxStyleOverride } from './docxStyles';
 import { getBundledReferenceDocxCandidates } from './templates';
 
@@ -702,11 +702,14 @@ async function applyDocxStyleOverrides(
 ): Promise<void> {
     const zip = new AdmZip(outputPath);
     const stylesEntry = zip.getEntry('word/styles.xml');
-    if (stylesEntry && styleOverrides.length > 0) {
+    if (stylesEntry) {
         let stylesXml = stylesEntry.getData().toString('utf8');
         for (const override of styleOverrides) {
             stylesXml = upsertStyleOverride(stylesXml, override);
         }
+        // Repairing the order is not an override: it applies to every
+        // profile, including the ones that write no overrides at all.
+        stylesXml = normalizeDocxStyleOrder(stylesXml);
         zip.updateFile('word/styles.xml', Buffer.from(stylesXml, 'utf8'));
     }
 
