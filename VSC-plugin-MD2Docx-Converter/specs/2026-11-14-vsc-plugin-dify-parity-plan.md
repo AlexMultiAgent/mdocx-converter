@@ -4458,6 +4458,17 @@ const REPO_ROOT = path.join(__dirname, '..', '..');
 const TEMPLATE_DIR = path.join(REPO_ROOT, 'multi-templates');
 const PROFILES = ['academic', 'business', 'technical', 'official', 'thesis'];
 
+// What each profile must produce. Measured from the exported documents, not
+// guessed: Normal carries the body font and size, Heading 1 the heading font
+// and size, and the margins come from the preset.
+const EXPECTED = {
+    academic: { bodyFont: 'Times New Roman', bodySizePt: 12, headingFont: 'Times New Roman', headingSizePt: 16, marginsMm: [25.4, 25.4, 31.75, 31.75] },
+    business: { bodyFont: 'Arial', bodySizePt: 11, headingFont: 'Arial', headingSizePt: 18, marginsMm: [25.4, 25.4, 25.4, 25.4] },
+    technical: { bodyFont: 'Arial', bodySizePt: 11, headingFont: 'Arial', headingSizePt: 16, marginsMm: [19, 19, 19, 19] },
+    official: { bodyFont: 'Times New Roman', bodySizePt: 16, headingFont: 'Times New Roman', headingSizePt: 16, marginsMm: [37, 35, 28, 26] },
+    thesis: { bodyFont: 'Times New Roman', bodySizePt: 12, headingFont: 'Times New Roman', headingSizePt: 22, marginsMm: [30, 30, 30, 30] }
+};
+
 function run(command, args, options = {}) {
     return execFileAsync(command, args, {
         cwd: options.cwd,
@@ -4497,6 +4508,37 @@ async function exportOne(profile, language, workDir) {
     if (!zip.getEntry('word/footer1.xml')) {
         throw new Error(`${profile}/${language} lost the page-number footer`);
     }
+
+    // The preset must actually reach the document: body font and size on
+    // Normal, heading font and size on Heading 1, and the preset margins.
+    const expected = EXPECTED[profile];
+    const styles = zip.readAsText('word/styles.xml');
+    const normal = styles.match(/<w:style[^>]*w:styleId="Normal"[\s\S]*?<\/w:style>/);
+    if (!normal || !normal[0].includes(`w:ascii="${expected.bodyFont}"`)) {
+        throw new Error(`${profile}/${language} did not apply the body font ${expected.bodyFont}`);
+    }
+    if (!normal || !normal[0].includes(`<w:sz w:val="${expected.bodySizePt * 2}"/>`)) {
+        throw new Error(`${profile}/${language} did not apply the body size ${expected.bodySizePt}pt`);
+    }
+
+    const heading = styles.match(/<w:style[^>]*w:styleId="Heading1"[\s\S]*?<\/w:style>/);
+    if (!heading || !heading[0].includes(`w:ascii="${expected.headingFont}"`)) {
+        throw new Error(`${profile}/${language} did not apply the heading font ${expected.headingFont}`);
+    }
+    if (!heading || !heading[0].includes(`<w:sz w:val="${expected.headingSizePt * 2}"/>`)) {
+        throw new Error(`${profile}/${language} did not apply the heading size ${expected.headingSizePt}pt`);
+    }
+
+    const pgMar = sectPr.match(/<w:pgMar[^>]*\/>/);
+    const margins = ['top', 'bottom', 'left', 'right'].map((side) => {
+        const value = pgMar && pgMar[0].match(new RegExp(`w:${side}="(-?\d+)"`));
+        return value ? Math.round((Number(value[1]) / 56.6929133858) * 100) / 100 : NaN;
+    });
+    expected.marginsMm.forEach((want, index) => {
+        if (Math.abs(margins[index] - want) > 0.05) {
+            throw new Error(`${profile}/${language} margin ${['top', 'bottom', 'left', 'right'][index]} is ${margins[index]}mm, expected ${want}mm`);
+        }
+    });
 
     return outputPath;
 }
