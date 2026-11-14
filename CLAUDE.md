@@ -28,7 +28,7 @@ pip install -r requirements-dev.txt        # dev deps (pytest, dify_plugin for l
 python -c "import ast; ast.parse(open('src/md2docx.py', encoding='utf-8').read()); print('Syntax OK')"
 pytest tests/ -v                           # run test suite (pandoc provided by pypandoc-binary)
 # Packaging
-dify-plugin plugin package . -o MD2Docx.difypkg   # ~236 KB .difypkg
+dify-plugin plugin package . -o MD2Docx.difypkg   # ~250 KB .difypkg
 ```
 
 ## Architecture

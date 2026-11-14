@@ -59,9 +59,12 @@ meta:
 privacy: "./PRIVACY.md"
 
 # ── Package & network notes ──────────────────────────────────────────────────
-# Approx .difypkg size: ~230 KB. The Pandoc binary is **bundled** inside the
-# `pypandoc-binary` pip wheel and extracted into the plugin venv at install
-# time — there is NO runtime download from GitHub or any other host.
+# Approx .difypkg size: ~250 KB (uncompressed ~320 KB). The Pandoc binary is
+# **bundled** inside the `pypandoc-binary` pip wheel and extracted into the
+# plugin venv at install time — there is NO runtime download from GitHub or any
+# other host. The daemon rejects packages whose uncompressed size exceeds
+# MAX_PLUGIN_PACKAGE_SIZE (50 MB by default), which is why the Pandoc binary
+# must never be vendored into this package.
 # No outbound network access is required for Pandoc itself. Only Mermaid
 # preprocessing (when `mermaid_enabled: true`) calls https://mermaid.ink.
 # See PRIVACY.md and README.md for details.

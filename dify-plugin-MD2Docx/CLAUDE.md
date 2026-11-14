@@ -120,10 +120,12 @@ Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`,
 
 Two rules the layer depends on:
 
-- **Style resolution is by display name.** Style ids are not portable — `a` is Normal in the English templates but List Number in the Chinese one — so ids are only consulted when no name matches. Matching by name keeps the body font off list and table styles.
+- **Style resolution is by display name.** Style ids are not portable — `a` is Normal in the English templates but List Number in the Chinese one — so body and heading styles are matched by name only. Matching by id would put the body font on list and table styles.
 - **The East Asian font slot is separate.** `w:rFonts/@w:eastAsia` gets the profile's CJK font while `ascii`/`hAnsi` get the Latin font, so the `business`/`technical` presets (Arial body) do not send Chinese text to an arbitrary system fallback. A font the user named explicitly fills **both** slots — they asked for that font. `w:szCs` is written alongside `w:sz` so complex-script text keeps the same size.
 
   > CJK fonts are recognised by name, not by the presence of ideographs: OOXML stores the Latin names (`SimSun` is 宋体, `SimHei` is 黑体). See `CJK_FONT_NAMES`.
+- **Theme fonts are removed when a font is set.** The Chinese reference templates define their headings with `w:asciiTheme="majorHAnsi"` and no explicit font; per ECMA-376 the theme attribute wins, so the override would be a silent no-op without dropping it.
+- **Style properties are written in schema order.** `w:rPr` and `w:pPr` have a fixed child sequence and Word offers to repair a document whose properties are out of order. New elements are inserted at their schema position and the properties of the styles the plugin rewrites are normalised.
 - **Non-`template` profiles force body and heading text to black** (`000000`). The reference templates carry Word's blue accent heading colours; Chinese formal documents use black, so the override is intentional.
 
 **Layer 3 — Profile defaults** (`PROFILE_DEFAULTS`): Hardcoded per profile:
@@ -146,7 +148,7 @@ Two rules the layer depends on:
 - **Safety guards**: `markdown_content` is capped at 5 MB (`MAX_MARKDOWN_BYTES`) to prevent OOM in the Dify plugin sandbox; `mermaid_code` is capped at 256 KB (`MAX_MERMAID_CODE_BYTES`)
 - **Mermaid resilience**: 3 attempts per diagram (1s/2s backoff), 4 diagrams rendered in parallel, a 120s total budget that also clamps the per-request timeout, and a 30s per-attempt ceiling. A diagram that cannot be rendered is kept as its original code block.
 - **Mermaid endpoint validation**: `mermaid_api_url` must be http(s) and must not point at a link-local address (which covers the cloud metadata endpoint `169.254.169.254`). Private ranges stay allowed because a self-hosted instance commonly lives on an internal network.
-- **Pandoc warnings are surfaced**: pypandoc forwards pandoc's stderr to the `pypandoc` logger; a handler collects it so an image that could not be resolved is reported instead of being silently dropped from the DOCX.
+- **Pandoc warnings are surfaced**: pypandoc forwards pandoc's stderr to the `pypandoc` logger; a handler installed once per process collects it so an image that could not be resolved is reported instead of being silently dropped from the DOCX. The destination lives in a `ContextVar`, because the daemon runs tool calls concurrently and a conversion must only see its own pandoc warnings.
 - **Pandoc output cleanup**: `_strip_dangling_image_rels` removes image/oleObject relationships inherited from reference templates whose target files are missing, so python-docx can always open the produced DOCX
 - **custom_template safety**: A `str` value for `custom_template` is rejected with a clear warning instead of being written as a corrupted binary
 - **Title length**: `title` is capped at 120 characters (`MAX_TITLE_LENGTH`) because it becomes the name of the produced file

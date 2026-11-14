@@ -15,6 +15,7 @@ import zipfile
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Optional, Any, Generator
 
@@ -241,22 +242,19 @@ TEMPLATE_MAP: dict[str, dict[str, str]] = {
 
 VALID_PROFILES = {"template", "academic", "business", "technical", "official", "thesis"}
 
-# Style display names as they appear in `w:name`. Style ids are not portable
-# between templates — 'a' is Normal in the English templates but List Number
-# in the Chinese one — so ids are only used as a fallback.
+# Style display names as they appear in `w:name`. Style ids are deliberately
+# not used for body and heading styles: they are not portable between
+# templates ('a' is Normal in the English templates but List Number in the
+# Chinese one, 'a1' is Normal Table in English), so matching by id would put
+# the body font on list and table styles.
 NORMAL_STYLE_NAMES = ("Normal", "Text", "BodyText", "Body Text",
                        "FirstParagraph", "First Paragraph", "Compact")
-NORMAL_STYLE_IDS = ("a", "a1")
 HEADING_ALIASES = {
     "Heading 1": ("Heading 1",),
     "Heading 2": ("Heading 2",),
     "Heading 3": ("Heading 3",),
 }
-HEADING_STYLE_IDS = {
-    "Heading 1": ("1",),
-    "Heading 2": ("2", "21"),
-    "Heading 3": ("3", "31"),
-}
+# Code styles have unambiguous custom ids, so they may be matched by id too.
 CODE_STYLE_NAMES = ("Source Code", "Verbatim Char", "Code")
 CODE_STYLE_IDS = ("SourceCode", "VerbatimChar", "Code")
 
@@ -543,14 +541,17 @@ class _PandocWarningCollector(logging.Handler):
     pypandoc forwards pandoc's stderr to the ``pypandoc`` logger; without a
     handler those messages vanish, so an image pandoc could not resolve would
     be dropped from the DOCX without the caller ever learning about it.
-    """
 
-    def __init__(self) -> None:
-        super().__init__(level=logging.WARNING)
-        self.messages: list[str] = []
+    The daemon runs tool calls concurrently, so the sink is looked up per
+    record rather than held by the handler: a conversion only ever receives
+    the warnings of its own pandoc run.
+    """
 
     def emit(self, record: logging.LogRecord) -> None:
         if record.levelno < logging.WARNING:
+            return
+        sink = _pandoc_warning_sink.get()
+        if sink is None:
             return
         message = record.getMessage().strip()
         if not message:
@@ -560,7 +561,32 @@ class _PandocWarningCollector(logging.Handler):
                 " — images are resolved against the plugin's working directory; "
                 "use an absolute path or a data: URI to embed them."
             )
-        self.messages.append(message)
+        sink.append(message)
+
+
+# The sink of the conversion currently running in this thread / greenlet.
+_pandoc_warning_sink: ContextVar[Optional[list[str]]] = ContextVar(
+    "pandoc_warning_sink", default=None
+)
+
+
+def _install_pandoc_warning_collector() -> None:
+    """Attach the collector to the pypandoc logger, once per process.
+
+    The handler stays installed for the lifetime of the plugin; the per-call
+    sink lives in a ContextVar, so concurrent conversions cannot pick up each
+    other's warnings.
+    """
+    logger = logging.getLogger("pypandoc")
+    if not any(isinstance(h, _PandocWarningCollector) for h in logger.handlers):
+        logger.addHandler(_PandocWarningCollector())
+    # Only ever lower the threshold, so pandoc's warnings are not filtered
+    # out by a stricter root logger.
+    if logger.getEffectiveLevel() > logging.WARNING:
+        logger.setLevel(logging.WARNING)
+
+
+_install_pandoc_warning_collector()
 
 
 @contextmanager
@@ -570,17 +596,11 @@ def _collect_pandoc_warnings(sink: Optional[list[str]]):
         yield
         return
 
-    logger = logging.getLogger("pypandoc")
-    handler = _PandocWarningCollector()
-    previous_level = logger.level
-    logger.addHandler(handler)
-    logger.setLevel(logging.WARNING)
+    token = _pandoc_warning_sink.set(sink)
     try:
         yield
     finally:
-        logger.removeHandler(handler)
-        logger.setLevel(previous_level)
-        sink.extend(handler.messages)
+        _pandoc_warning_sink.reset(token)
 
 
 def convert_via_pandoc(
@@ -736,6 +756,13 @@ def _cjk_font_for(font_name: Optional[str], profile_cjk_font: Optional[str],
     return profile_cjk_font or font_name
 
 
+def _clean_font(value) -> Optional[str]:
+    """Normalize a user-supplied font name: trimmed, empty means unset."""
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
+
+
 def _resolve_styles(doc: Document, names: tuple[str, ...],
                      ids: tuple[str, ...] = ()) -> list:
     """Find the styles an override applies to.
@@ -750,12 +777,87 @@ def _resolve_styles(doc: Document, names: tuple[str, ...],
     return [style for style in doc.styles if style.style_id in ids]
 
 
+# The child order `w:rPr` and `w:pPr` require (ECMA-376). Word repairs a
+# document whose style properties are out of sequence, so new elements have to
+# be inserted at the right place rather than appended.
+_RPR_SEQUENCE = (
+    "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike",
+    "dstrike", "outline", "shadow", "emboss", "imprint", "noProof", "snapToGrid",
+    "vanish", "webHidden", "color", "spacing", "w", "kern", "position", "sz",
+    "szCs", "highlight", "u", "effect", "bdr", "shd", "fitText", "vertAlign",
+    "rtl", "cs", "em", "lang", "eastAsianLayout", "specVanish", "oMath",
+)
+_PPR_SEQUENCE = (
+    "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr",
+    "widowControl", "numPr", "suppressLineNumbers", "pBdr", "shd", "tabs",
+    "suppressAutoHyphens", "kinsoku", "wordWrap", "overflowPunct", "topLinePunct",
+    "autoSpaceDE", "autoSpaceDN", "bidi", "adjustRightInd", "snapToGrid",
+    "spacing", "ind", "contextualSpacing", "mirrorIndents", "suppressOverlap",
+    "jc", "textDirection", "textAlignment", "textboxTightWrap", "outlineLvl",
+    "divId", "cnfStyle", "rPr", "sectPr", "pPrChange",
+)
+
+# Theme font attributes win over the explicit ones, so an override has to
+# remove them — the reference templates use `majorHAnsi` for their headings.
+_THEME_FONT_ATTRS = ("asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme")
+
+
+def _get_or_add_ordered(parent, tag: str, sequence: tuple[str, ...]):
+    """Return `tag` under `parent`, creating it at its schema position."""
+    element = parent.find(qn(tag))
+    if element is not None:
+        return element
+
+    element = parent.makeelement(qn(tag), {})
+    successors = set(sequence[sequence.index(tag.split(":")[-1]) + 1:])
+    for child in parent:
+        if child.tag.split("}")[-1] in successors:
+            child.addprevious(element)
+            break
+    else:
+        parent.append(element)
+    return element
+
+
+def _normalize_order(parent, sequence: tuple[str, ...]) -> None:
+    """Reorder the children of `parent` into the schema sequence.
+
+    A few reference templates carry their style properties out of order
+    (for example `w:shd` after `w:spacing`), which is schema invalid and
+    makes Word offer to repair the document.
+    """
+    children = list(parent)
+
+    def sort_key(item):
+        index, child = item
+        tag = child.tag.split("}")[-1]
+        position = sequence.index(tag) if tag in sequence else len(sequence)
+        return (position, index)
+
+    ordered = [child for _, child in sorted(enumerate(children), key=sort_key)]
+    if ordered == children:
+        return
+    for child in children:
+        parent.remove(child)
+    for child in ordered:
+        parent.append(child)
+
+
+def _normalize_style_properties(style) -> None:
+    """Bring the style's run and paragraph properties into schema order."""
+    element = style._element
+    for tag, sequence in (("w:rPr", _RPR_SEQUENCE), ("w:pPr", _PPR_SEQUENCE)):
+        properties = element.find(qn(tag))
+        if properties is not None:
+            _normalize_order(properties, sequence)
+
+
 def _set_font(run_or_style, font_name: str, cjk_font: str | None = None) -> None:
     """Set the font on a run or style element, including east-asia."""
     rPr = run_or_style._element.get_or_add_rPr()
-    rFonts = rPr.find(qn("w:rFonts"))
-    if rFonts is None:
-        rFonts = etree.SubElement(rPr, qn("w:rFonts"))
+    rFonts = _get_or_add_ordered(rPr, "w:rFonts", _RPR_SEQUENCE)
+    for attribute in _THEME_FONT_ATTRS:
+        rFonts.attrib.pop(qn(f"w:{attribute}"), None)
     rFonts.set(qn("w:ascii"), font_name)
     rFonts.set(qn("w:hAnsi"), font_name)
     rFonts.set(qn("w:eastAsia"), cjk_font or font_name)
@@ -765,24 +867,16 @@ def _set_font_size(run_or_style, size_pt: float) -> None:
     """Set font size on a run or style element."""
     rPr = run_or_style._element.get_or_add_rPr()
     half_pts = str(int(round(size_pt * 2)))
-    sz = rPr.find(qn("w:sz"))
-    if sz is None:
-        sz = etree.SubElement(rPr, qn("w:sz"))
-    sz.set(qn("w:val"), half_pts)
+    _get_or_add_ordered(rPr, "w:sz", _RPR_SEQUENCE).set(qn("w:val"), half_pts)
     # Complex-script size travels separately from the Latin one.
-    szCs = rPr.find(qn("w:szCs"))
-    if szCs is None:
-        szCs = etree.SubElement(rPr, qn("w:szCs"))
-    szCs.set(qn("w:val"), half_pts)
+    _get_or_add_ordered(rPr, "w:szCs", _RPR_SEQUENCE).set(qn("w:val"), half_pts)
 
 
 def _set_line_spacing(paragraph_format, spacing: float) -> None:
     """Set line spacing on a paragraph format."""
     line_value = int(round(spacing * 240))
     pPr = paragraph_format._element.get_or_add_pPr()
-    spacing_el = pPr.find(qn("w:spacing"))
-    if spacing_el is None:
-        spacing_el = etree.SubElement(pPr, qn("w:spacing"))
+    spacing_el = _get_or_add_ordered(pPr, "w:spacing", _PPR_SEQUENCE)
     spacing_el.set(qn("w:line"), str(line_value))
     spacing_el.set(qn("w:lineRule"), "auto")
 
@@ -790,9 +884,7 @@ def _set_line_spacing(paragraph_format, spacing: float) -> None:
 def _set_shading(paragraph_format, fill_color: str) -> None:
     """Set paragraph shading (background color)."""
     pPr = paragraph_format._element.get_or_add_pPr()
-    shd = pPr.find(qn("w:shd"))
-    if shd is None:
-        shd = etree.SubElement(pPr, qn("w:shd"))
+    shd = _get_or_add_ordered(pPr, "w:shd", _PPR_SEQUENCE)
     shd.set(qn("w:val"), "clear")
     shd.set(qn("w:color"), "auto")
     shd.set(qn("w:fill"), fill_color)
@@ -801,10 +893,7 @@ def _set_shading(paragraph_format, fill_color: str) -> None:
 def _set_font_color(run_or_style, color_hex: str) -> None:
     """Set text color on a run or style."""
     rPr = run_or_style._element.get_or_add_rPr()
-    color = rPr.find(qn("w:color"))
-    if color is None:
-        color = etree.SubElement(rPr, qn("w:color"))
-    color.set(qn("w:val"), color_hex)
+    _get_or_add_ordered(rPr, "w:color", _RPR_SEQUENCE).set(qn("w:val"), color_hex)
 
 
 def _apply_to_styles(doc: Document, names: tuple[str, ...], *, ids: tuple[str, ...] = (),
@@ -824,6 +913,7 @@ def _apply_to_styles(doc: Document, names: tuple[str, ...], *, ids: tuple[str, .
             _set_font_color(style, color)
         if line_spacing and isinstance(style, ParagraphStyle):
             _set_line_spacing(style.paragraph_format, line_spacing)
+        _normalize_style_properties(style)
     return matched
 
 
@@ -846,15 +936,15 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> li
     warnings: list[str] = []
 
     # Resolve effective values: user param > profile default > None (skip)
-    body_font = params.get("body_font") or profile.get("body_font")
+    body_font = _clean_font(params.get("body_font")) or profile.get("body_font")
     body_size = parse_pt(params.get("body_size_pt")) or profile.get("body_size_pt")
     line_spacing = parse_spacing(params.get("line_spacing")) or profile.get("line_spacing")
 
-    h1_font = params.get("heading1_font") or profile.get("heading1_font")
+    h1_font = _clean_font(params.get("heading1_font")) or profile.get("heading1_font")
     h1_size = parse_pt(params.get("heading1_size_pt")) or profile.get("heading1_size_pt")
-    h2_font = params.get("heading2_font") or profile.get("heading2_font")
+    h2_font = _clean_font(params.get("heading2_font")) or profile.get("heading2_font")
     h2_size = parse_pt(params.get("heading2_size_pt")) or profile.get("heading2_size_pt")
-    h3_font = params.get("heading3_font") or profile.get("heading3_font")
+    h3_font = _clean_font(params.get("heading3_font")) or profile.get("heading3_font")
     h3_size = parse_pt(params.get("heading3_size_pt")) or profile.get("heading3_size_pt")
 
     body_cjk = _cjk_font_for(body_font, profile_cjk_font, bool(params.get("body_font")))
@@ -864,7 +954,7 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> li
 
     # Normal style + aliases (BodyText, Compact, etc.)
     effective_color = "000000" if style_profile != "template" else None
-    if not _apply_to_styles(doc, NORMAL_STYLE_NAMES, ids=NORMAL_STYLE_IDS,
+    if not _apply_to_styles(doc, NORMAL_STYLE_NAMES,
                              font=body_font, cjk_font=body_cjk, size=body_size,
                              color=effective_color, line_spacing=line_spacing):
         if style_profile != "template":
@@ -874,21 +964,21 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> li
             )
 
     # Heading styles + aliases
-    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 1"], ids=HEADING_STYLE_IDS["Heading 1"],
+    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 1"],
                              font=h1_font, cjk_font=h1_cjk, size=h1_size,
                              color=effective_color):
         if style_profile != "template":
             warnings.append(
                 f"Heading 1 style not found in reference template; heading 1 overrides were not applied."
             )
-    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 2"], ids=HEADING_STYLE_IDS["Heading 2"],
+    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 2"],
                              font=h2_font, cjk_font=h2_cjk, size=h2_size,
                              color=effective_color):
         if style_profile != "template":
             warnings.append(
                 f"Heading 2 style not found in reference template; heading 2 overrides were not applied."
             )
-    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 3"], ids=HEADING_STYLE_IDS["Heading 3"],
+    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 3"],
                              font=h3_font, cjk_font=h3_cjk, size=h3_size,
                              color=effective_color):
         if style_profile != "template":
@@ -907,6 +997,7 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> li
             # VerbatimChar) have no paragraph_format and would raise.
             if isinstance(cs, ParagraphStyle):
                 _set_shading(cs.paragraph_format, "F3F4F6")
+            _normalize_style_properties(cs)
         if not code_styles:
             warnings.append(
                 f"Technical profile: no code style ({CODE_STYLE_NAMES}) found in reference template."
@@ -1107,7 +1198,12 @@ class Md2DocxTool(Tool):
             )
 
         except Exception as e:
-            yield self.create_json_message({"status": "error", "stage": stage, "message": str(e)})
+            # Keep whatever was collected before the failure: the caller needs
+            # to know why the document is incomplete.
+            payload = {"status": "error", "stage": stage, "message": str(e)}
+            if warnings:
+                payload["warnings"] = warnings
+            yield self.create_json_message(payload)
             yield self.create_text_message(
                 f"md2docx conversion failed at stage '{stage}': {e}"
             )

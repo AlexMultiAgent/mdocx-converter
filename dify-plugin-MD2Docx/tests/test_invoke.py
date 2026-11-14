@@ -330,6 +330,27 @@ class TestDifyOutputContract:
         assert len(json_msgs) == 1
         assert json_msgs[0].data["status"] == "error"
 
+    def test_error_carries_the_warnings_collected_so_far(self, monkeypatch):
+        """A failure after the Mermaid stage must not swallow the warnings."""
+        monkeypatch.setattr(
+            "md2docx.preprocess_mermaid",
+            lambda markdown_text, enabled=True, api_url=None: (
+                markdown_text, 0, "", ["Diagram 1: Connection timeout"]
+            ),
+        )
+        monkeypatch.setattr(
+            "md2docx.convert_via_pandoc",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("pandoc exploded")),
+        )
+        tool = self._make_tool()
+        messages = list(tool._invoke({"markdown_content": "# Hi"}))
+
+        json_msgs = [m for m in messages if m.type == "json"]
+        assert len(json_msgs) == 1
+        payload = json_msgs[0].data
+        assert payload["status"] == "error"
+        assert "Connection timeout" in " ".join(payload.get("warnings", []))
+
 
 class TestMd2DocxToolInvokeEdgeCases:
     """Edge-case tests for security and validation paths."""

@@ -769,10 +769,13 @@ class TestEveryProfileConverts:
         "profile",
         ["academic", "business", "official", "technical", "thesis", "template"],
     )
-    def test_profile_produces_a_readable_docx(self, pandoc_available, profile):
+    @pytest.mark.parametrize("language", ["english", "chinese"])
+    def test_profile_produces_a_readable_docx(
+        self, pandoc_available, profile, language
+    ):
         from docx import Document
 
-        ref = os.path.join(TEMPLATE_DIR, TEMPLATE_MAP[profile]["english"])
+        ref = os.path.join(TEMPLATE_DIR, TEMPLATE_MAP[profile][language])
         docx_io = convert_via_pandoc(
             "# Heading 1\n\n## Heading 2\n\nSome body text.\n",
             ref,
@@ -786,6 +789,201 @@ class TestEveryProfileConverts:
         output = io.BytesIO()
         doc.save(output)
         assert Document(io.BytesIO(output.getvalue())).paragraphs
+
+    @pytest.mark.parametrize(
+        "template_name",
+        [
+            "reference_english_academic.docx",
+            "reference_chinese_academic.docx",
+            "reference_english_business.docx",
+            "reference_chinese_business.docx",
+            "reference_english_technical.docx",
+            "reference_chinese_technical.docx",
+        ],
+    )
+    def test_body_overrides_do_not_reach_list_or_table_styles(
+        self, pandoc_available, template_name
+    ):
+        """Style ids are ambiguous: 'a' is Normal in the English templates but
+        List Number in the Chinese ones, and 'a1' is Normal Table in English.
+        A body override must only ever land on the body style itself.
+        """
+        from docx import Document
+
+        ref = os.path.join(TEMPLATE_DIR, template_name)
+        docx_io = convert_via_pandoc(
+            "# Heading 1\n\nbody\n", ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("academic", None, None, None),
+        )
+        doc = Document(docx_io)
+        apply_style_overrides(doc, "academic", {})
+
+        for style in doc.styles:
+            name = (style.name or "").lower()
+            if "list" in name or "table" in name:
+                ascii_font, _, _ = _style_fonts(style)
+                assert ascii_font != "SimSun", (
+                    f"{template_name}: style {style.style_id!r} ({style.name!r}) "
+                    f"must not inherit the body font"
+                )
+
+
+class TestThemeFontAttributes:
+    """A theme font wins over an explicit one, so an override that leaves the
+    theme attributes in place is a silent no-op.
+    """
+
+    def test_theme_font_attributes_are_removed(self, pandoc_available):
+        from docx import Document
+
+        ref = os.path.join(TEMPLATE_DIR, "reference_chinese_academic.docx")
+        docx_io = convert_via_pandoc(
+            "# Heading\n\nbody\n", ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("academic", None, None, None),
+        )
+        doc = Document(docx_io)
+        apply_style_overrides(doc, "academic", {})
+
+        heading1 = _find_style_by_id(doc, "1")
+        rPr = heading1._element.find(f"{W_NS}rPr")
+        rFonts = rPr.find(f"{W_NS}rFonts")
+        for attribute in ("asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme"):
+            assert rFonts.get(f"{W_NS}{attribute}") is None, (
+                f"w:{attribute} would override the explicit font"
+            )
+        assert rFonts.get(f"{W_NS}ascii") == "SimHei"
+        assert rFonts.get(f"{W_NS}eastAsia") == "SimHei"
+
+
+class TestOoxmlChildOrder:
+    """`w:rPr` and `w:pPr` have a fixed child sequence; Word repairs a
+    document whose style properties are out of order.
+    """
+
+    RPR_SEQUENCE = (
+        "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike",
+        "dstrike", "outline", "shadow", "emboss", "imprint", "noProof",
+        "snapToGrid", "vanish", "webHidden", "color", "spacing", "w", "kern",
+        "position", "sz", "szCs", "highlight", "u", "effect", "bdr", "shd",
+        "fitText", "vertAlign", "rtl", "cs", "em", "lang", "eastAsianLayout",
+        "specVanish", "oMath",
+    )
+    PPR_SEQUENCE = (
+        "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr",
+        "widowControl", "numPr", "suppressLineNumbers", "pBdr", "shd", "tabs",
+        "suppressAutoHyphens", "kinsoku", "wordWrap", "overflowPunct",
+        "topLinePunct", "autoSpaceDE", "autoSpaceDN", "bidi", "adjustRightInd",
+        "snapToGrid", "spacing", "ind", "contextualSpacing", "mirrorIndents",
+        "suppressOverlap", "jc", "textDirection", "textAlignment",
+        "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr",
+        "pPrChange",
+    )
+
+    def _assert_ordered(self, parent, sequence, label):
+        seen = []
+        for child in parent:
+            tag = child.tag.split("}")[-1]
+            if tag in sequence:
+                seen.append(tag)
+        positions = [sequence.index(tag) for tag in seen]
+        assert positions == sorted(positions), f"{label}: {seen} is out of order"
+
+    def test_run_properties_are_in_schema_order(self, pandoc_available):
+        """The styles the plugin rewrites must end up schema valid."""
+        from docx import Document
+        from md2docx import (
+            NORMAL_STYLE_NAMES, HEADING_ALIASES, CODE_STYLE_NAMES,
+        )
+
+        ref = os.path.join(TEMPLATE_DIR, "reference_english_technical.docx")
+        docx_io = convert_via_pandoc(
+            "# Heading\n\n```python\nprint(1)\n```\n", ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("technical", None, None, None),
+        )
+        doc = Document(docx_io)
+        apply_style_overrides(doc, "technical", {})
+
+        overridden = set(NORMAL_STYLE_NAMES)
+        overridden.update(HEADING_ALIASES["Heading 1"])
+        overridden.update(HEADING_ALIASES["Heading 2"])
+        overridden.update(HEADING_ALIASES["Heading 3"])
+        overridden.update(CODE_STYLE_NAMES)
+
+        checked = 0
+        for style in doc.styles:
+            if style.name not in overridden:
+                continue
+            checked += 1
+            rPr = style._element.find(f"{W_NS}rPr")
+            if rPr is not None:
+                self._assert_ordered(rPr, self.RPR_SEQUENCE, f"rPr of {style.style_id}")
+            pPr = style._element.find(f"{W_NS}pPr")
+            if pPr is not None:
+                self._assert_ordered(pPr, self.PPR_SEQUENCE, f"pPr of {style.style_id}")
+        assert checked >= 3, "expected the overridden styles to be found"
+
+
+class TestFontNameNormalization:
+    def test_user_font_names_are_stripped(self, pandoc_available):
+        from docx import Document
+
+        ref = os.path.join(TEMPLATE_DIR, "reference_english_academic.docx")
+        docx_io = convert_via_pandoc(
+            "# Heading\n\nbody\n", ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("academic", None, None, None),
+        )
+        doc = Document(docx_io)
+        apply_style_overrides(doc, "academic", {"body_font": "  SimSun  "})
+
+        normal = _find_style_by_id(doc, "a")
+        ascii_font, _, _ = _style_fonts(normal)
+        assert ascii_font == "SimSun"
+
+
+class TestPandocWarningIsolation:
+    """The daemon runs tool calls concurrently, so one conversion must not see
+    another conversion's pandoc warnings.
+    """
+
+    def test_warnings_do_not_leak_between_concurrent_conversions(self, monkeypatch):
+        import logging
+        import threading
+        from md2docx import convert_via_pandoc
+
+        barrier = threading.Barrier(2, timeout=15)
+
+        def fake_convert_text(source, to, format=None, extra_args=(), outputfile=None, **kw):
+            # This is what pypandoc does with pandoc's stderr: forward it to
+            # the "pypandoc" logger.
+            logging.getLogger("pypandoc").warning(
+                f"Could not fetch resource {source}.png: replacing image with description"
+            )
+            barrier.wait()
+            with open(outputfile, "wb") as f:
+                f.write(b"PK")
+            return ""
+
+        monkeypatch.setattr("md2docx.pypandoc.convert_text", fake_convert_text)
+
+        results = {}
+
+        def run(marker):
+            warnings = []
+            convert_via_pandoc(marker, "ref.docx", "", "", {}, warnings=warnings)
+            results[marker] = list(warnings)
+
+        threads = [threading.Thread(target=run, args=(m,)) for m in ("A", "B")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+
+        assert set(results) == {"A", "B"}
+        assert len(results["A"]) == 1, results
+        assert len(results["B"]) == 1, results
+        assert "A.png" in results["A"][0], results
+        assert "B.png" in results["B"][0], results
+
 
 
 class TestImageResolution:

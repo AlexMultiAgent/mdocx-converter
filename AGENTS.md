@@ -16,21 +16,21 @@ Each subdirectory has its own `CLAUDE.md` with the real architecture and command
 
 - **Commit author is `AlexMultiAgent` only.** Never add `Co-Authored-By: Claude` or any other co-author trailer to commit messages.
 - **Templates: VSC plugin is the source of truth.** `VSC-plugin-MD2Docx-Converter/multi-templates/` has 6 files; `dify-plugin-MD2Docx/multi-templates/` has 8 (adds `*_official.docx` × 2). When editing templates, edit VSC first, then `bash scripts/sync-templates.sh` to copy to Dify, then commit both sides in one PR.
-- **Dify plugin output size budget is tight (~256 KB).** The `manifest.yaml` and root `CLAUDE.md` warn that bundling pandoc in the `.difypkg` would blow past it. A previous attempt to bundle the pandoc binary was reverted for this reason (`5606f5e`). Do not re-introduce it.
+- **Dify plugin output size budget.** The daemon rejects a plugin package whose *uncompressed* size exceeds `MAX_PLUGIN_PACKAGE_SIZE` (50 MB by default, `internal/types/app/default.go` in `dify-plugin-daemon`). The current `.difypkg` is ~250 KB compressed / ~320 KB uncompressed, so there is headroom — but a previous attempt to vendor the pandoc binary into the package was reverted for exactly this reason. Do not re-introduce it.
 
 ## Dify plugin gotchas agents miss
 
 These are not in the README/manifest but are critical:
 
-- **`requirements.txt` uses `pypandoc-binary` (NOT plain `pypandoc`)** which *bundles* a pandoc binary inside the pip wheel — no runtime GitHub download, no network call. `_ensure_pandoc()` just calls `pypandoc.get_pandoc_version()` to verify the bundled binary is reachable. Note: `manifest.yaml` line 59 and `PRIVACY.md` line 22 still describe the old auto-download behavior; that is stale documentation, not current code.
-- **`_warmup_pandoc()` runs at import time when `LOAD_FROM_DIFY_PLUGIN=1`** to pre-load the pandoc binary. The Dify daemon sets this env var before loading plugin code.
+- **`requirements.txt` uses `pypandoc-binary` (NOT plain `pypandoc`)** which *bundles* a pandoc binary inside the pip wheel — no runtime GitHub download, no network call. `_ensure_pandoc()` just calls `pypandoc.get_pandoc_version()` to verify the bundled binary is reachable.
+- **Pandoc is deliberately NOT warmed up at import time.** Spawning a subprocess before `Plugin.run()` starts the event loop can deadlock in the gevent-patched sandbox, so the first conversion pays the cold start instead.
 - **Icon must exist at BOTH `dify-plugin-MD2Docx/icon.svg` and `dify-plugin-MD2Docx/_assets/icon.svg`.** The CLI packaging step needs the root copy; canonical is `_assets/`.
 - **`pytest.ini` lives in `dify-plugin-MD2Docx/`, not the repo root.** Run `pytest` from inside the plugin directory or pass `cd dify-plugin-MD2Docx && pytest`.
 - **`tests/conftest.py` skips the entire suite** with a `pytest.skip(..., allow_module_level=True)` if `dify_plugin` is not importable. Install `requirements-dev.txt` first.
-- **Mermaid requests go to `https://mermaid.ink/img`** (public, no auth, no rate limit). Set `mermaid_enabled=false` in the tool call to disable for privacy-sensitive content. Documented in `PRIVACY.md` and `dify-plugin-MD2Docx/README.md`.
+- **Mermaid requests go to `https://mermaid.ink/img/pako:<encoded>`** (public, no auth, no rate limit). The diagram is deflated and base64url-encoded into the URL. Set `mermaid_enabled=false` in the tool call to disable for privacy-sensitive content. Documented in `PRIVACY.md` and `dify-plugin-MD2Docx/README.md`.
 - **5 MB input cap.** `MAX_MARKDOWN_BYTES = 5 * 1024 * 1024` rejects oversized markdown with a structured `{"status":"error","stage":"validation"}` JSON. Above that, the Dify plugin sandbox OOMs.
 - **`_strip_dangling_image_rels()`** post-processes the pandoc output to remove `<Relationship Type=".../image" Target="media/...">` entries whose target file is missing. Some reference templates have such dangling rels; without this, `python-docx` fails to open the output.
-- **18 tool parameters total** (4 core + 1 extended `mermaid_enabled` + 13 advanced style overrides). Schema in `tools/md_to_docx.yaml`. `style_profile` enum: `academic|technical|business|official|thesis|template`. NOTE: a `type: file` param (`custom_template`) was removed in v0.0.3 because a `file` tool parameter makes a Dify **workflow** tool node hang in `get_workflow_tool_runtime()` and never dispatch (`POST dispatch/tool/invoke` never fires; node stuck "running" until timeout). Do not re-add `file`-type params unless the plugin is only used in Agent nodes.
+- **Three tools, 27 parameters in total.** `tools/md_to_docx.yaml` → *Markdown to DOCX* (6 params: `markdown_content`, `title`, `style_profile`, `reference_language`, `mermaid_enabled`, `mermaid_api_url`). `tools/md_to_docx_advanced.yaml` → *Markdown to DOCX (Advanced)* (those 6 plus 13 style overrides). `tools/mermaid_converter.yaml` → *Mermaid to Image* (2 params). `style_profile` enum: `academic|technical|business|official|thesis|template`. NOTE: a `type: file` param (`custom_template`) was removed in v0.0.3 because a `file` tool parameter makes a Dify **workflow** tool node hang in `get_workflow_tool_runtime()` and never dispatch (`POST dispatch/tool/invoke` never fires; node stuck "running" until timeout). Do not re-add `file`-type params unless the plugin is only used in Agent nodes.
 - **Test markers `slow` and `integration`** are declared in `pytest.ini` but only `slow` is used (real pandoc + python-docx round-trip). `integration` is reserved for tests that call Mermaid Ink; currently no test uses it.
 
 ## VSC plugin gotchas agents miss
@@ -76,4 +76,4 @@ npm run package                              # vsce package --allow-missing-repo
 - `dify-plugin-MD2Docx/CLAUDE.md` for the Python pipeline architecture (steps 1–5, 3-layer style system, profile defaults table).
 - `VSC-plugin-MD2Docx-Converter/CLAUDE.md` for the TypeScript extension (binary resolution, two-layer style system, vsce packaging).
 - `dify-plugin-MD2Docx/PRIVACY.md` for the Mermaid Ink disclosure (must stay accurate to the actual `MERMAID_INK_URL` constant in `src/md2docx.py`).
-- `dify-plugin-MD2Docx/.difyignore` controls what ships in the `.difypkg` (excludes tests/, cache, README, dev requirements, *.pyc).
+- `dify-plugin-MD2Docx/.difyignore` controls what ships in the `.difypkg` (excludes tests/, caches, `*.pyc`, `*.difypkg`, `.remember/`, `*.html`, dev requirements). `README.md` and `readme/README_zh_Hans.md` **are** shipped — the marketplace needs them.
