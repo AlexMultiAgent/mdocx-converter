@@ -1094,18 +1094,21 @@ their body text in SimSun. Adds official (GB/T 9704) and thesis
 - Create: `scripts/reference-base.docx`（从 pandoc 官方 reference.docx 复制）
 - Create: `scripts/build-templates.js`
 - Modify: `multi-templates/`（重新生成 10 个）
+- Modify: `.vscodeignore`（模板白名单 + 排除 test/）
+- Modify: `test/unit/profiles.test.js`（解除存在性测试的 skip）
 - Test: `test/unit/templates.test.js`
+
+**背景：** 现有 6 个模板是二进制 .docx，样式规则不可见、不可审阅、不可复现；三个英文模板还带着从期刊模板继承来的双栏、smallCaps、自动编号、斜体标题。本次改为**生成器 + 声明式样式表**，以 pandoc 官方 reference.docx 为基底生成全部 10 个模板（5 预设 × 中英）。
+
+生成器读取 `out/profiles.js` 的 `PROFILE_PRESETS` 与 `TEMPLATE_LAYOUT` —— 与运行时扩展读的是同一张表，所以模板和预设永远不会对不上。
 
 - [ ] **Step 1: 准备基底文件**
 
-Run:
 ```bash
 pandoc --print-default-data-file reference.docx > scripts/reference-base.docx
 ```
-Windows PowerShell 用户改用：
-```powershell
-pandoc --print-default-data-file reference.docx | Out-File -Encoding utf8NoBOM scripts/reference-base.docx
-```
+
+基底文件提交进仓库，保证重新生成是确定性的（不受本机 pandoc 版本影响）。它提供 OOXML 骨架（content types、rels、fontTable、numbering、settings、theme），生成器只负责改写样式与页面设置。
 
 Verify: `ls -la scripts/reference-base.docx` → 应约 40–60 KB。
 
@@ -1121,7 +1124,9 @@ const path = require('path');
 const AdmZip = require('adm-zip');
 
 const TEMPLATE_DIR = path.join(__dirname, '..', '..', 'multi-templates');
-const { STYLE_PROFILES } = require('../../out/profiles.js');
+const { PROFILE_PRESETS, TEMPLATE_LAYOUT } = require('../../out/profiles.js');
+
+const GENERATED_PROFILES = ['academic', 'business', 'technical', 'official', 'thesis'];
 
 function readTemplate(profile, language) {
     const file = path.join(TEMPLATE_DIR, `reference_${language}_${profile}.docx`);
@@ -1130,17 +1135,14 @@ function readTemplate(profile, language) {
 }
 
 test('all ten templates exist', () => {
-    for (const profile of STYLE_PROFILES) {
-        if (profile === 'template') {
-            continue;
-        }
+    for (const profile of GENERATED_PROFILES) {
         for (const language of ['english', 'chinese']) {
             assert.ok(fs.existsSync(path.join(TEMPLATE_DIR, `reference_${language}_${profile}.docx`)));
         }
     }
 });
 
-for (const profile of ['academic', 'business', 'technical', 'official', 'thesis']) {
+for (const profile of GENERATED_PROFILES) {
     for (const language of ['english', 'chinese']) {
         test(`${profile}/${language} is single column A4`, () => {
             const zip = readTemplate(profile, language);
@@ -1148,6 +1150,19 @@ for (const profile of ['academic', 'business', 'technical', 'official', 'thesis'
             const sectPr = document.match(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/)[0];
             assert.ok(!/w:num="2"/.test(sectPr), 'must not be two columns');
             assert.match(sectPr, /<w:pgSz w:w="11906" w:h="16838"\s*\/>/);
+        });
+
+        test(`${profile}/${language} carries the preset page margins`, () => {
+            const zip = readTemplate(profile, language);
+            const document = zip.readAsText('word/document.xml');
+            const sectPr = document.match(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/)[0];
+            const pgMar = sectPr.match(/<w:pgMar\b[^>]*\/>/)[0];
+            const preset = PROFILE_PRESETS[profile];
+            const toTwips = (mm) => Math.round((mm * 1440) / 25.4);
+            assert.match(pgMar, new RegExp(`w:top="${toTwips(preset.marginTopMm)}"`));
+            assert.match(pgMar, new RegExp(`w:bottom="${toTwips(preset.marginBottomMm)}"`));
+            assert.match(pgMar, new RegExp(`w:left="${toTwips(preset.marginLeftMm)}"`));
+            assert.match(pgMar, new RegExp(`w:right="${toTwips(preset.marginRightMm)}"`));
         });
 
         test(`${profile}/${language} defines Normal as the default paragraph style`, () => {
@@ -1158,6 +1173,23 @@ for (const profile of ['academic', 'business', 'technical', 'official', 'thesis'
             assert.match(normal, /<w:rFonts[^>]*w:ascii="[^"]+"[^>]*w:eastAsia="[^"]+"/);
         });
 
+        test(`${profile}/${language} splits latin and east-asian fonts`, () => {
+            const zip = readTemplate(profile, language);
+            const styles = zip.readAsText('word/styles.xml');
+            const normal = styles.match(/<w:style\b[^>]*w:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/)[0];
+            const preset = PROFILE_PRESETS[profile];
+            assert.match(normal, new RegExp(`w:ascii="${preset.body.ascii}"`));
+            assert.match(normal, new RegExp(`w:eastAsia="${preset.body.eastAsia}"`));
+        });
+
+        test(`${profile}/${language} uses the preset body size`, () => {
+            const zip = readTemplate(profile, language);
+            const styles = zip.readAsText('word/styles.xml');
+            const normal = styles.match(/<w:style\b[^>]*w:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/)[0];
+            const preset = PROFILE_PRESETS[profile];
+            assert.match(normal, new RegExp(`<w:sz w:val="${preset.bodySizePt * 2}"/>`));
+        });
+
         test(`${profile}/${language} defines canonical pandoc style ids`, () => {
             const zip = readTemplate(profile, language);
             const styles = zip.readAsText('word/styles.xml');
@@ -1165,20 +1197,39 @@ for (const profile of ['academic', 'business', 'technical', 'official', 'thesis'
                 assert.ok(styles.includes(`w:styleId="${id}"`), `missing style ${id}`);
             }
         });
+
+        test(`${profile}/${language} applies the preset line spacing rule`, () => {
+            const zip = readTemplate(profile, language);
+            const styles = zip.readAsText('word/styles.xml');
+            const normal = styles.match(/<w:style\b[^>]*w:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/)[0];
+            const preset = PROFILE_PRESETS[profile];
+            const expectedTwips = preset.lineSpacingTwips ?? Math.round(preset.lineSpacing * 240);
+            const expectedRule = preset.lineSpacingTwips ? 'exact' : 'auto';
+            assert.match(normal, new RegExp(`w:line="${expectedTwips}"`));
+            assert.match(normal, new RegExp(`w:lineRule="${expectedRule}"`));
+        });
     }
 }
 
 test('chinese templates indent the first line, english templates do not', () => {
     const chinese = new AdmZip(path.join(TEMPLATE_DIR, 'reference_chinese_academic.docx')).readAsText('word/styles.xml');
     const english = new AdmZip(path.join(TEMPLATE_DIR, 'reference_english_academic.docx')).readAsText('word/styles.xml');
-    assert.match(chinese, /<w:ind w:firstLine="480"\s*\/>/);
-    assert.ok(!/<w:ind w:firstLine="480"\s*\/>/.test(english));
+    const indent = TEMPLATE_LAYOUT.academic.indentTwips;
+    assert.match(chinese, new RegExp(`<w:ind w:firstLine="${indent.chinese}"\\s*/>`));
+    assert.ok(!new RegExp(`<w:ind w:firstLine="${indent.chinese}"\\s*/>`).test(english));
 });
 
 test('templates carry a page-number footer', () => {
     const zip = readTemplate('academic', 'chinese');
     assert.ok(zip.getEntry('word/footer1.xml'), 'footer part missing');
     assert.match(zip.readAsText('word/footer1.xml'), /PAGE/);
+});
+
+test('the footer is wired into the section properties', () => {
+    const zip = readTemplate('academic', 'chinese');
+    const document = zip.readAsText('word/document.xml');
+    assert.match(document, /<w:footerReference w:type="default" r:id="[^"]+"\/>/);
+    assert.match(zip.readAsText('word/_rels/document.xml.rels'), /footer1\.xml/);
 });
 ```
 
@@ -1204,9 +1255,6 @@ const A4_HEIGHT_TWIPS = 16838;
 const HEADER_TWIPS = 850;
 const FOOTER_TWIPS = 990;
 const FOOTER_REL_ID = 'rId900';
-const CODE_FONT = 'Consolas';
-const CODE_SIZE_PT = 10;
-const CODE_FILL = 'F3F4F6';
 const PAGE_NUMBER_FONT = 'SimSun';
 const PAGE_NUMBER_SIZE_PT = 14;
 
@@ -1248,15 +1296,19 @@ function paragraphStyle({ id, name, basedOn = 'Normal', pPr = '', rPr = '', cust
 function buildStyles(profile, language) {
     const preset = PROFILE_PRESETS[profile];
     const layout = TEMPLATE_LAYOUT[profile];
+    if (!layout) {
+        throw new Error(`No template layout for profile "${profile}"`);
+    }
+
     const indent = layout.indentTwips[language];
     const lineTwips = preset.lineSpacingTwips ?? Math.round((preset.lineSpacing ?? 1.5) * 240);
     const lineRule = preset.lineSpacingTwips ? 'exact' : 'auto';
 
-    const bodyPPr = `<w:widowControl/>`
+    const bodyPPr = '<w:widowControl/>'
         + `<w:spacing w:after="0" w:line="${lineTwips}" w:lineRule="${lineRule}"/>`
         + (indent ? `<w:ind w:firstLine="${indent}"/>` : '')
         + `<w:jc w:val="${layout.justification}"/>`;
-    const bodyRPr = fontXml(preset.body.ascii, preset.body.eastAsia) + sizeXml(preset.bodySizePt ?? 12);
+    const bodyRPr = fontXml(preset.body.ascii, preset.body.eastAsia) + sizeXml(preset.bodySizePt);
 
     const definitions = [];
 
@@ -1272,13 +1324,13 @@ function buildStyles(profile, language) {
         definitions.push(paragraphStyle({ id, name, pPr: bodyPPr, rPr: bodyRPr }));
     }
 
-    const headingSizes = [
-        { font: preset.heading1, sizePt: preset.heading1SizePt ?? 16 },
-        { font: preset.heading2, sizePt: preset.heading2SizePt ?? 14 },
-        { font: preset.heading3, sizePt: preset.heading3SizePt ?? 12 }
+    const headings = [
+        { font: preset.heading1, sizePt: preset.heading1SizePt },
+        { font: preset.heading2, sizePt: preset.heading2SizePt },
+        { font: preset.heading3, sizePt: preset.heading3SizePt }
     ];
 
-    headingSizes.forEach((heading, index) => {
+    headings.forEach((heading, index) => {
         const id = `Heading${index + 1}`;
         definitions.push(paragraphStyle({
             id,
@@ -1294,47 +1346,58 @@ function buildStyles(profile, language) {
         }));
     });
 
-    definitions.push(paragraphStyle({
-        id: 'SourceCode',
-        name: 'Source Code',
-        pPr: '<w:wordWrap w:val="off"/>'
-            + '<w:spacing w:before="60" w:after="60" w:line="240" w:lineRule="auto"/>'
-            + '<w:ind w:left="280" w:right="280" w:firstLine="0"/>'
-            + '<w:jc w:val="left"/>'
-            + `<w:shd w:val="clear" w:color="auto" w:fill="${CODE_FILL}"/>`,
-        rPr: fontXml(CODE_FONT, CODE_FONT) + sizeXml(CODE_SIZE_PT)
-    }));
+    const codeStyle = preset.codeStyle;
+    if (codeStyle) {
+        definitions.push(paragraphStyle({
+            id: 'SourceCode',
+            name: 'Source Code',
+            pPr: '<w:wordWrap w:val="off"/>'
+                + `<w:spacing w:before="60" w:after="60" w:line="${Math.round(codeStyle.lineSpacing * 240)}" w:lineRule="auto"/>`
+                + '<w:ind w:left="280" w:right="280" w:firstLine="0"/>'
+                + '<w:jc w:val="left"/>'
+                + `<w:shd w:val="clear" w:color="auto" w:fill="${escapeXml(codeStyle.shadingFill)}"/>`,
+            rPr: fontXml(codeStyle.font, codeStyle.font) + sizeXml(codeStyle.sizePt)
+        }));
 
-    definitions.push(
-        '<w:style w:type="character" w:customStyle="1" w:styleId="VerbatimChar">'
-        + '<w:name w:val="Verbatim Char"/>'
-        + `<w:rPr>${fontXml(CODE_FONT, CODE_FONT)}${sizeXml(CODE_SIZE_PT)}</w:rPr>`
-        + '</w:style>'
-    );
+        definitions.push(
+            '<w:style w:type="character" w:customStyle="1" w:styleId="VerbatimChar">'
+            + '<w:name w:val="Verbatim Char"/>'
+            + `<w:rPr>${fontXml(codeStyle.font, codeStyle.font)}${sizeXml(codeStyle.sizePt)}</w:rPr>`
+            + '</w:style>'
+        );
+    } else {
+        definitions.push(paragraphStyle({
+            id: 'SourceCode',
+            name: 'Source Code',
+            pPr: '<w:wordWrap w:val="off"/>'
+                + '<w:spacing w:before="60" w:after="60" w:line="240" w:lineRule="auto"/>'
+                + '<w:ind w:left="280" w:right="280" w:firstLine="0"/>'
+                + '<w:jc w:val="left"/>',
+            rPr: fontXml('Consolas', 'Consolas') + sizeXml(9)
+        }));
 
-    return definitions.join('');
-}
-
-function replaceStyleBlock(stylesXml, styleId, replacement) {
-    const regex = new RegExp(`<w:style\\b(?=[^>]*w:styleId="${styleId}")[\\s\\S]*?</w:style>`);
-    if (regex.test(stylesXml)) {
-        return stylesXml.replace(regex, replacement);
+        definitions.push(
+            '<w:style w:type="character" w:customStyle="1" w:styleId="VerbatimChar">'
+            + '<w:name w:val="Verbatim Char"/>'
+            + `<w:rPr>${fontXml('Consolas', 'Consolas')}${sizeXml(9)}</w:rPr>`
+            + '</w:style>'
+        );
     }
 
-    return stylesXml;
+    return definitions.join('');
 }
 
 function buildDocument(profile) {
     const preset = PROFILE_PRESETS[profile];
     return (
-        '<w:footerReference w:type="default" r:id="rId900"/>'
+        `<w:footerReference w:type="default" r:id="${FOOTER_REL_ID}"/>`
         + '<w:footnotePr><w:numRestart w:val="eachSect"/></w:footnotePr>'
         + `<w:pgSz w:w="${A4_WIDTH_TWIPS}" w:h="${A4_HEIGHT_TWIPS}"/>`
         + '<w:pgMar'
-        + ` w:top="${mmToTwips(preset.marginTopMm ?? 25.4)}"`
-        + ` w:right="${mmToTwips(preset.marginRightMm ?? 25.4)}"`
-        + ` w:bottom="${mmToTwips(preset.marginBottomMm ?? 25.4)}"`
-        + ` w:left="${mmToTwips(preset.marginLeftMm ?? 25.4)}"`
+        + ` w:top="${mmToTwips(preset.marginTopMm)}"`
+        + ` w:right="${mmToTwips(preset.marginRightMm)}"`
+        + ` w:bottom="${mmToTwips(preset.marginBottomMm)}"`
+        + ` w:left="${mmToTwips(preset.marginLeftMm)}"`
         + ` w:header="${HEADER_TWIPS}" w:footer="${FOOTER_TWIPS}" w:gutter="0"/>`
         + '<w:cols w:space="720"/>'
         + '<w:docGrid w:linePitch="312"/>'
@@ -1351,6 +1414,15 @@ function buildFooter() {
         + '<w:r><w:t>1</w:t></w:r>'
         + '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
         + '</w:p></w:ftr>';
+}
+
+function replaceStyleBlock(stylesXml, styleId, replacement) {
+    const regex = new RegExp(`<w:style\\b(?=[^>]*w:styleId="${styleId}")[\\s\\S]*?</w:style>`);
+    if (regex.test(stylesXml)) {
+        return stylesXml.replace(regex, replacement);
+    }
+
+    return stylesXml;
 }
 
 function buildTemplate(baseZip, profile, language) {
@@ -1426,26 +1498,18 @@ main();
 Run: `npm run build:templates`
 Expected: 输出 10 行 `wrote multi-templates/reference_*.docx`
 
-- [ ] **Step 6: 删除旧模板残留**
+- [ ] **Step 6: 解除模板存在性测试的 skip，并修正它的路径**
 
-旧模板文件已被同名覆盖，无需额外删除。若 `multi-templates/` 下仍有未列出的 .docx，手动删除。
+`test/unit/profiles.test.js` 里有一条被 skip 的测试「every mapped bundled template file exists」。本任务生成完 10 个模板后，它应该真正跑起来。
 
-Run: `ls multi-templates/`
-Expected: 恰好 10 个 .docx
-
-- [ ] **Step 6b: 解除模板存在性测试的 skip，并修正它的路径**
-
-`test/unit/profiles.test.js` 里有一条被 skip 的测试「every mapped bundled template file exists」。它有两个问题需要处理：
-
-1. **路径拼错了一层。** 映射表 `BUNDLED_REFERENCE_DOCX` 的值本身已经是 `'multi-templates/xxx.docx'`，所以测试里不能再拼一次 `multi-templates`：
+1. **移除 `{ skip: '...' }` 选项。** 改完之后 `npm test` 的跳过数应该从 1 变成 0。
+2. **确认路径拼接正确。** 映射表 `BUNDLED_REFERENCE_DOCX` 的值本身已经是 `'multi-templates/xxx.docx'`，所以应该用：
 
 ```js
 const file = path.join(__dirname, '..', '..', relativePath);
 ```
 
-而不是 `path.join(templateDir, relativePath)`（那会得到 `multi-templates/multi-templates/xxx.docx`，连已存在的 6 个模板也会判为不存在）。
-
-2. **移除 `{ skip: ... }` 选项。** 本任务生成完 10 个模板后，这条测试应该真正跑起来。改完之后 `npm test` 的跳过数应该从 1 变成 0。
+而不是 `path.join(templateDir, relativePath)`（那会拼成 `multi-templates/multi-templates/xxx.docx`）。这一步在上一个任务里已经修好，请确认它没被改回去。
 
 - [ ] **Step 7: 更新 `.vscodeignore` 的模板白名单**
 
@@ -1483,7 +1547,7 @@ CLAUDE.md
 - [ ] **Step 8: 运行测试确认通过**
 
 Run: `npm test`
-Expected: PASS
+Expected: PASS —— 跳过数为 0
 
 - [ ] **Step 9: 用 pandoc 验证产物可用**
 
@@ -1494,23 +1558,24 @@ pandoc /tmp/t.md -o /tmp/t.docx --reference-doc multi-templates/reference_chines
 ```
 Expected: 退出码 0，`/tmp/t.docx` 存在
 
+再用英文模板跑一次，确认正文用的是 Times New Roman 而不是宋体：
+
+```bash
+printf '# Title\n\nBody text.\n' > /tmp/te.md
+pandoc /tmp/te.md -o /tmp/te.docx --reference-doc multi-templates/reference_english_academic.docx
+python -c "import zipfile,re; s=zipfile.ZipFile('/tmp/te.docx').read('word/styles.xml').decode('utf8'); m=re.search(r'<w:style[^>]*w:styleId=\"Normal\"[^>]*>.*?</w:style>', s, re.S); print(m.group(0)[:300])"
+```
+Expected: `w:ascii="Times New Roman"` 且 `w:eastAsia="SimSun"`
+
 - [ ] **Step 10: 提交**
 
 ```bash
-git add scripts/build-templates.js scripts/reference-base.docx multi-templates/ test/unit/templates.test.js .vscodeignore
-git commit -m "feat: regenerate all reference templates from a declarative style table
-
-The three English templates were two-column with journal-style leftover
-heading formatting (smallCaps, auto-numbering, italic H2) and no
-standard style ids, so body text fell back to docDefaults and the
-plugin's overrides only landed by alias. A generator over pandoc's own
-reference docx produces single-column A4 templates with canonical style
-ids, split ascii/east-asian fonts, first-line indent and a page-number
-footer, and adds real official (GB/T 9704) and thesis (GB/T 7713)
-templates."
+git add scripts/build-templates.js scripts/reference-base.docx multi-templates/ test/unit/templates.test.js test/unit/profiles.test.js .vscodeignore
+git commit -m "feat: regenerate all reference templates from a declarative style table"
 ```
 
----
+提交信息就是上面这一行，不要加 body。仓库 CLAUDE.md 禁止任何 `Co-Authored-By:` / Claude 共同作者标记。
+
 
 ### Task 6: Dify 侧同步
 
