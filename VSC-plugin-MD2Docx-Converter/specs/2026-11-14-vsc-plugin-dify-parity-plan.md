@@ -392,13 +392,16 @@ test('body fonts split latin and east-asian slots', () => {
     assert.equal(PROFILE_PRESETS.official.body.eastAsia, 'FangSong');
 });
 
-test('pandoc metadata and docx defaults agree on line spacing', () => {
+test('no preset stores pandoc metadata twice', () => {
     for (const [name, preset] of Object.entries(PROFILE_PRESETS)) {
-        if (name === 'template' || preset.lineSpacing === undefined) {
-            continue;
-        }
-        assert.equal(preset.metadata.linestretch, String(preset.lineSpacing), `${name} linestretch`);
+        assert.equal(preset.metadata, undefined, `${name} must not carry a metadata field`);
     }
+});
+
+test('official pins an exact line height and no multiplier', () => {
+    assert.equal(PROFILE_PRESETS.official.lineSpacing, undefined);
+    assert.equal(PROFILE_PRESETS.official.lineSpacingTwips, 580);
+    assert.equal(PROFILE_PRESETS.official.lineSpacingRule, 'exact');
 });
 
 test('business and technical line spacing matches the Dify plugin', () => {
@@ -424,7 +427,7 @@ test('the template profile carries no font or size defaults', () => {
     assert.equal(template.body, undefined);
     assert.equal(template.bodySizePt, undefined);
     assert.equal(template.heading1, undefined);
-    assert.deepEqual(template.metadata, {});
+    assert.deepEqual(template, {});
 });
 ```
 
@@ -747,7 +750,7 @@ git commit -m "feat: consolidate style presets into a single source of truth"
 
 ### Task 4: `src/templates.ts` + extension.ts 改用新预设（含双字体字段）
 
-> 本任务已合并进 Task 3 执行。
+> 本任务已合并进 Task 3 执行。下面这段是合并前的原始描述，**已被 Task 3 的新版 `src/profiles.ts` 取代** —— 预设表现在没有 `metadata` 字段，pandoc metadata 改为从类型化字段推导，`resolveFontPair` / `resolveLineSpacingTwips` / `resolveMarginsMm` 也已经移进纯模块 `src/profiles.ts`。以 Task 3 的版本为准。
 
 **Files:**
 - Create: `src/templates.ts`
@@ -1429,6 +1432,20 @@ Expected: 输出 10 行 `wrote multi-templates/reference_*.docx`
 
 Run: `ls multi-templates/`
 Expected: 恰好 10 个 .docx
+
+- [ ] **Step 6b: 解除模板存在性测试的 skip，并修正它的路径**
+
+`test/unit/profiles.test.js` 里有一条被 skip 的测试「every mapped bundled template file exists」。它有两个问题需要处理：
+
+1. **路径拼错了一层。** 映射表 `BUNDLED_REFERENCE_DOCX` 的值本身已经是 `'multi-templates/xxx.docx'`，所以测试里不能再拼一次 `multi-templates`：
+
+```js
+const file = path.join(__dirname, '..', '..', relativePath);
+```
+
+而不是 `path.join(templateDir, relativePath)`（那会得到 `multi-templates/multi-templates/xxx.docx`，连已存在的 6 个模板也会判为不存在）。
+
+2. **移除 `{ skip: ... }` 选项。** 本任务生成完 10 个模板后，这条测试应该真正跑起来。改完之后 `npm test` 的跳过数应该从 1 变成 0。
 
 - [ ] **Step 7: 更新 `.vscodeignore` 的模板白名单**
 
