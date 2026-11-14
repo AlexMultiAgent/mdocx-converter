@@ -278,7 +278,10 @@
     "compile": "tsc -p ./",
     "package": "vsce package --allow-missing-repository",
     "watch": "tsc -watch -p ./",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run compile",
+    "test": "npm run compile && node --test \"test/unit/**/*.test.js\"",
+    "test:e2e": "node test/e2e/run.js",
+    "build:templates": "npm run compile && node scripts/build-templates.js"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
