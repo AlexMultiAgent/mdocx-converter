@@ -71,6 +71,9 @@ If Mermaid CLI is not found and the Markdown file contains ` ```mermaid ` code f
 - `mdocxConverter.referenceLanguage`
 - `mdocxConverter.outputDirectory`
 - `mdocxConverter.mermaidOutputFormat`
+- `mdocxConverter.mermaidRenderer` (`auto`, `local` or `api`)
+- `mdocxConverter.mermaidApiUrl`
+- `mdocxConverter.documentTitle`
 - `mdocxConverter.openAfterExport`
 - `mdocxConverter.keepIntermediateFiles`
 - `mdocxConverter.styleProfile`
