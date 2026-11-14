@@ -3190,11 +3190,11 @@ test('renderMermaidWithRetry succeeds on a later attempt', async () => {
             if (calls < 3) {
                 throw new Error('boom');
             }
-            return Buffer.from('png');
+            return Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
         }
     };
     const image = await renderMermaidWithRetry('graph TD', options);
-    assert.equal(image.toString('utf8'), 'png');
+    assert.ok(isPngImage(image));
     assert.equal(calls, 3);
 });
 
@@ -3270,6 +3270,10 @@ import * as zlib from 'zlib';
 >
 > VS Code 侧现在的旧正则 `/```mermaid[^\n]*\r?\n([\s\S]*?)```/gi` 有两个毛病：波浪线围栏的图**完全不渲染**；`[^\n]*` 会把 ```` ```mermaidjs ```` 也当成 Mermaid 图。
 >
+> **第二处刻意的差异**：这里的正则带 `i` 标志，所以 ```` ```Mermaid ````（大写 M）也会被当成图；Dify 的 Python 正则没有 `i`，不匹配这种写法。保留 `i` 是为了不改变扩展原来的行为（旧正则是 `/```mermaid[^
+]*?
+([\s\S]*?)```/gi`）。要严格对齐就去掉 `i`。
+>
 > **一个刻意的差异**：Dify 的 `body` 捕获组**包含**结尾换行（`"graph TD\n"`），这里的捕获组**不含**（`"graph TD"`）—— 闭合围栏前的 `\r?\n` 在捕获组外面。对渲染没有影响，但 VSC 侧在渲染失败时会把代码块原样写回去，少一个尾换行更干净。
 
 export const MERMAID_BLOCK_REGEX = /^[ \t]{0,3}(```+|~~~+)[ \t]*mermaid[ \t]*\r?\n([\s\S]*?)\r?\n^[ \t]{0,3}\1[ \t]*\r?$/gim;
@@ -3307,7 +3311,8 @@ export function parseMermaidBlocks(markdownText: string): MermaidBlock[] {
     let match = regex.exec(markdownText);
     while (match) {
         blocks.push({
-            code: match[1],
+            // Group 1 is the fence, group 2 is the body.
+            code: match[2],
             start: match.index,
             end: match.index + match[0].length
         });
@@ -3663,14 +3668,19 @@ async function prepareMarkdown(
 
         const remainingMs = deadline - Date.now();
         if (apiUrl && remainingMs > 0) {
+            // The Ink API only ever returns PNG, so the API result must not
+            // honour `mermaidOutputFormat`: writing PNG bytes into a .svg
+            // makes pandoc drop the image silently.
+            const apiFileName = `diagram-${index + 1}.png`;
+            const apiOutputPath = path.join(assetsDir, apiFileName);
             try {
                 const image = await renderMermaidWithRetry(block.code, {
                     apiUrl,
                     totalBudgetMs: remainingMs
                 });
-                await fsp.writeFile(outputPath, image);
+                await fsp.writeFile(apiOutputPath, image);
                 usedApiFallback = true;
-                return { fileName, succeeded: true };
+                return { fileName: apiFileName, succeeded: true };
             } catch (error) {
                 outputChannel.appendLine(`Mermaid Ink API failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
             }
