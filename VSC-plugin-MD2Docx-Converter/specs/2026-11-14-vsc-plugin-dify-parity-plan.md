@@ -3483,7 +3483,42 @@ git commit -m "feat: add official/thesis export commands and a standalone mermai
 import type { CancellationToken } from 'vscode';
 ```
 
-- [ ] **Step 2: runExport 包一层 withProgress**
+- [ ] **Step 2: prepareMarkdown 支持进度回调与取消**
+
+Task 8 里的 `prepareMarkdown` 还没有进度和取消。把它扩成：
+
+```ts
+async function prepareMarkdown(
+    markdownPath: string,
+    markdownText: string,
+    settings: ExportSettings,
+    outputChannel: vscode.OutputChannel,
+    onProgress?: (completed: number, total: number) => void,
+    token?: vscode.CancellationToken
+): Promise<PreparedMarkdown> {
+```
+
+在并发渲染的 worker 里，每张图结束后推进一次计数：
+
+```ts
+    let completed = 0;
+    const rendered = await mapWithConcurrency(blocks, 4, async (block, index) => {
+        token?.throwIfCancellationRequested();
+        ...
+        // 两条返回路径都要推进计数
+    });
+```
+
+具体做法：把 worker 里每个 `return { fileName, succeeded: ... }` 之前先执行一次
+
+```ts
+        completed += 1;
+        onProgress?.(completed, blocks.length);
+```
+
+worker 的每条成功/失败路径都要走到这一步 —— 用一个小的内部函数包一下，避免漏掉某条路径导致进度条卡住。
+
+- [ ] **Step 3: runExport 包一层 withProgress**
 
 把 `runExport` 主体改为在 `vscode.window.withProgress` 内执行。关键改动：
 
@@ -3580,7 +3615,7 @@ async function runExport(
 }
 ```
 
-- [ ] **Step 3: runPandoc 支持取消**
+- [ ] **Step 4: runPandoc 支持取消**
 
 `runPandoc` 的参数接口加 `token?: CancellationToken;`，并把 `runExecutable` 换成可中止的调用。在 `runExecutable` 里加一个可选的 `token` 参数：
 
@@ -3657,12 +3692,12 @@ function execExecutable(
         options.token?.throwIfCancellationRequested();
 ```
 
-- [ ] **Step 4: 编译校验**
+- [ ] **Step 5: 编译校验**
 
 Run: `npm run compile`
 Expected: 无 TypeScript 错误
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
 git add src/extension.ts
