@@ -16,6 +16,7 @@ import {
 import type { StyleProfile } from './profiles';
 import { buildDocxStyleOverrides, upsertStyleOverride, upsertXmlAttribute, normalizeDocxStyleOrder } from './docxStyles';
 import type { DocxStyleOverride } from './docxStyles';
+import { findDocxPart } from './docxParts';
 import { getBundledReferenceDocxCandidates } from './templates';
 import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, parseMermaidBlocks, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 
@@ -796,7 +797,10 @@ async function applyDocxStyleOverrides(
     styleOverrides: DocxStyleOverride[]
 ): Promise<void> {
     const zip = new AdmZip(outputPath);
-    const stylesEntry = zip.getEntry('word/styles.xml');
+    // Some zip writers store the OPC part names with backslash separators,
+    // so the lookup has to tolerate them — otherwise the overrides are
+    // skipped in silence and the export keeps the template's formatting.
+    const stylesEntry = findDocxPart(zip, 'word/styles.xml');
     if (stylesEntry) {
         let stylesXml = stylesEntry.getData().toString('utf8');
         for (const override of styleOverrides) {
@@ -805,14 +809,16 @@ async function applyDocxStyleOverrides(
         // Repairing the order is not an override: it applies to every
         // profile, including the ones that write no overrides at all.
         stylesXml = normalizeDocxStyleOrder(stylesXml);
-        zip.updateFile('word/styles.xml', Buffer.from(stylesXml, 'utf8'));
+        // Pass the entry object, not its name: adm-zip looks a name up
+        // literally and does nothing at all when it finds no match.
+        zip.updateFile(stylesEntry, Buffer.from(stylesXml, 'utf8'));
     }
 
     if (hasMarginOverrides(settings)) {
-        const documentEntry = zip.getEntry('word/document.xml');
+        const documentEntry = findDocxPart(zip, 'word/document.xml');
         if (documentEntry) {
             const documentXml = updateDocumentMargins(documentEntry.getData().toString('utf8'), settings);
-            zip.updateFile('word/document.xml', Buffer.from(documentXml, 'utf8'));
+            zip.updateFile(documentEntry, Buffer.from(documentXml, 'utf8'));
         }
     }
 
