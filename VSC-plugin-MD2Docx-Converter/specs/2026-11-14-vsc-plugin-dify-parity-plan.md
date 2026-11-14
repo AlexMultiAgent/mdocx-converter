@@ -450,13 +450,15 @@ export interface FontPair {
     eastAsia: string;
 }
 
-/** Code-block styling, present only when the profile styles code blocks. */
+/** Code-block styling. Every profile declares one so the templates and the
+ * runtime override always agree on how code blocks look. */
 export interface CodeStyle {
     font: string;
     sizePt: number;
     /** Multiple, not twips. */
     lineSpacing: number;
-    shadingFill: string;
+    /** Background fill. Omitted means no shading. */
+    shadingFill?: string;
 }
 
 export interface ProfilePreset {
@@ -494,6 +496,9 @@ export interface ProfileLayout {
     headingAlign: [HeadingAlignment, HeadingAlignment, HeadingAlignment];
     headingBeforeTwips: [number, number, number];
     headingAfterTwips: [number, number, number];
+    /** Centred page-number footer. */
+    pageNumberFont: string;
+    pageNumberSizePt: number;
 }
 
 export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
@@ -508,7 +513,9 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         heading3: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
         heading3SizePt: 12,
         color: '000000',
+        codeStyle: { font: 'Consolas', sizePt: 10, lineSpacing: 1.15 },
         lineSpacing: 1.5,
+        lineSpacingRule: 'auto',
         marginTopMm: 25.4,
         marginBottomMm: 25.4,
         marginLeftMm: 31.75,
@@ -524,7 +531,9 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         heading3: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
         heading3SizePt: 12,
         color: '000000',
+        codeStyle: { font: 'Consolas', sizePt: 10, lineSpacing: 1.15 },
         lineSpacing: 1.5,
+        lineSpacingRule: 'auto',
         marginTopMm: 25.4,
         marginBottomMm: 25.4,
         marginLeftMm: 25.4,
@@ -543,6 +552,7 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         color: '000000',
         codeStyle: { font: 'Consolas', sizePt: 10, lineSpacing: 1.05, shadingFill: 'F3F4F6' },
         lineSpacing: 1.35,
+        lineSpacingRule: 'auto',
         marginTopMm: 19,
         marginBottomMm: 19,
         marginLeftMm: 19,
@@ -558,6 +568,7 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         heading3: { ascii: 'Times New Roman', eastAsia: 'FangSong' },
         heading3SizePt: 16,
         color: '000000',
+        codeStyle: { font: 'Consolas', sizePt: 10, lineSpacing: 1.15 },
         lineSpacingTwips: 580,
         lineSpacingRule: 'exact',
         marginTopMm: 37,
@@ -575,7 +586,9 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         heading3: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
         heading3SizePt: 14,
         color: '000000',
+        codeStyle: { font: 'Consolas', sizePt: 10, lineSpacing: 1.15, shadingFill: 'F3F4F6' },
         lineSpacing: 1.5,
+        lineSpacingRule: 'auto',
         marginTopMm: 30,
         marginBottomMm: 30,
         marginLeftMm: 30,
@@ -590,35 +603,45 @@ export const TEMPLATE_LAYOUT: Partial<Record<StyleProfile, ProfileLayout>> = {
         indentTwips: { chinese: 480, english: 0 },
         headingAlign: ['left', 'left', 'left'],
         headingBeforeTwips: [240, 200, 160],
-        headingAfterTwips: [120, 100, 80]
+        headingAfterTwips: [120, 100, 80],
+        pageNumberFont: 'Times New Roman',
+        pageNumberSizePt: 14
     },
     business: {
         justification: 'both',
         indentTwips: { chinese: 440, english: 0 },
         headingAlign: ['left', 'left', 'left'],
         headingBeforeTwips: [280, 220, 180],
-        headingAfterTwips: [140, 110, 90]
+        headingAfterTwips: [140, 110, 90],
+        pageNumberFont: 'Arial',
+        pageNumberSizePt: 14
     },
     technical: {
         justification: 'left',
         indentTwips: { chinese: 440, english: 0 },
         headingAlign: ['left', 'left', 'left'],
         headingBeforeTwips: [200, 160, 140],
-        headingAfterTwips: [100, 80, 80]
+        headingAfterTwips: [100, 80, 80],
+        pageNumberFont: 'Arial',
+        pageNumberSizePt: 12
     },
     official: {
         justification: 'both',
         indentTwips: { chinese: 640, english: 0 },
         headingAlign: ['center', 'left', 'left'],
         headingBeforeTwips: [240, 120, 120],
-        headingAfterTwips: [120, 60, 60]
+        headingAfterTwips: [120, 60, 60],
+        pageNumberFont: 'SimSun',
+        pageNumberSizePt: 14
     },
     thesis: {
         justification: 'both',
         indentTwips: { chinese: 480, english: 0 },
         headingAlign: ['center', 'left', 'left'],
         headingBeforeTwips: [360, 240, 200],
-        headingAfterTwips: [180, 120, 100]
+        headingAfterTwips: [180, 120, 100],
+        pageNumberFont: 'Times New Roman',
+        pageNumberSizePt: 14
     }
 };
 
@@ -651,7 +674,7 @@ export function resolveLineSpacingTwips(
     }
 
     if (preset.lineSpacing) {
-        return { twips: Math.round(preset.lineSpacing * 240), rule: 'auto' };
+        return { twips: Math.round(preset.lineSpacing * 240), rule: preset.lineSpacingRule ?? 'auto' };
     }
 
     return undefined;
