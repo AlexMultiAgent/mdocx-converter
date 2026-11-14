@@ -95,11 +95,13 @@ Older `paperifyMd.*` settings are still read as a fallback, but new configuratio
 The converter keeps Pandoc and `reference.docx` as the primary DOCX path, then can apply FlexMD-style metadata and DOCX style overrides when you need quick style control.
 
 - `template`: use only the selected reference DOCX
-- `academic`: 12 pt body text, 1.5 line spacing, SimSun/SimHei-oriented paper defaults
-- `business`: 11 pt body text, 1.25 line spacing, Microsoft YaHei/Arial-oriented report defaults
-- `technical`: compact spacing, Arial body text, and Consolas-oriented code styles
+- `academic`: 12 pt body text, 1.5 line spacing, Times New Roman / SimSun paper defaults
+- `business`: 11 pt body text, 1.5 line spacing, Arial / Microsoft YaHei report defaults
+- `technical`: 11 pt body text, 1.35 line spacing, Arial body text, and Consolas code styles
+- `official`: 16 pt FangSong body, a fixed 29 pt line height and GB/T 9704 margins
+- `thesis`: 12 pt body text, 22 / 16 / 14 pt headings and GB/T 7713 margins
 
-Use the `Export Markdown to DOCX (MDocx)` submenu from a Markdown context menu to export as `Academic Paper`, `Technical Document`, or `Business Report`. These submenu exports force automatic English/Chinese template detection for the current Markdown file.
+Use the `Export Markdown to DOCX (MDocx)` submenu from a Markdown context menu to export as `Academic Paper`, `Technical Document`, `Business Report`, `Official Document`, or `Thesis`. These submenu exports force automatic English/Chinese template detection for the current Markdown file.
 
 Use `mdocxConverter.styleProfile` when you want a persistent default:
 
@@ -114,10 +116,20 @@ Bundled template mapping follows both language and document type:
 - `academic` and `template`: `reference_english_academic.docx` / `reference_chinese_academic.docx`
 - `technical`: `reference_english_technical.docx` / `reference_chinese_technical.docx`
 - `business`: `reference_english_business.docx` / `reference_chinese_business.docx`
+- `official`: `reference_english_official.docx` / `reference_chinese_official.docx`
+- `thesis`: `reference_english_thesis.docx` / `reference_chinese_thesis.docx`
 
 Specialized templates do not fall back to the paper templates. If a required bundled template file is missing, export fails with a clear error.
 
 The bundled academic templates are generic academic reference DOCX files written for this extension and are not redistributed journal or conference submission templates. The bundled technical templates are derived from current software and systems documentation guidance such as GB/T 8567-2006, GB/T 32424-2015, ISO/IEC/IEEE 26514:2022, ISO/IEC/IEEE 15289:2019, and ISO/IEC/IEEE 42010:2022. The bundled business templates are derived from current business-plan and project-case guidance such as the NDRC 2023 feasibility-study outline, U.S. SBA business-plan guidance, and HM Treasury Green Book / Five Case Model guidance. These files are practical reference DOCX templates; they are not official Word attachments published by those bodies.
+
+### Changes in 0.3.0
+
+- English documents now use Times New Roman (or Arial) for body text instead of SimSun. Fonts are split into Latin and East-Asian slots, and an explicit font still fills both.
+- `business` line spacing changed from 1.25 to 1.5; `technical` from 1.2 to 1.35 — matching the Dify plugin.
+- All bundled templates were regenerated: single column, A4, standard pandoc style ids, first-line indent, and a centred page number. The previous English templates were two-column with journal-style heading formatting.
+- Styles are matched by display name instead of by style id, so the overrides reach the right styles in every template.
+- Mermaid diagrams fall back to the Mermaid Ink API when the local CLI is missing, and a diagram that fails to render is kept as a code block instead of failing the whole export.
 
 You can still override individual values:
 
