@@ -4536,7 +4536,12 @@ async function exportOne(profile, language, workDir) {
     if (/w:num="2"/.test(sectPr)) {
         throw new Error(`${profile}/${language} produced a two-column document`);
     }
-    if (!/<w:pgSz w:w="11906" w:h="16838"/.test(sectPr)) {
+    // The attribute order inside <w:pgSz> is alphabetical, so read the two
+    // values rather than matching the whole element.
+    const pgSz = sectPr.match(/<w:pgSz[^>]*\/>/);
+    const pageWidth = pgSz && pgSz[0].match(/w:w="(\d+)"/);
+    const pageHeight = pgSz && pgSz[0].match(/w:h="(\d+)"/);
+    if (!pageWidth || !pageHeight || pageWidth[1] !== '11906' || pageHeight[1] !== '16838') {
         throw new Error(`${profile}/${language} is not A4`);
     }
     if (!zip.getEntry('word/footer1.xml')) {
