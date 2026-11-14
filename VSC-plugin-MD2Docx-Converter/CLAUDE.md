@@ -9,13 +9,21 @@ npm install           # install dependencies (typescript, adm-zip, etc.)
 npm run compile       # tsc -p ./  — compiles src/ to out/
 npm run watch         # tsc -watch -p ./
 npm run package       # vsce package --allow-missing-repository  — creates .vsix
+npm test              # compile + node:test unit suite (needs Node >= 22 for --test globs)
 ```
 
 Press `F5` in VS Code to launch an Extension Development Host for manual testing.
 
-### Testing
+## Testing
 
-`test_full_pipeline.js` is a **manual integration script** — it spawns the real `pandoc` and `mmdc` binaries against a sample Markdown file. There is no test runner and no unit tests; run it directly with `node test_full_pipeline.js`. It is **not** wired into the repo CI (`.github/workflows/ci.yml` covers only the Dify plugin's pytest suite and `scripts/sync-templates.sh --check`) because it needs pandoc and mmdc installed on the runner.
+Unit tests live in `test/unit/*.test.js` and run on Node's built-in `node:test` runner — no test framework dependency.
+
+- The test glob is `test/unit/**/*.test.js`, so **every test file must be named `*.test.js`** or it will be silently skipped.
+- `npm test` compiles `src/` to `out/` first, then the tests `require()` the compiled output (e.g. `require('../../out/document.js')`). `test/` is not part of the TypeScript build.
+- A glob that matches nothing exits 0, so a renamed test file looks like a passing run. If `npm test` reports zero tests, the naming convention was broken.
+- Node 18/20 lack `--test` glob support; use Node >= 22.
+
+`test_full_pipeline.js` is a **manual integration script** — it spawns the real `pandoc` and `mmdc` binaries against a sample Markdown file. It is **not** wired into the repo CI (`.github/workflows/ci.yml` covers only the Dify plugin's pytest suite and `scripts/sync-templates.sh --check`) because it needs pandoc and mmdc installed on the runner.
 
 ## Architecture
 

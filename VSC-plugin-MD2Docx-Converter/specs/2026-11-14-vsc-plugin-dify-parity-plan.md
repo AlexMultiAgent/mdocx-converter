@@ -1359,7 +1359,19 @@ Expected: 恰好 10 个 .docx
 !multi-templates/reference_chinese_thesis.docx
 ```
 
-同时把 `test_*.js` 这一行换成 `test/**`（`test_*.js` 只匹配根目录下的单个文件，匹配不到 `test/unit/` 里的用例）。
+同时：
+
+- **保留** `test_*.js` 这一行，**新增** `test/**`。不要替换 —— `test_*.js` 匹配的是仓库根目录下的 `test_full_pipeline.js`（Task 13 才会删掉它），`test/**` 匹配不到根目录文件，两个规则互补。
+- 新增 `specs/**` 和 `CLAUDE.md`，避免把设计文档和 agent 说明打进 .vsix。
+
+改完的 `.vscodeignore` 相关片段应为：
+
+```
+test_*.js
+test/**
+specs/**
+CLAUDE.md
+```
 
 - [ ] **Step 8: 运行测试确认通过**
 
@@ -2980,6 +2992,38 @@ multi-templates/           # 10 reference.docx (5 profiles x 2 languages) — co
 
 并在模板解析一节说明 `thesis` 指向独立模板。
 
+- [ ] **Step 6b: 加一个 CI workflow**
+
+仓库目前没有任何 GitHub Actions workflow —— 测试只在本机跑就没有意义。新建 `.github/workflows/vsc-plugin-tests.yml`（在仓库根目录，不在插件目录里）：
+
+```yaml
+name: VS Code plugin tests
+
+on:
+  push:
+    paths:
+      - 'VSC-plugin-MD2Docx-Converter/**'
+  pull_request:
+    paths:
+      - 'VSC-plugin-MD2Docx-Converter/**'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: VSC-plugin-MD2Docx-Converter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci
+      - run: npm test
+```
+
+Node 版本必须是 24 —— `node --test` 的 glob 支持需要 Node 21+。
+
 - [ ] **Step 7: 全量校验**
 
 Run:
@@ -2994,7 +3038,7 @@ Expected: 编译无错误、测试全绿、模板生成无差异（`git status` 
 - [ ] **Step 8: 提交**
 
 ```bash
-git add package.json CLAUDE.md VSC-plugin-MD2Docx-Converter/CLAUDE.md VSC-plugin-MD2Docx-Converter/README.md dify-plugin-MD2Docx/CLAUDE.md dify-plugin-MD2Docx/README.md
+git add package.json CLAUDE.md VSC-plugin-MD2Docx-Converter/CLAUDE.md VSC-plugin-MD2Docx-Converter/README.md dify-plugin-MD2Docx/CLAUDE.md dify-plugin-MD2Docx/README.md .github/workflows/vsc-plugin-tests.yml
 git commit -m "docs: document the new profiles, commands, settings and template pipeline"
 ```
 
