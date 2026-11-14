@@ -98,11 +98,11 @@ Profile defaults live in `PROFILE_PRESETS` (`src/profiles.ts`):
 | Profile | Body | Headings | Line spacing | Margins (top/bottom/left/right, mm) |
 |---|---|---|---|---|
 | `template` | none | none | none | none |
-| `academic` | Times New Roman / SimSun 12pt | SimHei 16/14/12pt | 1.5 | 25.4 / 25.4 / 31.75 / 31.75 |
-| `business` | Arial / Microsoft YaHei 11pt | Microsoft YaHei 18/14/12pt | 1.5 | 25.4 / 25.4 / 25.4 / 25.4 |
-| `technical` | Arial / Microsoft YaHei 11pt | Microsoft YaHei 16/14/12pt | 1.35 | 19 / 19 / 19 / 19 |
-| `official` | Times New Roman / FangSong 16pt | SimHei / KaiTi / FangSong 16pt | fixed 29pt (`w:line=580`, `exact`) | 37 / 35 / 28 / 26 |
-| `thesis` | Times New Roman / SimSun 12pt | SimHei 22/16/14pt | 1.5 | 30 / 30 / 30 / 30 |
+| `academic` | Times New Roman / SimSun 12pt | Times New Roman / SimHei 16/14/12pt | 1.5 | 25.4 / 25.4 / 31.75 / 31.75 |
+| `business` | Arial / Microsoft YaHei 11pt | Arial / Microsoft YaHei 18/14/12pt | 1.5 | 25.4 / 25.4 / 25.4 / 25.4 |
+| `technical` | Arial / Microsoft YaHei 11pt | Arial / Microsoft YaHei 16/14/12pt | 1.35 | 19 / 19 / 19 / 19 |
+| `official` | Times New Roman / FangSong 16pt | Times New Roman / SimHei, KaiTi, FangSong 16pt | fixed 29pt (`w:line=580`, `exact`) | 37 / 35 / 28 / 26 |
+| `thesis` | Times New Roman / SimSun 12pt | Times New Roman / SimHei 22/16/14pt | 1.5 | 30 / 30 / 30 / 30 |
 
 `official` (GB/T 9704 公务公文) and `thesis` (GB/T 7713 学位论文) are defined but not yet exposed in `package.json` or the command palette — that lands with the new commands in a later task, together with the generated template files.
 
