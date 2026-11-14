@@ -1,5 +1,5 @@
 const ATX_HEADING_REGEX = /^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/m;
-const FENCED_CODE_BLOCK_REGEX = /^```[^\n]*\n[\s\S]*?^```[ \t]*$/gm;
+const FENCED_CODE_BLOCK_REGEX = /^(`{3,})[^\n]*\n[\s\S]*?^\1[ \t]*$/gm;
 const ILLEGAL_FILENAME_CHARS = /[<>:"/\\|?*\u0000-\u001f]/g;
 
 export function extractDocumentTitle(markdownText: string): string | undefined {

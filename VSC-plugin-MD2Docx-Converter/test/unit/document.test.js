@@ -41,6 +41,7 @@ test('sanitizeFileName replaces illegal characters', () => {
 
 test('extractDocumentTitle ignores headings inside fenced code blocks', () => {
     assert.equal(extractDocumentTitle('```bash\n# Install the thing\nnpm i\n```'), undefined);
+    assert.equal(extractDocumentTitle('````bash\n# Install the thing\nnpm i\n````'), undefined);
     assert.equal(extractDocumentTitle('```\n# not a title\n```\n\n# Real Title'), 'Real Title');
 });
 
