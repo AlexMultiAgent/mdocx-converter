@@ -4468,6 +4468,28 @@ jobs:
 
 Node 版本必须是 24 —— `node --test` 的 glob 支持需要 Node 21+。
 
+- [ ] **Step 6c: 加一个跨语言的预设对账脚本**
+
+两个插件各有一份预设表 —— VS Code 侧在 `src/profiles.ts` 的 `PROFILE_PRESETS`，Dify 侧在 `src/md2docx.py` 的 `PROFILE_DEFAULTS`。它们必须逐项相同，但一个在 TypeScript 里、一个在 Python 里，没有测试能同时看到两边。
+
+新建 `scripts/check-preset-parity.py`：
+
+- 读 `VSC-plugin-MD2Docx-Converter/out/profiles.js`（需要先 `npm run compile`）里的 `PROFILE_PRESETS`
+- import `dify-plugin-MD2Docx/src/md2docx.py` 里的 `PROFILE_DEFAULTS`
+- 逐个 profile 比较：正文字体（latin + eastAsia）、各标题字体（latin + eastAsia）、各字号、四边页边距、行距（倍数或定值 twips）
+- 有任何一项不一致就打印出来并以非零码退出
+
+用法（仓库根）：
+
+```bash
+cd VSC-plugin-MD2Docx-Converter && npm run compile && cd ..
+python scripts/check-preset-parity.py
+```
+
+Expected: `Every font, size, margin and line-spacing value matches on both sides.`
+
+> 这是**手动工具**，不进 CI —— 它要求两边都构建好（VSC 侧要 `npm run compile`，Dify 侧要装 Python 依赖），CI 的 job 各自只装一边。
+
 - [ ] **Step 7: 全量校验**
 
 Run:
@@ -4482,7 +4504,7 @@ Expected: 编译无错误、测试全绿、模板生成无差异（`git status` 
 - [ ] **Step 8: 提交**
 
 ```bash
-git add package.json CLAUDE.md VSC-plugin-MD2Docx-Converter/CLAUDE.md VSC-plugin-MD2Docx-Converter/README.md dify-plugin-MD2Docx/CLAUDE.md dify-plugin-MD2Docx/README.md .github/workflows/vsc-plugin-tests.yml
+git add package.json CLAUDE.md VSC-plugin-MD2Docx-Converter/CLAUDE.md VSC-plugin-MD2Docx-Converter/README.md dify-plugin-MD2Docx/CLAUDE.md dify-plugin-MD2Docx/README.md .github/workflows/vsc-plugin-tests.yml scripts/check-preset-parity.py
 git commit -m "docs: document the new profiles, commands, settings and template pipeline"
 ```
 
