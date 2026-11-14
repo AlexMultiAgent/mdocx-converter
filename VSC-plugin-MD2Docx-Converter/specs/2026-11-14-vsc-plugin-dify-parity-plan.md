@@ -2137,6 +2137,32 @@ git commit -m "fix: match DOCX styles by display name instead of hard-coded styl
 - Modify: `scripts/sync-templates.sh`
 - Modify: `dify-plugin-MD2Docx/src/md2docx.py`
 - Modify: `dify-plugin-MD2Docx/multi-templates/`（同步 10 个）
+- Create: `dify-plugin-MD2Docx/tests/test_style_overrides.py`
+
+**背景：换模板后 Dify 侧的标题覆盖会整体失效。**
+
+实测 18 个模板（10 新 + 8 旧）的 `w:styleId` 与 `w:name`：
+
+| 显示名 (`w:name`) | 旧中文 id | 旧英文 id | 新模板 id |
+|---|---|---|---|
+| Normal | `a1` | `a` | `Normal` |
+| heading 1 / 2 / 3 | `1` / `21` / `31` | `1` / `2` / `3` | `Heading1` / `Heading2` / `Heading3` |
+| Body Text | `af` | 不存在 | `BodyText` |
+| Text | 不存在 | `Text` | 不存在 |
+| **List Number** | **`a`** | 不存在 | 不存在 |
+| **Normal Table** | `a3` | **`a1`** | 不存在 |
+| Source Code / Verbatim Char | `SourceCode` / `VerbatimChar` | 同左 | `SourceCode` / `VerbatimChar` |
+
+**所有 18 个模板的标题 `w:name` 都是小写 `heading 1`**（OOXML 规范写法）。Dify 现在的查找路径 `doc.styles["Heading 1"]` 走的是 python-docx 的 `get_by_name`，它对 XML 原样做**大小写敏感**比较，因此：
+
+- `doc.styles["Heading 1"]` → `get_by_name("Heading 1")` 找不到（XML 里是 `heading 1`）→ 回退 `get_by_id("Heading 1")` 也没有 → **KeyError**
+- `doc.styles["1"]` → 旧模板能靠 id 命中 heading 1，**新模板没有 id 为 `1` 的样式 → KeyError**
+
+结论：一旦同步新模板，Dify 侧的 Heading 1/2/3 覆盖**全部静默失效**。这不是推测，是按上表逐个模板核对出来的。
+
+同时 `NORMAL_STYLE_NAMES` 里的 `"a"` / `"a1"` 是 styleId 而非显示名：`doc.styles["a"]` 在旧中文模板上命中 **List Number**，在旧英文模板上命中 **Normal Table** —— 与 VS Code 侧修掉的那个缺陷完全同源。
+
+**修复方向与 VS Code 侧一致：按显示名匹配，大小写不敏感，styleId 只作兜底。**
 
 - [ ] **Step 1: 扩展同步脚本的模板清单**
 
@@ -2176,40 +2202,20 @@ Expected: 报告复制 10 个文件，无 mismatch
 
 - [ ] **Step 3: 更新 Dify 的 TEMPLATE_MAP**
 
-`dify-plugin-MD2Docx/src/md2docx.py` 的 `TEMPLATE_MAP` 改为：
+`dify-plugin-MD2Docx/src/md2docx.py` 的 `TEMPLATE_MAP` 里，`thesis` 改为指向自己的模板（现在复用 academic）：
 
 ```python
-TEMPLATE_MAP: dict[str, dict[str, str]] = {
-    "academic": {
-        "english": "reference_english_academic.docx",
-        "chinese": "reference_chinese_academic.docx",
-    },
-    "template": {
-        "english": "reference_english_academic.docx",
-        "chinese": "reference_chinese_academic.docx",
-    },
-    "technical": {
-        "english": "reference_english_technical.docx",
-        "chinese": "reference_chinese_technical.docx",
-    },
-    "business": {
-        "english": "reference_english_business.docx",
-        "chinese": "reference_chinese_business.docx",
-    },
-    "official": {
-        "english": "reference_english_official.docx",
-        "chinese": "reference_chinese_official.docx",
-    },
     "thesis": {
         "english": "reference_english_thesis.docx",
         "chinese": "reference_chinese_thesis.docx",
     },
-}
 ```
+
+其余 5 项不动。
 
 - [ ] **Step 4: Dify 的字体分槽**
 
-`PROFILE_DEFAULTS` 里每个 profile 的 `body_font` / `headingN_font` 拆成两个字段。改法：把 `PROFILE_DEFAULTS` 改为下面的结构（其余字段不变）：
+`PROFILE_DEFAULTS` 里每个 profile 的 `body_font` / `headingN_font` 拆成两个字段，改成下面的结构（数值必须与 VS Code 侧 `src/profiles.ts` 的 `PROFILE_PRESETS` **逐项一致**）：
 
 ```python
 PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -2264,6 +2270,7 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "heading3_ascii_font": "Arial",
         "heading3_east_asia_font": "Microsoft YaHei",
         "heading3_size_pt": 12,
+        "mono_font": "Consolas",
         "line_spacing": 1.35,
         "margin_top_mm": 19,
         "margin_bottom_mm": 19,
@@ -2283,7 +2290,8 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "heading3_ascii_font": "Times New Roman",
         "heading3_east_asia_font": "FangSong",
         "heading3_size_pt": 16,
-        "line_spacing": 1.75,
+        "line_spacing_twips": 580,
+        "line_spacing_rule": "exact",
         "margin_top_mm": 37,
         "margin_bottom_mm": 35,
         "margin_left_mm": 28,
@@ -2312,10 +2320,13 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 ```
 
+> ⚠️ **`official` 的行距是定值 29pt（`w:line=580` + `w:lineRule="exact"`），不是 1.75 倍。** GB/T 9704 要求固定行高；VS Code 侧已经是 `lineSpacingTwips: 580 / exact`，这里必须对齐，旧值 `1.75` 是两边不一致的根源。
+
 `_set_font` 改为接受两个字体名：
 
 ```python
-def _set_font(run_or_style, ascii_font: str | None = None, east_asia_font: str | None = None) -> None:
+def _set_font(run_or_style, ascii_font: str | None = None,
+              east_asia_font: str | None = None) -> None:
     """Set the latin and east-asian fonts on a run or style element."""
     rPr = run_or_style._element.get_or_add_rPr()
     rFonts = rPr.find(qn("w:rFonts"))
@@ -2329,40 +2340,89 @@ def _set_font(run_or_style, ascii_font: str | None = None, east_asia_font: str |
         rFonts.set(qn("w:eastAsia"), east_asia_font)
 ```
 
+注意：旧实现把同一个字体写进 `w:ascii`/`w:hAnsi`/`w:eastAsia`，所以英文正文会被迫用 SimSun / FangSong。分槽后英文正文走 `w:ascii`（Times New Roman / Arial），中文走 `w:eastAsia`。
+
 技术档的代码样式调用点也要跟着改，否则 `eastAsia` 槽位会留空：
 
 ```python
-            _set_font(cs, "Consolas", "Consolas")
+                _set_font(cs, "Consolas", "Consolas")
 ```
 
-`_apply_to_styles` 的 `font=` 参数改为 `ascii_font=` 与 `east_asia_font=`：
+- [ ] **Step 5: 按显示名匹配样式（核心修复）**
+
+新增一个按显示名查找的辅助函数，替换所有 `doc.styles[...]` 的直接索引：
 
 ```python
-def _apply_to_styles(doc: Document, names: tuple[str, ...], *, ascii_font=None,
-                     east_asia_font=None, size=None, color=None,
-                     line_spacing=None) -> bool:
-    """Apply font/size/color/line_spacing to matching style names. Returns True
+def _find_styles(doc: Document, names: tuple[str, ...],
+                 style_ids: tuple[str, ...] = ()) -> list:
+    """Return the styles whose display name matches *names* (case-insensitively),
+    falling back to styles whose style id matches *style_ids*.
+
+    python-docx's ``doc.styles[name]`` compares the raw ``w:name`` value
+    case-sensitively, so a template that spells the built-in heading styles
+    ``heading 1`` is not found by ``doc.styles["Heading 1"]``.  Reading
+    ``style.name`` instead applies python-docx's BabelFish translation, and
+    comparing case-insensitively covers both spellings.
+    """
+    wanted_names = {n.lower() for n in names}
+    wanted_ids = set(style_ids)
+    found = []
+    for style in doc.styles:
+        name = style.name
+        if name and name.lower() in wanted_names:
+            found.append(style)
+        elif style.style_id in wanted_ids:
+            found.append(style)
+    return found
+```
+
+常量改为只列**显示名**，styleId 单独放兜底表：
+
+```python
+NORMAL_STYLE_NAMES = ("Normal", "Body Text", "Text", "First Paragraph", "Compact")
+HEADING_STYLE_NAMES = {
+    "Heading 1": ("Heading 1",),
+    "Heading 2": ("Heading 2",),
+    "Heading 3": ("Heading 3",),
+}
+# Style ids of the legacy reference templates, used only as a fallback.
+LEGACY_HEADING_STYLE_IDS = {
+    "Heading 1": ("1",),
+    "Heading 2": ("2", "21"),
+    "Heading 3": ("3", "31"),
+}
+CODE_STYLE_NAMES = ("Source Code", "Verbatim Char")
+LEGACY_CODE_STYLE_IDS = ("SourceCode", "VerbatimChar", "Code")
+```
+
+> ⚠️ **`NORMAL_STYLE_NAMES` 里不能有 `List Number` 或 `Normal Table`。** 旧列表里的 `"a"`（旧中文模板 = List Number）和 `"a1"`（旧英文模板 = Normal Table）就是正文字体被套到无关样式上的原因。
+
+`_apply_to_styles` 改为：
+
+```python
+def _apply_to_styles(doc: Document, names: tuple[str, ...], *, style_ids=(),
+                     ascii_font=None, east_asia_font=None, size=None,
+                     color=None, line_spacing=None) -> bool:
+    """Apply font/size/color/line_spacing to matching styles. Returns True
     if at least one style was found and modified.
     """
     matched = False
-    for name in names:
-        try:
-            style = doc.styles[name]
-            matched = True
-            if ascii_font or east_asia_font:
-                _set_font(style, ascii_font, east_asia_font)
-            if size:
-                _set_font_size(style, size)
-            if color:
-                _set_font_color(style, color)
-            if line_spacing:
-                _set_line_spacing(style.paragraph_format, line_spacing)
-        except KeyError:
-            pass
+    for style in _find_styles(doc, names, style_ids):
+        matched = True
+        if ascii_font or east_asia_font:
+            _set_font(style, ascii_font, east_asia_font)
+        if size:
+            _set_font_size(style, size)
+        if color:
+            _set_font_color(style, color)
+        if line_spacing:
+            _set_line_spacing(style.paragraph_format, line_spacing)
     return matched
 ```
 
-`apply_style_overrides` 里的取值部分改为：
+代码样式那段的查找同样改用 `_find_styles(doc, CODE_STYLE_NAMES, LEGACY_CODE_STYLE_IDS)`。
+
+- [ ] **Step 6: `apply_style_overrides` 的取值改成双槽**
 
 ```python
     body_ascii = params.get("body_font") or profile.get("body_ascii_font")
@@ -2381,48 +2441,87 @@ def _apply_to_styles(doc: Document, names: tuple[str, ...], *, ascii_font=None,
     h3_size = parse_pt(params.get("heading3_size_pt")) or profile.get("heading3_size_pt")
 ```
 
-并把三处 `_apply_to_styles(...)` 调用改为传 `ascii_font=` / `east_asia_font=`：
+用户显式传的 `body_font` / `headingN_font` 同时填两个槽（与 VS Code 侧 `resolveFontPair` 一致）。
+
+三处标题调用改为传 `ascii_font=` / `east_asia_font=`，并带上 styleId 兜底：
 
 ```python
-    if not _apply_to_styles(doc, NORMAL_STYLE_NAMES, ascii_font=body_ascii,
-                             east_asia_font=body_east_asia, size=body_size,
-                             color=effective_color, line_spacing=line_spacing):
+    if not _apply_to_styles(doc, HEADING_STYLE_NAMES["Heading 1"],
+                             style_ids=LEGACY_HEADING_STYLE_IDS["Heading 1"],
+                             ascii_font=h1_ascii, east_asia_font=h1_east_asia,
+                             size=h1_size, color=effective_color):
 ```
 
+Heading 2 / Heading 3 同理。警告文案里的 `HEADING_ALIASES` 改成 `HEADING_STYLE_NAMES`。
+
+- [ ] **Step 7: 定值行距**
+
+`_set_line_spacing` 改为接受 twips 与规则：
+
 ```python
-    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 1"], ascii_font=h1_ascii,
-                             east_asia_font=h1_east_asia, size=h1_size,
-                             color=effective_color):
+def _set_line_spacing(paragraph_format, twips: int, rule: str = "auto") -> None:
+    """Set line spacing on a paragraph format."""
+    pPr = paragraph_format._element.get_or_add_pPr()
+    spacing_el = pPr.find(qn("w:spacing"))
+    if spacing_el is None:
+        spacing_el = etree.SubElement(pPr, qn("w:spacing"))
+    spacing_el.set(qn("w:line"), str(int(twips)))
+    spacing_el.set(qn("w:lineRule"), rule)
 ```
 
+新增解析函数（与 VS Code 侧 `resolveLineSpacingTwips` 同构）：
+
 ```python
-    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 2"], ascii_font=h2_ascii,
-                             east_asia_font=h2_east_asia, size=h2_size,
-                             color=effective_color):
+def _resolve_line_spacing(profile: dict, user_spacing: Optional[float]) -> Optional[tuple[int, str]]:
+    """Return (twips, rule) for the effective line spacing."""
+    if user_spacing:
+        return (int(round(user_spacing * 240)), "auto")
+    if profile.get("line_spacing_twips"):
+        return (int(profile["line_spacing_twips"]), profile.get("line_spacing_rule", "exact"))
+    if profile.get("line_spacing"):
+        return (int(round(profile["line_spacing"] * 240)), profile.get("line_spacing_rule", "auto"))
+    return None
 ```
 
+`apply_style_overrides` 里用它替换 `line_spacing` 的传递。
+
+- [ ] **Step 8: `PROFILE_METADATA` 改为派生**
+
+现在 `PROFILE_METADATA` 和 `PROFILE_DEFAULTS` 各存一份同样的字体/字号/行距，两边已经漂移过一次（`official` 的 1.75）。删掉 `PROFILE_METADATA` 常量，改为从 `PROFILE_DEFAULTS` 派生：
+
 ```python
-    if not _apply_to_styles(doc, HEADING_ALIASES["Heading 3"], ascii_font=h3_ascii,
-                             east_asia_font=h3_east_asia, size=h3_size,
-                             color=effective_color):
+def _profile_metadata(style_profile: str) -> dict[str, str]:
+    """Pandoc metadata derived from PROFILE_DEFAULTS — never stored twice."""
+    profile = PROFILE_DEFAULTS.get(style_profile, {})
+    metadata: dict[str, str] = {}
+    ascii_font = profile.get("body_ascii_font")
+    east_asia_font = profile.get("body_east_asia_font")
+    if ascii_font:
+        metadata["mainfont"] = ascii_font
+    if east_asia_font:
+        metadata["CJKmainfont"] = east_asia_font
+    size = profile.get("body_size_pt")
+    if size:
+        metadata["fontsize"] = f"{size}pt"
+    spacing = profile.get("line_spacing")
+    if spacing:
+        metadata["linestretch"] = str(spacing)
+    mono = profile.get("mono_font")
+    if mono:
+        metadata["monofont"] = mono
+    return metadata
 ```
 
-- [ ] **Step 4b: 注意工作区里已有的未提交改动**
+`build_pandoc_metadata` 里的 `dict(PROFILE_METADATA.get(style_profile, {}))` 换成 `_profile_metadata(style_profile)`。用户参数覆盖 `mainfont` / `CJKmainfont` 的行为不变。
 
-`dify-plugin-MD2Docx/src/` 与 `dify-plugin-MD2Docx/tests/` 在本任务开始前就有未提交的改动（pandoc 警告收集、Mermaid 渲染器重构、新增 `tests/test_mermaid_converter.py`），不属于本次工作。
+> `official` 没有 `line_spacing` 倍数（只有定值 580 twips），因此它的 pandoc metadata 不带 `linestretch` —— 与 VS Code 侧一致。
 
-执行前先跑 `git -C ../.. status --short` 确认这些改动仍在，然后：
+- [ ] **Step 9: 修正 Dify 侧 CJK 正则的下界**
 
-- **不要**用 `git checkout` / `git restore` 丢弃它们。
-- 本任务的编辑要叠加在这些改动之上，`_set_font` 的签名变化要同时适配代码样式的调用点。
-- 提交时只 `git add` 本任务真正改到的文件与行；如果上述未提交改动与本任务落在同一文件里，提交前先确认 diff 内容是否属于本任务，把不属于本任务的 hunk 留在工作区。
-
-- [ ] **Step 4c: 修正 Dify 侧 CJK 正则的下界**
-
-Dify 的 `src/md2docx.py` 里这一行的区间下界是错的：
+`dify-plugin-MD2Docx/src/md2docx.py` 里这一行的区间下界是错的：
 
 ```python
-CJK_CHAR_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
+CJK_CHAR_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\u8C48-\uFAFF]")
 ```
 
 第三段区间实际是 `U+8C48`–`U+FAFF`（下界抄成了「豈」而不是 `U+F900` 的 CJK 兼容汉字），因此**谚文音节 U+AC00–U+D7AF 和彝文音节都被算成中文** —— 韩文文档会被判成中文而选到中文模板，而 VS Code 侧（修正后的 `U+F900`）会判成英文。两端行为不一致。
@@ -2435,30 +2534,46 @@ CJK_CHAR_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
 
 注意这里是 Python 原始字符串，`\u` 在 `r"..."` 里会原样保留成反斜杠+u，Python 的 `re` 模块自己会解析成码位 —— 所以正则层面是正确的。
 
-- [ ] **Step 5: 语法检查与测试**
+- [ ] **Step 10: 新增测试**
+
+新建 `dify-plugin-MD2Docx/tests/test_style_overrides.py`，覆盖：
+
+1. 标题覆盖能在 `w:name` 为小写 `heading 1` 的样式上命中（新模板与旧模板各一份）
+2. 正文覆盖**不会**落到 `List Number` / `Normal Table` 上
+3. `w:ascii` 与 `w:eastAsia` 分别写入两个不同的字体
+4. `official` 档写出 `w:line="580"` + `w:lineRule="exact"`
+5. `CJK_CHAR_RE` 不把谚文音节算成中文
+6. `thesis` 档的 `TEMPLATE_MAP` 指向 `reference_{english,chinese}_thesis.docx`
+
+测试可以直接用 `python-docx` 现场造一个最小 docx（带 `w:name="heading 1"` 的样式），不必依赖打包的模板。
+
+- [ ] **Step 11: 语法检查与测试**
 
 Run:
 ```bash
 cd dify-plugin-MD2Docx
-python -c "import ast; ast.parse(open('src/md2docx.py').read()); print('Syntax OK')"
+python -c "import ast; ast.parse(open('src/md2docx.py', encoding='utf-8').read()); print('Syntax OK')"
 pytest tests/ -q
 ```
 Expected: `Syntax OK`，测试全绿（若 pytest 未安装，先 `pip install -r requirements-dev.txt`）
 
-- [ ] **Step 6: 提交**
+- [ ] **Step 12: 提交**
 
 ```bash
-git add scripts/sync-templates.sh dify-plugin-MD2Docx/src/md2docx.py dify-plugin-MD2Docx/multi-templates/
-git commit -m "feat: sync templates and split fonts into latin/east-asian slots on the Dify side
+git add scripts/sync-templates.sh dify-plugin-MD2Docx/src/md2docx.py dify-plugin-MD2Docx/multi-templates/ dify-plugin-MD2Docx/tests/test_style_overrides.py
+git commit -m "feat: sync templates and match DOCX styles by display name on the Dify side
 
 thesis now points at its own GB/T 7713 template instead of reusing the
-academic one, and the DOCX style override writes w:ascii and w:eastAsia
-separately so English documents stop inheriting SimSun."
+academic one. Styles resolve by display name with a case-insensitive
+comparison, because python-docx compares the raw w:name value and every
+template spells the built-in headings \"heading 1\" — the old lookup
+silently missed all three heading levels once the regenerated templates
+landed. The DOCX override also writes w:ascii and w:eastAsia separately
+so English documents stop inheriting SimSun."
 ```
 
----
 
-## Phase 2 — 功能补齐
+---
 
 ### Task 7: `src/mermaid.ts` —— Mermaid Ink 客户端与渲染策略
 
@@ -2474,7 +2589,14 @@ separately so English documents stop inheriting SimSun."
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const zlib = require('zlib');
-const { parseMermaidBlocks, encodeMermaidPako, MERMAID_BLOCK_REGEX } = require('../../out/mermaid.js');
+const {
+    parseMermaidBlocks,
+    encodeMermaidPako,
+    renderMermaidWithRetry,
+    MERMAID_BLOCK_REGEX,
+    MERMAID_MAX_ATTEMPTS,
+    MERMAID_RETRY_DELAYS_MS
+} = require('../../out/mermaid.js');
 
 test('parseMermaidBlocks finds a single block', () => {
     const blocks = parseMermaidBlocks('# Title\n\n```mermaid\ngraph TD; A-->B\n```\n\nafter');
@@ -2501,6 +2623,16 @@ test('parseMermaidBlocks keeps inline code inside the body', () => {
     assert.ok(blocks[0].code.includes('A["`x`"]'));
 });
 
+test('parseMermaidBlocks ignores a fence that is not at the start of a line', () => {
+    assert.deepEqual(parseMermaidBlocks('text ```mermaid\nA\n```'), []);
+});
+
+test('parseMermaidBlocks spans the block it reports', () => {
+    const markdown = 'before\n```mermaid\ngraph TD\n```\nafter';
+    const [block] = parseMermaidBlocks(markdown);
+    assert.equal(markdown.slice(block.start, block.end), '```mermaid\ngraph TD\n```');
+});
+
 test('encodeMermaidPako round-trips through inflate', () => {
     const encoded = encodeMermaidPako('graph TD; A-->B');
     assert.ok(!encoded.includes('='), 'base64url must be unpadded');
@@ -2522,6 +2654,60 @@ test('the block regex is anchored to line starts', () => {
     assert.ok(MERMAID_BLOCK_REGEX.flags.includes('m'));
     assert.ok(MERMAID_BLOCK_REGEX.flags.includes('g'));
 });
+
+test('renderMermaidWithRetry succeeds on a later attempt', async () => {
+    let calls = 0;
+    const options = {
+        apiUrl: 'https://mermaid.ink',
+        retryDelaysMs: [0, 0],
+        fetchImage: async () => {
+            calls += 1;
+            if (calls < 3) {
+                throw new Error('boom');
+            }
+            return Buffer.from('png');
+        }
+    };
+    const image = await renderMermaidWithRetry('graph TD', options);
+    assert.equal(image.toString('utf8'), 'png');
+    assert.equal(calls, 3);
+});
+
+test('renderMermaidWithRetry gives up after the attempt limit', async () => {
+    let calls = 0;
+    const options = {
+        apiUrl: 'https://mermaid.ink',
+        maxAttempts: 2,
+        retryDelaysMs: [0],
+        fetchImage: async () => {
+            calls += 1;
+            throw new Error('boom');
+        }
+    };
+    await assert.rejects(() => renderMermaidWithRetry('graph TD', options), /boom/);
+    assert.equal(calls, 2);
+});
+
+test('renderMermaidWithRetry stops when the shared budget is exhausted', async () => {
+    let calls = 0;
+    const options = {
+        apiUrl: 'https://mermaid.ink',
+        maxAttempts: 5,
+        retryDelaysMs: [50],
+        totalBudgetMs: 60,
+        fetchImage: async () => {
+            calls += 1;
+            throw new Error('boom');
+        }
+    };
+    await assert.rejects(() => renderMermaidWithRetry('graph TD', options), /boom/);
+    assert.ok(calls < 5, `must stop early, made ${calls} attempts`);
+});
+
+test('the retry defaults match the Dify plugin', () => {
+    assert.equal(MERMAID_MAX_ATTEMPTS, 3);
+    assert.deepEqual(MERMAID_RETRY_DELAYS_MS, [1000, 2000]);
+});
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -2532,6 +2718,7 @@ Expected: FAIL — `Cannot find module '../../out/mermaid.js'`
 - [ ] **Step 3: 创建 `src/mermaid.ts`**
 
 ```ts
+import * as http from 'http';
 import * as https from 'https';
 import * as zlib from 'zlib';
 
@@ -2553,6 +2740,9 @@ export interface MermaidRenderOptions {
     timeoutMs?: number;
     maxAttempts?: number;
     retryDelaysMs?: number[];
+    totalBudgetMs?: number;
+    /** Overrides the HTTP transport. Injected by the tests. */
+    fetchImage?: (url: string, timeoutMs: number) => Promise<Buffer>;
 }
 
 export function parseMermaidBlocks(markdownText: string): MermaidBlock[] {
@@ -2571,21 +2761,21 @@ export function parseMermaidBlocks(markdownText: string): MermaidBlock[] {
 
     return blocks;
 }
+```
 
 > 已实测：Node 与 Python 的 zlib 在同一 level 9 下**压缩字节不同**（两边的 zlib 构建版本不同），但 Node 产出的是合法的 zlib 流（首字节 `78 da`），Python 的 `zlib.decompress` 能正确解开并还原出完全一致的 `{"code": ...}` JSON。Mermaid Ink 服务端只做标准 inflate，因此格式兼容即可，不需要追求与 Python 逐字节相同。
 
+```ts
 export function encodeMermaidPako(diagram: string): string {
     const payload = JSON.stringify({ code: diagram });
     return zlib.deflateSync(Buffer.from(payload, 'utf8'), { level: 9 }).toString('base64url');
 }
 
-export function renderMermaidViaInk(diagram: string, options: MermaidRenderOptions): Promise<Buffer> {
-    const timeoutMs = options.timeoutMs ?? MERMAID_REQUEST_TIMEOUT_MS;
-    const baseUrl = options.apiUrl.replace(/\/+$/, '');
-    const url = `${baseUrl}/img/pako:${encodeMermaidPako(diagram)}`;
+function httpGet(url: string, timeoutMs: number): Promise<Buffer> {
+    const transport = url.startsWith('http://') ? http : https;
 
     return new Promise<Buffer>((resolve, reject) => {
-        const request = https.get(url, { headers: { 'User-Agent': 'mdocx-converter' } }, (response) => {
+        const request = transport.get(url, { headers: { 'User-Agent': 'mdocx-converter' } }, (response) => {
             const status = response.statusCode ?? 0;
 
             if (status >= 300 && status < 400 && response.headers.location) {
@@ -2613,12 +2803,27 @@ export function renderMermaidViaInk(diagram: string, options: MermaidRenderOptio
     });
 }
 
+export function renderMermaidViaInk(diagram: string, options: MermaidRenderOptions): Promise<Buffer> {
+    const timeoutMs = options.timeoutMs ?? MERMAID_REQUEST_TIMEOUT_MS;
+    const baseUrl = options.apiUrl.replace(/\/+$/, '');
+    const url = `${baseUrl}/img/pako:${encodeMermaidPako(diagram)}`;
+
+    return options.fetchImage
+        ? options.fetchImage(url, timeoutMs)
+        : httpGet(url, timeoutMs);
+}
+```
+
+`fetchImage` 让重试与预算逻辑可以脱离网络测试 —— 生产路径不传它，用默认的 `httpGet`。
+
+```ts
 export async function renderMermaidWithRetry(
     diagram: string,
     options: MermaidRenderOptions
 ): Promise<Buffer> {
     const maxAttempts = options.maxAttempts ?? MERMAID_MAX_ATTEMPTS;
     const retryDelays = options.retryDelaysMs ?? MERMAID_RETRY_DELAYS_MS;
+    const deadline = Date.now() + (options.totalBudgetMs ?? MERMAID_TOTAL_BUDGET_MS);
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -2626,10 +2831,15 @@ export async function renderMermaidWithRetry(
             return await renderMermaidViaInk(diagram, options);
         } catch (error) {
             lastError = error;
-            if (attempt < maxAttempts) {
-                const delay = retryDelays[Math.min(attempt - 1, retryDelays.length - 1)];
-                await new Promise((resolve) => setTimeout(resolve, delay));
+            if (attempt >= maxAttempts) {
+                break;
             }
+
+            const delay = retryDelays[Math.min(attempt - 1, retryDelays.length - 1)];
+            if (Date.now() + delay >= deadline) {
+                break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, delay));
         }
     }
 
@@ -2657,6 +2867,8 @@ export async function mapWithConcurrency<T, R>(
 }
 ```
 
+> 120 秒的总预算（`MERMAID_TOTAL_BUDGET_MS`）是**所有图共享**的，不是每张图各算一份 —— 调用方在 Task 8 里把同一个 deadline 传给每次渲染。
+
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `npm test`
@@ -2668,6 +2880,7 @@ Expected: PASS
 git add src/mermaid.ts test/unit/mermaid.test.js
 git commit -m "feat: add mermaid block parser and Mermaid Ink API client"
 ```
+
 
 ---
 
