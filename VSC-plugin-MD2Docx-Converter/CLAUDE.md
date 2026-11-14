@@ -50,7 +50,7 @@ Markdown file
         Edits word/document.xml — page margins (w:pgMar)
 ```
 
-### Command registration (5 commands)
+### Command registration (8 commands)
 
 | Command ID | Trigger |
 |---|---|
@@ -58,9 +58,12 @@ Markdown file
 | `mdocxConverter.exportAcademicPaper` | Right-click submenu — forces `styleProfile=academic, referenceLanguage=auto` |
 | `mdocxConverter.exportTechnicalDocument` | Right-click submenu — forces `styleProfile=technical, referenceLanguage=auto` |
 | `mdocxConverter.exportBusinessReport` | Right-click submenu — forces `styleProfile=business, referenceLanguage=auto` |
+| `mdocxConverter.exportOfficialDocument` | Right-click submenu — forces `styleProfile=official, referenceLanguage=auto` (GB/T 9704) |
+| `mdocxConverter.exportThesis` | Right-click submenu — forces `styleProfile=thesis, referenceLanguage=auto` (GB/T 7713) |
+| `mdocxConverter.renderMermaidToImage` | Command palette and editor context menu — renders the selected Mermaid block (or the one under the cursor) to a PNG next to the document and inserts the reference |
 | `mdocxConverter.checkEnvironment` | Checks pandoc and mmdc availability, prints versions |
 
-The 3 submenu commands override `styleProfile` and `referenceLanguage` regardless of user settings. This is the primary UX: right-click an `.md` file → choose document type → get auto language detection + template selection.
+The 5 submenu commands override `styleProfile` and `referenceLanguage` regardless of user settings. This is the primary UX: right-click an `.md` file → choose document type → get auto language detection + template selection.
 
 ### Template resolution order
 
@@ -70,7 +73,7 @@ The 3 submenu commands override `styleProfile` and `referenceLanguage` regardles
 
 Bundled template mapping lives in the `BUNDLED_REFERENCE_DOCX` constant in `src/templates.ts`. Academic and `template` profiles share the same academic reference files. Technical, business, official and thesis each have their own English/Chinese pair.
 
-This extension ships **6** templates — it has no `thesis` or `official` profile yet, while the Dify plugin has both. **The VS Code side is the source of truth for the template files**: `scripts/sync-templates.sh` copies them into `dify-plugin-MD2Docx/multi-templates/`, and `scripts/sync-templates.sh --check` (run by CI) fails when they drift.
+This extension ships the same **10** templates as the Dify plugin — academic, technical, business, official and thesis, each in an English and a Chinese variant. **The VS Code side is the source of truth for the template files**: `scripts/sync-templates.sh` copies them into `dify-plugin-MD2Docx/multi-templates/`, and `scripts/sync-templates.sh --check` (run by CI) fails when they drift.
 
 ### Language auto-detection
 
@@ -104,7 +107,7 @@ Profile defaults live in `PROFILE_PRESETS` (`src/profiles.ts`):
 | `official` | Times New Roman / FangSong 16pt | Times New Roman / SimHei, KaiTi, FangSong 16pt | fixed 29pt (`w:line=580`, `exact`) | 37 / 35 / 28 / 26 |
 | `thesis` | Times New Roman / SimSun 12pt | Times New Roman / SimHei 22/16/14pt | 1.5 | 30 / 30 / 30 / 30 |
 
-`official` (GB/T 9704 公务公文) and `thesis` (GB/T 7713 学位论文) are defined but not yet exposed in `package.json` or the command palette — that lands with the new commands in a later task, together with the generated template files.
+`official` (GB/T 9704 公务公文) and `thesis` (GB/T 7713 学位论文) have their own templates and their own export commands.
 
 `template` is an empty preset, so it applies **no** style overrides at all and relies entirely on the reference DOCX. Its zero-override behaviour is a consequence of the empty preset, not a special case in the consumer.
 
