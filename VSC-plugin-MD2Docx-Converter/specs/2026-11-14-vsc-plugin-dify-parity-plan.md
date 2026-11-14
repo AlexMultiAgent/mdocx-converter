@@ -2517,6 +2517,163 @@ the schema requires."
 
 ---
 
+### Task 5d: 模板与导出结果的 OOXML 子元素顺序
+
+**Files:**
+- Modify: `scripts/build-templates.js`
+- Modify: `src/docxStyles.ts`
+- Modify: `src/extension.ts`
+- Test: `test/unit/templates.test.js`, `test/unit/docxStyles.test.js`
+- Regenerate: `multi-templates/`（10 个）
+- Re-sync: `dify-plugin-MD2Docx/multi-templates/`
+
+**背景。** Task 5c 把「覆盖层写进去的元素」排到了 OOXML 要求的位置，但**模板自己**带的子元素顺序仍然是错的。
+
+实测（用 ECMA-376 的 CT_RPr / CT_PPr 顺序表逐块校验）：
+
+```
+BASE (pandoc stock reference.docx): 0 out-of-order blocks
+GENERATED technical/en: 4 out-of-order blocks
+    heading 1 rPr ['w:rFonts', 'w:sz', 'w:szCs', 'w:b', 'w:bCs']
+    heading 2 rPr ['w:rFonts', 'w:sz', 'w:szCs', 'w:b', 'w:bCs']
+    heading 3 rPr ['w:rFonts', 'w:sz', 'w:szCs', 'w:b', 'w:bCs']
+    Source Code pPr ['w:wordWrap', 'w:spacing', 'w:ind', 'w:jc', 'w:shd']
+GENERATED academic/zh: 3 out-of-order blocks
+    heading 1 rPr ['w:rFonts', 'w:sz', 'w:szCs', 'w:b', 'w:bCs']
+    ...
+```
+
+base 是干净的 —— **是生成器写乱的**：
+
+- `w:b` / `w:bCs` 在 CT_RPr 里排第 3、4 位，**必须紧跟 `w:rFonts`**，不能排在 `w:sz`（第 24 位）后面
+- `w:shd` 在 CT_PPr 里排第 10 位，**必须在 `w:wordWrap`（14）/ `w:spacing`（22）/ `w:ind`（23）/ `w:jc`（27）之前**
+
+Word 遇到顺序不对的样式属性会提示「修复文档」（Dify 侧的注释原话：*"makes Word offer to repair the document"*）。这些模板是**两边都在用的出厂产物**，不能带着这个问题发出去。
+
+Dify 侧有两道保险：`_get_or_add_ordered`（插入时按位置）和 `_normalize_order`（把**继承来的**乱序也归位）。VS Code 侧目前只有前者。
+
+- [ ] **Step 1: 修生成器的两处顺序**
+
+`scripts/build-templates.js`：
+
+**标题的 `rPr`** —— 现在是 `fontXml(...) + sizeXml(...) + '<w:b/><w:bCs/>'`，`w:b` 排在了 `w:sz` 后面：
+
+```js
+            rPr: fontXml(heading.font.ascii, heading.font.eastAsia) + '<w:b/><w:bCs/>' + sizeXml(heading.sizePt)
+```
+
+**`SourceCode` 的 `pPr`** —— 现在底纹拼在最后：
+
+```js
+        pPr: codeShading
+            + '<w:wordWrap w:val="off"/>'
+            + `<w:spacing w:before="${CODE_SPACING_BEFORE_TWIPS}" w:after="${CODE_SPACING_AFTER_TWIPS}" w:line="${Math.round(codeStyle.lineSpacing * 240)}" w:lineRule="auto"/>`
+            + `<w:ind w:left="${CODE_INDENT_TWIPS}" w:right="${CODE_INDENT_TWIPS}" w:firstLine="${HEADING_FIRST_LINE_INDENT_TWIPS}"/>`
+            + `<w:jc w:val="${CODE_JUSTIFICATION}"/>`,
+```
+
+`w:shd`（第 10 位）必须排在 `w:wordWrap`（第 14 位）前面，所以底纹挪到最前面。
+
+> `codeShading` 变量在 `pPr` 之前就已经算好了（`const codeShading = codeStyle.shadingFill ? ... : ''`），只是拼接顺序要调。
+
+- [ ] **Step 2: 重新生成 10 个模板**
+
+```bash
+npm run build:templates
+```
+
+然后确认 10 个文件都变了（`git status --short` 显示 `multi-templates/` 下 10 个 `M`）。
+
+- [ ] **Step 3: 同步到 Dify 侧**
+
+```bash
+bash scripts/sync-templates.sh
+bash scripts/sync-templates.sh --check
+```
+
+Expected: `OK: 10 template(s) in sync.`
+
+- [ ] **Step 4: 加模板顺序的回归测试**
+
+`test/unit/templates.test.js` 末尾追加一条：遍历 `multi-templates/` 下每个 `.docx`，把 `word/styles.xml` 里每个 `<w:style>` 块的 `w:rPr` / `w:pPr` 子元素按 ECMA-376 顺序表校验，**任何一个块乱序就报错**。
+
+测试里要有一份顺序表（CT_RPr / CT_PPr 的子元素名），以及一个取子元素名的辅助函数 —— 注意要只取**直接子元素**（`w:pPr` 里的嵌套 `w:rPr` 不算 `w:pPr` 的子元素）。
+
+- [ ] **Step 5: 运行时把继承来的乱序也归位**
+
+用户自带模板可能乱序。Dify 侧用 `_normalize_order` 兜底，VS Code 侧要有同样的保险。
+
+`src/docxStyles.ts` 新增：
+
+```ts
+export function normalizeDocxStyleOrder(stylesXml: string): string
+```
+
+语义与 Dify 侧 `_normalize_order` 一致：
+
+- 对每个 `<w:style>` 块的**顶层** `w:rPr` 和 `w:pPr`，把子元素按顺序表排序
+- 排序是**稳定**的：顺序表里没有的标签排在最后，彼此之间保持原有相对次序
+- 已经有序就不动（避免无谓地改写文件）
+
+`src/extension.ts` 的 `applyDocxStyleOverrides` 里调用它。注意现在的代码是：
+
+```ts
+    if (stylesEntry && styleOverrides.length > 0) {
+```
+
+—— `template` 档没有 override，所以**根本不会重写 styles.xml**。归位应该对所有档位都做（它是修复，不是覆盖），所以条件要拆开：
+
+```ts
+    if (stylesEntry) {
+        let stylesXml = stylesEntry.getData().toString('utf8');
+        for (const override of styleOverrides) {
+            stylesXml = upsertStyleOverride(stylesXml, override);
+        }
+        stylesXml = normalizeDocxStyleOrder(stylesXml);
+        zip.updateFile('word/styles.xml', Buffer.from(stylesXml, 'utf8'));
+    }
+```
+
+- [ ] **Step 6: 归位函数的测试**
+
+`test/unit/docxStyles.test.js` 追加：
+
+- 一个 `w:rPr` 里 `w:b` 排在 `w:sz` 后面 → 归位后 `w:b` 在 `w:sz` 前面
+- 一个 `w:pPr` 里 `w:shd` 排在 `w:jc` 后面 → 归位后 `w:shd` 在 `w:jc` 前面
+- 已经有序的输入 → 输出与输入**逐字节相同**
+- 顺序表里没有的标签 → 排在最后，且彼此相对次序不变
+- 嵌套的 `<w:pPr><w:rPr>` 里的 `w:rPr` 子元素也要归位（它是段落标记的属性）
+
+**断言要非恒真** —— 写完自己造个反例（把归位函数改成什么都不做）确认测试变红。
+
+- [ ] **Step 7: 端到端验证**
+
+用 pandoc 转一份，确认产物的 `word/styles.xml` 里**没有任何**乱序块：
+
+```bash
+pandoc sample.md --from gfm+raw_html --to docx --output out.docx \
+  --reference-doc multi-templates/reference_chinese_academic.docx
+```
+
+然后用 Step 4 的校验逻辑扫一遍产物，应当 0 违规。
+
+再确认一遍回归：把覆盖施加到 10 个内置模板上，仍然是「样式数 50→50、0 新建、0 误伤、改动集合恰好是那 9 个样式」。
+
+- [ ] **Step 8: 提交**
+
+```bash
+git add scripts/build-templates.js src/docxStyles.ts src/extension.ts test/unit/ multi-templates/ ../dify-plugin-MD2Docx/multi-templates/
+git commit -m "fix: emit the generated templates in OOXML child order
+
+The template generator wrote w:b after w:sz and the code shading after
+w:jc, both of which violate the schema, so Word offers to repair the
+documents built from them. Normalising the order at export time covers
+templates the user brings themselves."
+```
+
+
+---
+
 ### Task 6: Dify 侧对账（模板 + 预设值 + 文档）
 
 **背景变了。** 这个任务原先是「把 Dify 侧改成和 VS Code 侧一样」，但**另一个会话已经在 `main` 上把 Dify 侧加固完了**，本分支也已经 rebase 到 `main` 之上：
@@ -2734,6 +2891,35 @@ test('parseMermaidBlocks ignores a fence that is not at the start of a line', ()
     assert.deepEqual(parseMermaidBlocks('text ```mermaid\nA\n```'), []);
 });
 
+test('parseMermaidBlocks accepts a tilde fence', () => {
+    const blocks = parseMermaidBlocks('~~~mermaid\ngraph TD\n~~~');
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].code, 'graph TD');
+});
+
+test('parseMermaidBlocks accepts an indented fence of up to three spaces', () => {
+    const blocks = parseMermaidBlocks('   ```mermaid\ngraph TD\n   ```');
+    assert.equal(blocks.length, 1);
+});
+
+test('parseMermaidBlocks leaves a four-space indented block alone', () => {
+    assert.deepEqual(parseMermaidBlocks('    ```mermaid\n    graph TD\n    ```'), []);
+});
+
+test('parseMermaidBlocks accepts CRLF line endings', () => {
+    const blocks = parseMermaidBlocks('```mermaid\r\ngraph TD\r\n```');
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].code, 'graph TD');
+});
+
+test('parseMermaidBlocks requires the info string to be exactly mermaid', () => {
+    assert.deepEqual(parseMermaidBlocks('```mermaidjs\ngraph TD\n```'), []);
+});
+
+test('parseMermaidBlocks requires the closing fence to match the opening one', () => {
+    assert.deepEqual(parseMermaidBlocks('```mermaid\ngraph TD\n~~~\n'), []);
+});
+
 test('parseMermaidBlocks spans the block it reports', () => {
     const markdown = 'before\n```mermaid\ngraph TD\n```\nafter';
     const [block] = parseMermaidBlocks(markdown);
@@ -2824,12 +3010,28 @@ Expected: FAIL — `Cannot find module '../../out/mermaid.js'`
 
 - [ ] **Step 3: 创建 `src/mermaid.ts`**
 
+> ⚠️ **围栏识别规则要和 Dify 侧一致。** Dify 的 `MERMAID_BLOCK_RE` 是：
+>
+> ```python
+> MERMAID_BLOCK_RE = re.compile(
+>     r"(?ms)^[ \t]{0,3}(?P<fence>```+|~~~+)[ \t]*mermaid[ \t]*\r?\n"
+>     r"(?P<body>.*?)"
+>     r"^[ \t]{0,3}(?P=fence)[ \t]*\r?$"
+> )
+> ```
+>
+> 逐条对应：允许 0–3 个空格缩进（4 个空格及以上是缩进代码块，不是围栏）、支持 ``` 和 ~~~ 两种围栏、info string 必须**正好**是 `mermaid`、闭合围栏必须和开启围栏**同一种字符**。
+>
+> **一个刻意的差异**：Dify 的 `body` 捕获组**包含**结尾换行（`"graph TD\n"`），这里的捕获组**不含**（`"graph TD"`）—— 闭合围栏前的 `\r?\n` 在捕获组外面。对渲染没有影响，但 VSC 侧在渲染失败时会把代码块原样写回去，少一个尾换行更干净。
+>
+> VS Code 侧现在的旧正则 `/```mermaid[^\n]*\r?\n([\s\S]*?)```/gi` 有两个毛病：波浪线围栏的图**完全不渲染**；`[^\n]*` 会把 ```` ```mermaidjs ```` 也当成 Mermaid 图。
+
 ```ts
 import * as http from 'http';
 import * as https from 'https';
 import * as zlib from 'zlib';
 
-export const MERMAID_BLOCK_REGEX = /^```mermaid[^\n]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gim;
+export const MERMAID_BLOCK_REGEX = /^[ \t]{0,3}(```+|~~~+)[ \t]*mermaid[ \t]*\r?\n([\s\S]*?)\r?\n^[ \t]{0,3}\1[ \t]*\r?$/gim;
 
 export const MERMAID_REQUEST_TIMEOUT_MS = 30_000;
 export const MERMAID_MAX_ATTEMPTS = 3;
