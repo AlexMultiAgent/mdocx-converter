@@ -17,6 +17,7 @@ import type { StyleProfile } from './profiles';
 import { buildDocxStyleOverrides, upsertStyleOverride, upsertXmlAttribute, normalizeDocxStyleOrder } from './docxStyles';
 import type { DocxStyleOverride } from './docxStyles';
 import { getBundledReferenceDocxCandidates } from './templates';
+import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, parseMermaidBlocks, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
@@ -27,7 +28,9 @@ const EXPORT_BUSINESS_REPORT_COMMAND_ID = 'mdocxConverter.exportBusinessReport';
 const CHECK_ENVIRONMENT_COMMAND_ID = 'mdocxConverter.checkEnvironment';
 const CONFIGURATION_SECTION = 'mdocxConverter';
 const LEGACY_CONFIGURATION_SECTION = 'paperifyMd';
-const MERMAID_BLOCK_REGEX = /```mermaid[^\n]*\r?\n([\s\S]*?)```/gi;
+const MERMAID_API_NOTICE_SHOWN_KEY = 'mdocxConverter.mermaidApiNoticeShown';
+
+type MermaidRenderer = 'auto' | 'local' | 'api';
 
 interface ExportSettings {
     pandocPath: string;
@@ -36,6 +39,8 @@ interface ExportSettings {
     referenceLanguage: ReferenceLanguageSetting;
     outputDirectory: string;
     mermaidOutputFormat: 'png' | 'svg';
+    mermaidRenderer: MermaidRenderer;
+    mermaidApiUrl: string;
     openAfterExport: boolean;
     keepIntermediateFiles: boolean;
     styleProfile: StyleProfile;
@@ -73,7 +78,15 @@ class UserFacingError extends Error {
     }
 }
 
+/**
+ * The extension context, kept at module level so the one-time Mermaid Ink
+ * privacy notice can reach `globalState` without threading the context
+ * through every call.
+ */
+let extensionContext: vscode.ExtensionContext | undefined;
+
 export function activate(context: vscode.ExtensionContext): void {
+    extensionContext = context;
     const outputChannel = vscode.window.createOutputChannel(OUTPUT_CHANNEL_NAME);
     context.subscriptions.push(outputChannel);
 
@@ -252,6 +265,8 @@ function readSettings(markdownUri: vscode.Uri, exportOverrides?: ExportOverrides
         referenceLanguage: exportOverrides?.referenceLanguage ?? normalizeReferenceLanguageSetting(readConfigValue(config, legacyConfig, 'referenceLanguage', 'auto')),
         outputDirectory: readConfigValue(config, legacyConfig, 'outputDirectory', '').trim(),
         mermaidOutputFormat: readConfigValue<'png' | 'svg'>(config, legacyConfig, 'mermaidOutputFormat', 'png'),
+        mermaidRenderer: readConfigValue<MermaidRenderer>(config, legacyConfig, 'mermaidRenderer', 'auto'),
+        mermaidApiUrl: readConfigValue(config, legacyConfig, 'mermaidApiUrl', 'https://mermaid.ink').trim() || 'https://mermaid.ink',
         openAfterExport: readConfigValue(config, legacyConfig, 'openAfterExport', false),
         keepIntermediateFiles: readConfigValue(config, legacyConfig, 'keepIntermediateFiles', false),
         styleProfile: exportOverrides?.styleProfile ?? normalizeStyleProfile(readConfigValue(config, legacyConfig, 'styleProfile', 'template')),
@@ -352,14 +367,43 @@ async function resolveReferenceDocx(
     throw new UserFacingError(`Bundled ${referenceLanguage} reference DOCX was not found: ${bundledReferenceDocxCandidates.join(', ')}`);
 }
 
+/**
+ * Tell the user once that diagram content left the machine.
+ *
+ * The Mermaid Ink API fallback sends the diagram source to a remote service,
+ * so the export asks for consent — once per installation, not once per
+ * diagram. The flag lives in `globalState` so it survives a reload.
+ */
+async function notifyMermaidApiFallback(host: string): Promise<void> {
+    const state = extensionContext?.globalState;
+    if (!state || state.get<boolean>(MERMAID_API_NOTICE_SHOWN_KEY)) {
+        return;
+    }
+
+    await state.update(MERMAID_API_NOTICE_SHOWN_KEY, true);
+
+    const openSettingsLabel = 'Open Settings';
+    const choice = await vscode.window.showInformationMessage(
+        `Mermaid diagrams were rendered by the Mermaid Ink API. The diagram content was sent to ${host}.`,
+        openSettingsLabel
+    );
+
+    if (choice === openSettingsLabel) {
+        await vscode.commands.executeCommand(
+            'workbench.action.openSettings',
+            'mdocxConverter.mermaidRenderer'
+        );
+    }
+}
+
 async function prepareMarkdown(
     markdownPath: string,
     markdownText: string,
     settings: ExportSettings,
     outputChannel: vscode.OutputChannel
 ): Promise<PreparedMarkdown> {
-    const mermaidMatches = [...markdownText.matchAll(MERMAID_BLOCK_REGEX)];
-    if (mermaidMatches.length === 0) {
+    const blocks = parseMermaidBlocks(markdownText);
+    if (blocks.length === 0) {
         outputChannel.appendLine('No Mermaid blocks found.');
         return {
             markdownPath,
@@ -367,62 +411,123 @@ async function prepareMarkdown(
         };
     }
 
-    const mermaid = await requireMermaidCli(settings.mermaidCliPath, markdownPath);
-    outputChannel.appendLine(`Using Mermaid CLI: ${mermaid.command}`);
-    outputChannel.appendLine(`Mermaid CLI version: ${mermaid.versionLine}`);
-
     const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'mdocx-converter-'));
     const assetsDir = path.join(tempDir, 'mermaid-assets');
     await fsp.mkdir(assetsDir, { recursive: true });
 
+    let localMermaid: ResolvedExecutable | undefined;
+    if (settings.mermaidRenderer !== 'api') {
+        localMermaid = await resolveMermaidCli(settings.mermaidCliPath, markdownPath);
+        if (localMermaid) {
+            outputChannel.appendLine(`Using Mermaid CLI: ${localMermaid.command}`);
+            outputChannel.appendLine(`Mermaid CLI version: ${localMermaid.versionLine}`);
+        }
+    }
+
+    if (!localMermaid && settings.mermaidRenderer === 'local') {
+        throw new UserFacingError(
+            'Mermaid CLI was not found, but this Markdown file contains mermaid code fences. Install with "npm install -g @mermaid-js/mermaid-cli" or set mdocxConverter.mermaidCliPath.'
+        );
+    }
+
+    if (!localMermaid && settings.mermaidRenderer === 'auto') {
+        outputChannel.appendLine('Mermaid CLI unavailable, falling back to the Mermaid Ink API.');
+    }
+
+    // The budget is shared by every diagram in this export, not per diagram.
+    const deadline = Date.now() + MERMAID_TOTAL_BUDGET_MS;
+
+    // A malformed API URL is a configuration error, not a diagram error —
+    // fail the export with a clear message instead of retrying a bad URL.
+    const apiUrl = settings.mermaidRenderer === 'local'
+        ? undefined
+        : validateMermaidApiUrl(settings.mermaidApiUrl);
+
+    let usedApiFallback = false;
+
+    const rendered = await mapWithConcurrency(blocks, 4, async (block, index) => {
+        const fileName = `diagram-${index + 1}.${settings.mermaidOutputFormat}`;
+
+        if (localMermaid) {
+            const inputPath = path.join(assetsDir, `diagram-${index + 1}.mmd`);
+            const outputPath = path.join(assetsDir, fileName);
+            await fsp.writeFile(inputPath, block.code.trim(), 'utf8');
+            try {
+                await runExecutable(
+                    localMermaid.command,
+                    ['-i', inputPath, '-o', outputPath, '-b', 'transparent'],
+                    { shell: localMermaid.useShell, cwd: path.dirname(markdownPath) }
+                );
+                if (!(await exists(outputPath))) {
+                    throw new Error(`Mermaid CLI did not write ${fileName}`);
+                }
+                return { fileName, succeeded: true };
+            } catch (error) {
+                outputChannel.appendLine(`Mermaid CLI failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
+                if (settings.mermaidRenderer === 'local') {
+                    throw error;
+                }
+            }
+        }
+
+        const remainingMs = deadline - Date.now();
+        if (apiUrl && remainingMs > 0) {
+            // The Mermaid Ink client only ever returns PNG bytes, so the file
+            // has to carry the `.png` extension even when the local renderer
+            // is configured for SVG.
+            const apiFileName = `diagram-${index + 1}.png`;
+            const outputPath = path.join(assetsDir, apiFileName);
+            try {
+                const image = await renderMermaidWithRetry(block.code, {
+                    apiUrl,
+                    totalBudgetMs: remainingMs
+                });
+                await fsp.writeFile(outputPath, image);
+                usedApiFallback = true;
+                return { fileName: apiFileName, succeeded: true };
+            } catch (error) {
+                outputChannel.appendLine(`Mermaid Ink API failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
+            }
+        }
+
+        return { fileName, succeeded: false };
+    });
+
     let processedMarkdown = '';
     let lastIndex = 0;
-    let blockIndex = 0;
 
-    for (const match of mermaidMatches) {
-        const fullMatch = match[0];
-        const diagramBody = match[1];
-        const matchIndex = match.index ?? 0;
-
-        processedMarkdown += markdownText.slice(lastIndex, matchIndex);
-        blockIndex += 1;
-
-        const inputPath = path.join(assetsDir, `diagram-${blockIndex}.mmd`);
-        const outputPath = path.join(assetsDir, `diagram-${blockIndex}.${settings.mermaidOutputFormat}`);
-        await fsp.writeFile(inputPath, diagramBody.trim(), 'utf8');
-
-        outputChannel.appendLine(`Rendering Mermaid diagram ${blockIndex} -> ${path.basename(outputPath)}`);
-        await runExecutable(
-            mermaid.command,
-            [
-                '-i',
-                inputPath,
-                '-o',
-                outputPath,
-                '-b',
-                'transparent'
-            ],
-            {
-                shell: mermaid.useShell,
-                cwd: path.dirname(markdownPath)
-            }
-        );
-
-        const relativeDiagramPath = `./mermaid-assets/${path.basename(outputPath)}`.replace(/\\/g, '/');
+    blocks.forEach((block, index) => {
+        processedMarkdown += markdownText.slice(lastIndex, block.start);
+        const result = rendered[index];
         processedMarkdown = ensureTrailingBlankLine(processedMarkdown);
-        processedMarkdown += `![Mermaid Diagram ${blockIndex}](${relativeDiagramPath})\n\n`;
-        lastIndex = matchIndex + fullMatch.length;
-    }
+        if (result.succeeded) {
+            const relativeDiagramPath = `./mermaid-assets/${result.fileName}`.replace(/\\/g, '/');
+            processedMarkdown += `![Mermaid Diagram ${index + 1}](${relativeDiagramPath})\n\n`;
+        } else {
+            processedMarkdown += '```mermaid\n' + block.code + '\n```\n\n';
+        }
+        lastIndex = block.end;
+    });
 
     processedMarkdown += markdownText.slice(lastIndex);
 
     const preparedMarkdownPath = path.join(tempDir, path.basename(markdownPath));
     await fsp.writeFile(preparedMarkdownPath, processedMarkdown, 'utf8');
 
+    const failedCount = rendered.filter((item) => !item.succeeded).length;
+    if (failedCount > 0) {
+        outputChannel.appendLine(`${failedCount} of ${blocks.length} Mermaid diagrams could not be rendered and were kept as code blocks.`);
+    }
+
+    if (usedApiFallback && apiUrl) {
+        outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${apiUrl}`);
+        await notifyMermaidApiFallback(apiUrl);
+    }
+
     return {
         markdownPath: preparedMarkdownPath,
         tempDir,
-        mermaidCount: mermaidMatches.length
+        mermaidCount: blocks.length
     };
 }
 
@@ -461,16 +566,6 @@ function getPandocInstallHelp(): string {
 async function resolvePandoc(configuredPath: string): Promise<ResolvedExecutable | undefined> {
     const pandoc = await resolveExecutable(getPandocCandidates(configuredPath), ['--version']);
     return pandoc;
-}
-
-async function requireMermaidCli(configuredPath: string, markdownPath: string): Promise<ResolvedExecutable> {
-    const mermaid = await resolveMermaidCli(configuredPath, markdownPath);
-    if (!mermaid) {
-        throw new UserFacingError(
-            'Mermaid CLI was not found, but this Markdown file contains mermaid code fences. Install with "npm install -g @mermaid-js/mermaid-cli" or set mdocxConverter.mermaidCliPath.'
-        );
-    }
-    return mermaid;
 }
 
 async function resolveMermaidCli(configuredPath: string, markdownPath: string): Promise<ResolvedExecutable | undefined> {

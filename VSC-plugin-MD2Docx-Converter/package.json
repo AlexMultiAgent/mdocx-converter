@@ -171,6 +171,26 @@
           "default": "png",
           "description": "Rendered image format for mermaid diagrams before conversion."
         },
+        "mdocxConverter.mermaidRenderer": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "local",
+            "api"
+          ],
+          "enumDescriptions": [
+            "Render with the local Mermaid CLI first and fall back to the Mermaid Ink API when mmdc is unavailable.",
+            "Render with the local Mermaid CLI only. Export fails with install guidance when mmdc is missing.",
+            "Render with the Mermaid Ink HTTP API only. Diagram content is sent to the configured host."
+          ],
+          "default": "auto",
+          "description": "How Mermaid diagrams are rendered. The API fallback sends diagram content to mermaid.ink unless a self-hosted Mermaid Ink URL is configured."
+        },
+        "mdocxConverter.mermaidApiUrl": {
+          "type": "string",
+          "default": "https://mermaid.ink",
+          "description": "Base URL of the Mermaid Ink service used when mdocxConverter.mermaidRenderer allows the API fallback. Point this at a self-hosted instance to keep diagram content local."
+        },
         "mdocxConverter.openAfterExport": {
           "type": "boolean",
           "default": false,
