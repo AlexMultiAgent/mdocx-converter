@@ -2131,6 +2131,346 @@ git commit -m "fix: match DOCX styles by display name instead of hard-coded styl
 提交信息就是上面这一行。仓库 CLAUDE.md 禁止任何 `Co-Authored-By:` / Claude 共同作者标记。
 
 
+### Task 5c: 按 OOXML 子元素顺序写样式覆盖
+
+**Files:**
+- Modify: `src/docxStyles.ts`
+- Test: `test/unit/docxStyles.test.js`
+
+**背景。** Task 5b 把样式查找改对了，但搬运过来的 XML 写入函数一直按「字符串拼接到末尾」的方式插入元素，违反 OOXML 的子元素顺序。10 个内置模板的每个目标样式都自带 `<w:rPr>` 和 `<w:rFonts>`，所以插入路径从没被触发 —— 但扩展支持**用户自带模板**（`mdocxConverter.referenceDocx` 设置，或 Markdown 同目录的 `reference.docx`），那里就会踩到。
+
+三个复现（当前 `out/docxStyles.js` 实测输出）：
+
+**① 样式没有 `<w:rPr>` 时，`<w:rPr>` 被插到 `<w:name>` 前面**
+```xml
+<w:style w:type="paragraph" w:styleId="Normal"><w:rPr>…</w:rPr><w:name w:val="Normal"/>…
+```
+CT_Style 要求 `w:name` 是第一个子元素。
+
+**② `<w:rPr>` 存在但没有 `<w:rFonts>` 时，`<w:rFonts>` 被追加到 `<w:lang>` 后面**
+```xml
+<w:rPr><w:sz w:val="24"/><w:lang w:val="zh-CN"/><w:rFonts …/></w:rPr>
+```
+CT_RPr 要求 `w:rFonts` 紧跟 `w:rStyle`（或排第一）。
+
+**③ 样式里有 `<w:pPr><w:rPr>`（段落标记属性）时，字体被写进了段落标记**
+```xml
+<w:style …><w:name w:val="Normal"/><w:pPr><w:rPr><w:b/><w:rFonts …/><w:sz …/></w:rPr>…</w:pPr><w:rPr><w:sz w:val="24"/></w:rPr></w:style>
+```
+样式自身的 `<w:rPr>` 根本没被改 —— 这是**功能性 bug**，正文字体不生效。
+
+同样的问题也存在于 `<w:pPr>` 里插入 `<w:shd>` 和 `<w:spacing>`：两者都被追加到 `<w:pPr>` 末尾，而 CT_PPr 要求 `w:shd` 在 `w:spacing`/`w:ind`/`w:jc` 之前、`w:spacing` 在 `w:ind`/`w:jc` 之前。
+
+> 这几条与 `4c7e8b07~1` 的旧实现逐字相同 —— 是搬运过来的老问题，不是 Task 5b 引入的。仓库 CLAUDE.md 早就把「OOXML child order」列为「Dify 侧已修、本侧未采纳」。
+
+**根本原因**：现在的 `upsertInsideElement` 用一条正则去找父元素，匹配到的是**第一个**同名标签 —— 样式里嵌套的 `<w:pPr><w:rPr>` 会被当成样式自身的 `<w:rPr>`。而且「这个标签存在吗」的判断同样只看第一个匹配，段落标记里的 `<w:rPr>` 会让顶层 `<w:rPr>` 被误判为「已存在」，于是根本不会补建。
+
+**修法**：先把样式块的**顶层子元素**列出来，之后所有查找、插入、替换都只在这层做。
+
+- [ ] **Step 1: 写失败的测试**
+
+在 `test/unit/docxStyles.test.js` 末尾追加：
+
+```js
+const { ensureChildElement, upsertInsideElement, upsertLineSpacingAttributes } = require('../../out/docxStyles.js');
+
+const STYLE_BLOCK = (children) => `<w:style w:type="paragraph" w:styleId="Normal">${children}</w:style>`;
+
+test('a missing w:rPr is inserted after w:name, not before it', () => {
+    const updated = ensureChildElement(STYLE_BLOCK('<w:name w:val="Normal"/><w:qFormat/>'), 'w:rPr');
+    assert.ok(updated.indexOf('<w:rPr') > updated.indexOf('<w:name'),
+        'w:name must stay the first child of w:style');
+});
+
+test('a missing w:pPr is inserted before w:rPr', () => {
+    const updated = ensureChildElement(
+        STYLE_BLOCK('<w:name w:val="Normal"/><w:rPr><w:sz w:val="24"/></w:rPr>'), 'w:pPr');
+    assert.ok(updated.indexOf('<w:pPr') > updated.indexOf('<w:name'));
+    assert.ok(updated.indexOf('<w:pPr') < updated.indexOf('<w:rPr'));
+});
+
+test('a nested w:pPr/w:rPr does not count as the style-level w:rPr', () => {
+    const style = STYLE_BLOCK(
+        '<w:name w:val="Normal"/><w:pPr><w:rPr><w:b/></w:rPr></w:pPr>');
+    const updated = ensureChildElement(style, 'w:rPr');
+    assert.ok(updated.indexOf('</w:pPr>') < updated.lastIndexOf('<w:rPr'),
+        'a top-level w:rPr must be added after the paragraph properties');
+});
+
+test('a missing w:rFonts is inserted before w:sz', () => {
+    const updated = upsertInsideElement(
+        '<w:rPr><w:sz w:val="24"/></w:rPr>', 'w:rPr', /<w:rFonts\b[^>]*\/>/, '<w:rFonts w:ascii="X"/>');
+    assert.ok(updated.indexOf('<w:rFonts') < updated.indexOf('<w:sz'));
+});
+
+test('a missing w:rFonts is inserted before w:lang', () => {
+    const updated = upsertInsideElement(
+        '<w:rPr><w:lang w:val="zh-CN"/></w:rPr>', 'w:rPr', /<w:rFonts\b[^>]*\/>/, '<w:rFonts w:ascii="X"/>');
+    assert.ok(updated.indexOf('<w:rFonts') < updated.indexOf('<w:lang'));
+});
+
+test('a missing w:color is inserted before w:sz', () => {
+    const updated = upsertInsideElement(
+        '<w:rPr><w:sz w:val="24"/></w:rPr>', 'w:rPr', /<w:color\b[^>]*\/>/, '<w:color w:val="000000"/>');
+    assert.ok(updated.indexOf('<w:color') < updated.indexOf('<w:sz'));
+});
+
+test('the style-level w:rPr is used, not the paragraph mark one', () => {
+    const style = STYLE_BLOCK(
+        '<w:name w:val="Normal"/><w:pPr><w:rPr><w:b/></w:rPr><w:jc w:val="both"/></w:pPr>' +
+        '<w:rPr><w:sz w:val="24"/></w:rPr>');
+    const updated = upsertStyleOverride(style, {
+        styleId: 'Normal',
+        styleNames: ['Normal'],
+        asciiFont: 'Times New Roman',
+        sizePt: 12
+    });
+    const paragraphMark = updated.match(/<w:pPr>[\s\S]*?<\/w:pPr>/)[0];
+    const styleRPr = updated.match(/<\/w:pPr>([\s\S]*?)<\/w:style>/)[1];
+    assert.ok(!paragraphMark.includes('w:rFonts'), 'the paragraph mark must not get the font');
+    assert.ok(styleRPr.includes('w:rFonts'), 'the style-level w:rPr must get the font');
+});
+
+test('a missing w:spacing is inserted before w:ind and w:jc', () => {
+    const updated = upsertLineSpacingAttributes(
+        STYLE_BLOCK('<w:name w:val="Normal"/><w:pPr><w:ind w:firstLine="480"/><w:jc w:val="both"/></w:pPr>'),
+        360, 'auto');
+    assert.ok(updated.indexOf('<w:spacing') > updated.indexOf('<w:pPr'));
+    assert.ok(updated.indexOf('<w:spacing') < updated.indexOf('<w:ind'));
+    assert.ok(updated.indexOf('<w:spacing') < updated.indexOf('<w:jc'));
+});
+
+test('a missing w:shd is inserted before w:spacing and w:jc', () => {
+    const updated = upsertStyleOverride(
+        STYLE_BLOCK('<w:name w:val="Normal"/><w:pPr><w:spacing w:after="0"/><w:jc w:val="both"/></w:pPr>'),
+        {
+            styleId: 'Normal',
+            styleNames: ['Normal'],
+            shadingFill: 'F3F4F6'
+        });
+    assert.ok(updated.indexOf('<w:shd') < updated.indexOf('<w:spacing'));
+    assert.ok(updated.indexOf('<w:shd') < updated.indexOf('<w:jc'));
+});
+```
+
+Run: `npm test`
+Expected: FAIL —— 上面每条断言在当前实现下都不成立
+
+- [ ] **Step 2: 加子元素顺序表**
+
+`src/docxStyles.ts` 里加三张表（顺序取自 ECMA-376 的 CT_Style / CT_RPr / CT_PPr）：
+
+```ts
+/** ECMA-376 CT_Style child order. */
+const STYLE_CHILD_ORDER = [
+    'w:name', 'w:aliases', 'w:basedOn', 'w:next', 'w:link', 'w:autoRedefine',
+    'w:hidden', 'w:uiPriority', 'w:semiHidden', 'w:unhideWhenUsed', 'w:qFormat',
+    'w:locked', 'w:personal', 'w:personalCompose', 'w:personalReply', 'w:rsid',
+    'w:pPr', 'w:rPr', 'w:tblPr', 'w:trPr', 'w:tcPr', 'w:tblStylePr'
+];
+
+/** ECMA-376 CT_RPr child order. */
+const RPR_CHILD_ORDER = [
+    'w:rStyle', 'w:rFonts', 'w:b', 'w:bCs', 'w:i', 'w:iCs', 'w:caps', 'w:smallCaps',
+    'w:strike', 'w:dstrike', 'w:outline', 'w:shadow', 'w:emboss', 'w:imprint',
+    'w:noProof', 'w:snapToGrid', 'w:vanish', 'w:webHidden', 'w:color', 'w:spacing',
+    'w:w', 'w:kern', 'w:position', 'w:sz', 'w:szCs', 'w:highlight', 'w:u', 'w:effect',
+    'w:bdr', 'w:shd', 'w:fitText', 'w:vertAlign', 'w:rtl', 'w:cs', 'w:em', 'w:lang',
+    'w:eastAsianLayout', 'w:specVanish', 'w:oMath'
+];
+
+/** ECMA-376 CT_PPr child order. */
+const PPR_CHILD_ORDER = [
+    'w:pStyle', 'w:keepNext', 'w:keepLines', 'w:pageBreakBefore', 'w:framePr',
+    'w:widowControl', 'w:numPr', 'w:suppressLineNumbers', 'w:pBdr', 'w:shd', 'w:tabs',
+    'w:suppressAutoHyphens', 'w:kinsoku', 'w:wordWrap', 'w:overflowPunct',
+    'w:topLinePunct', 'w:autoSpaceDE', 'w:autoSpaceDN', 'w:bidi', 'w:adjustRightInd',
+    'w:snapToGrid', 'w:spacing', 'w:ind', 'w:contextualSpacing', 'w:mirrorIndents',
+    'w:suppressOverlap', 'w:jc', 'w:textDirection', 'w:textAlignment',
+    'w:textboxTightWrap', 'w:outlineLvl', 'w:divId', 'w:cnfStyle', 'w:rPr', 'w:sectPr',
+    'w:pPrChange'
+];
+```
+
+- [ ] **Step 3: 顶层子元素扫描**
+
+新增一个只列出**顶层**子元素的扫描器。它是后面所有查找的基础 —— 有了它，段落标记里的 `<w:pPr><w:rPr>` 就不会再被误认成样式自身的 `<w:rPr>`。
+
+```ts
+export interface XmlChildSpan {
+    name: string;
+    start: number;
+    end: number;
+}
+
+/**
+ * List the direct children of the `<w:style>` block in `styleXml`, with their
+ * positions in the string. Only top-level children are returned, so a nested
+ * `<w:pPr><w:rPr>` is not mistaken for the style's own `<w:rPr>`.
+ */
+export function listStyleChildren(styleXml: string): XmlChildSpan[]
+```
+
+实现要求（这几条都要处理对）：
+
+- 扫描范围是 `<w:style …>` 开标签之后、`</w:style>` 之前
+- 遇到自闭合标签（`<w:x/>`）时，它是顶层子元素，直接记一条
+- 遇到成对标签时，要正确跳过**嵌套**的同名或异名标签，只记录最外层那个
+- 属性的引号值里可能含 `>`，扫描标签结尾时必须跳过引号内的内容
+- 只认 `w:` 命名空间前缀的标签（`styles.xml` 里没有别的命名空间，但别把 `</w:style>` 本身算成子元素）
+
+举例，下面这个块应返回 **2** 个子元素（`w:name` 和 `w:pPr`），而不是 3 个：
+
+```xml
+<w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:rPr><w:b/></w:rPr><w:jc w:val="both"/></w:pPr></w:style>
+```
+
+- [ ] **Step 4: 按顺序插入的通用工具**
+
+```ts
+/**
+ * Insert `childXml` into `containerXml` at the position the OOXML schema
+ * requires, using `order` — the parent's ordered list of child tag names.
+ * The child goes before the first existing child that follows it in the
+ * schema, and after every child that precedes it.
+ */
+function insertChildInOrder(
+    containerXml: string,
+    childTagName: string,
+    childXml: string,
+    order: string[]
+): string
+```
+
+实现要求：
+
+- `order` 里按 schema 顺序排列。目标元素在 `order` 中的位置决定它该排在哪儿
+- 找到**第一个**（按 schema 顺序最靠前的）在容器里实际存在的后续兄弟元素，把新元素插到它前面
+- 如果没有后续兄弟，插到容器闭合标签之前
+- 目标标签不在 `order` 里时，退化成插到闭合标签之前
+
+举例，容器是 `<w:rPr><w:sz w:val="24"/><w:lang w:val="zh-CN"/></w:rPr>`，要插 `w:rFonts`（`RPR_CHILD_ORDER` 里排第 2）→ 结果是 `<w:rPr><w:rFonts/><w:sz/><w:lang/></w:rPr>`。
+
+- [ ] **Step 5: ensureChildElement 改成顶层判断 + 顺序插入**
+
+```ts
+export function ensureChildElement(xml: string, tagName: string): string {
+    const children = listStyleChildren(xml);
+    if (children.some((child) => child.name === tagName)) {
+        return xml;
+    }
+
+    return insertChildInOrder(xml, tagName, `<${tagName}/>`, STYLE_CHILD_ORDER);
+}
+```
+
+⚠️ **「存在吗」的判断必须用顶层列表，不能用 `new RegExp(\`<${tagName}\\b\`).test(xml)`。** 后者会被段落标记里的 `<w:pPr><w:rPr>` 骗过去，误以为顶层 `<w:rPr>` 已经存在，结果顶层 `<w:rPr>` 永远补不上，字体就写不进样式。Step 1 的第三条测试专门盯这个。
+
+- [ ] **Step 6: upsertInsideElement 只动顶层父元素，内部按顺序插入**
+
+```ts
+export function upsertInsideElement(xml: string, tagName: string, childRegex: RegExp, childXml: string): string {
+    const target = listStyleChildren(xml).find((child) => child.name === tagName);
+    if (!target) {
+        return xml;
+    }
+
+    const elementXml = xml.slice(target.start, target.end);
+    const order = tagName === 'w:rPr' ? RPR_CHILD_ORDER
+        : tagName === 'w:pPr' ? PPR_CHILD_ORDER
+            : undefined;
+
+    let updatedElement: string;
+    if (childRegex.test(elementXml)) {
+        updatedElement = elementXml.replace(childRegex, childXml);
+    } else if (order) {
+        const childTagName = childXml.match(/^<([A-Za-z0-9:]+)/)?.[1];
+        updatedElement = childTagName
+            ? insertChildInOrder(elementXml, childTagName, childXml, order)
+            : elementXml.replace(/\/>$/, `>${childXml}</${tagName}>`);
+    } else if (elementXml.endsWith('/>')) {
+        updatedElement = elementXml.replace(/\/>$/, `>${childXml}</${tagName}>`);
+    } else {
+        updatedElement = elementXml.replace(new RegExp(`</${tagName}>$`), `${childXml}</${tagName}>`);
+    }
+
+    return xml.slice(0, target.start) + updatedElement + xml.slice(target.end);
+}
+```
+
+- [ ] **Step 7: upsertLineSpacingAttributes 的 `<w:spacing>` 按顺序插入**
+
+现在缺 `<w:spacing>` 时是追加到 `</w:pPr>` 之前 —— 也就是 `<w:pPr>` 的最后，`w:ind`/`w:jc` 后面。改成用 `insertChildInOrder`：
+
+```ts
+export function upsertLineSpacingAttributes(xml: string, lineTwips: number, rule: 'auto' | 'exact'): string {
+    const target = listStyleChildren(xml).find((child) => child.name === 'w:pPr');
+    if (!target) {
+        return xml;
+    }
+
+    const pPrXml = xml.slice(target.start, target.end);
+    const spacingRegex = /<w:spacing\b[^>]*\/>/;
+
+    let updatedPPr: string;
+    if (spacingRegex.test(pPrXml)) {
+        updatedPPr = pPrXml.replace(spacingRegex, (spacingXml) => {
+            let updated = spacingXml;
+            updated = upsertXmlAttribute(updated, 'w:line', String(lineTwips));
+            updated = upsertXmlAttribute(updated, 'w:lineRule', rule);
+            return updated;
+        });
+    } else {
+        const spacingXml = `<w:spacing w:line="${lineTwips}" w:lineRule="${rule}"/>`;
+        updatedPPr = insertChildInOrder(pPrXml, 'w:spacing', spacingXml, PPR_CHILD_ORDER);
+    }
+
+    return xml.slice(0, target.start) + updatedPPr + xml.slice(target.end);
+}
+```
+
+> `insertChildInOrder` 的兜底分支把 `<w:spacing>` 插到 `</w:pPr>` 之前；`w:spacing` 在 CT_PPr 里排在 `w:ind`/`w:jc` 之前，所以正常会插到它们前面。✓
+
+- [ ] **Step 8: 补上 Task 5b 评审指出的测试盲区**
+
+Task 5b 的规格评审做了变异测试，发现三处断言没有区分力：
+
+1. **现有 fixture 缺 `</w:styles>` 根标签**，`insertDocxStyle()` 依赖根标签插入，所以「不新建孤儿样式」这条断言看不到插入动作 —— 把插入改成「无根标签也能追加」，9 个测试仍然全过。把 fixture 补上 `</w:styles>` 根标签，并在插入路径上补一条断言。
+2. **「精确 styleId 命中」这半条规则没有任何测试钉住** —— 把 `idMatches` 改成 `false`，9 个测试仍然全过。补一条：目标样式显示名不匹配、但 styleId 精确匹配时，样式被改、且**不新建**。
+3. **`HEADING_1_STYLE_NAMES` 的拼写没被钉住** —— 改成 `['Heading 1']` 9 个测试仍然全过（大小写不敏感，两种拼写行为等价）。补一条断言把常量内容钉住。
+
+- [ ] **Step 9: 跑测试**
+
+Run: `npm test`
+Expected: 全绿
+
+- [ ] **Step 10: 端到端抽查**
+
+用**一个自带模板**（不是内置的 10 个）跑一次导出，确认写出来的 `word/styles.xml` 元素顺序合法：
+
+- 每个 `<w:style>` 块里 `w:name` 必须是第一个子元素
+- 每个 `<w:rPr>` 里 `w:rFonts` 必须排在 `w:sz`/`w:lang` 之前
+- 每个 `<w:pPr>` 里 `w:spacing` 必须排在 `w:ind`/`w:jc` 之前，`w:shd` 必须排在 `w:spacing` 之前
+
+**再跑一遍 10 个内置模板的覆盖**，确认没有回归 —— 之前实测是「样式数 50 → 50，0 新建，0 误伤」，改完之后必须还是这个数。
+
+- [ ] **Step 11: 提交**
+
+```bash
+git add src/docxStyles.ts test/unit/docxStyles.test.js
+git commit -m "fix: write DOCX style overrides in OOXML child order
+
+The style overrides were assembling elements by appending to the end of
+their parent, so a template whose Normal style had no w:rPr ended up
+with w:rPr before w:name, and a w:rFonts ended up after w:lang. A style
+carrying a nested w:pPr/w:rPr had the font written into the paragraph
+mark instead of the style itself. Insert each element at the position
+the schema requires."
+```
+
+
+---
+
 ### Task 6: Dify 侧同步
 
 **Files:**
