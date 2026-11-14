@@ -10,6 +10,8 @@ npm run compile       # tsc -p ./  — compiles src/ to out/
 npm run watch         # tsc -watch -p ./
 npm run package       # vsce package --allow-missing-repository  — creates .vsix
 npm test              # compile + node:test unit suite (needs Node >= 22 for --test globs)
+npm run test:e2e      # per-profile export check against the real pandoc (needs pandoc)
+npm run build:templates   # regenerate multi-templates/ from src/profiles.ts
 ```
 
 Press `F5` in VS Code to launch an Extension Development Host for manual testing.
