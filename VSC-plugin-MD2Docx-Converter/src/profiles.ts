@@ -232,12 +232,12 @@ export function buildPandocMetadata(options: {
         metadata.CJKmainfont = bodyFont.eastAsia;
     }
 
-    const bodySize = options.bodySizePt ?? preset.bodySizePt;
+    const bodySize = options.bodySizePt || preset.bodySizePt;
     if (bodySize) {
         metadata.fontsize = `${bodySize}pt`;
     }
 
-    const lineSpacing = options.lineSpacing ?? preset.lineSpacing;
+    const lineSpacing = options.lineSpacing || preset.lineSpacing;
     if (lineSpacing) {
         metadata.linestretch = String(lineSpacing);
     }

@@ -41,7 +41,7 @@ Markdown file
   │     Produces a temp Markdown file in os.tmpdir()
   │
   ├─ 2. Pandoc: gfm+raw_html → docx via --reference-doc (template)
-  │     Metadata injected via --metadata (mainfont, CJKmainfont, fontsize, linestretch)
+  │     Metadata injected via --metadata (mainfont, CJKmainfont, fontsize, linestretch, monofont)
   │     --resource-path set to both the original Markdown dir and the temp dir
   │     NOT sandboxed — local image paths and remote URLs still resolve
   │
