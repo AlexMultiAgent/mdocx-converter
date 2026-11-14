@@ -2,6 +2,7 @@
 CLAUDE.md
 pytest.ini
 requirements-dev.txt
+scripts/
 tests/
 .pytest_cache/
 __pycache__/

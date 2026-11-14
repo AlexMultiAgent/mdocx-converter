@@ -26,16 +26,18 @@ to **that host instead** — review where it points before using it.
 The endpoint must use `http` or `https`, and link-local addresses are refused
 because they cover the cloud instance metadata endpoint
 (`169.254.169.254`). Private address ranges remain reachable on purpose: a
-self-hosted instance commonly lives on an internal network. A hostname that
-resolves to a link-local address is not detected, so do not point the
-parameter at a name you do not control.
+self-hosted instance commonly lives on an internal network. Hostnames are
+resolved before use and rejected when they resolve to a link-local address;
+HTTP redirects are not followed. Do not point the parameter at a name you do
+not control: DNS rebinding can still change the address after validation.
 
 ## Local images
 
-Images referenced by the Markdown are resolved by Pandoc against the plugin's
-working directory. Use an absolute path or a `data:` URI to embed an image.
-An image that cannot be resolved is reported in the tool's `warnings` field
-rather than being dropped silently.
+Pandoc runs with `--sandbox`. Images referenced by absolute paths, relative
+paths, or external URLs are therefore not read. This prevents user-provided
+Markdown from probing the host filesystem or making arbitrary outbound HTTP
+requests. Use a `data:` URI to embed an image. An image that cannot be read is
+reported in the tool's `warnings` field rather than being dropped silently.
 
 ## Pandoc Binary
 
@@ -49,7 +51,8 @@ The binary is found automatically under the plugin venv at
 `PYPANDOC_PANDOC` environment variable is required.
 
 If your environment is air-gapped, no action is needed — the binary
-arrives with `pip install`.
+arrives with `pip install`. Pandoc itself is not given network access when it
+processes Markdown.
 
 ## Temporary Files
 

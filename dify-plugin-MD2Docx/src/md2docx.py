@@ -8,6 +8,7 @@ import importlib.util
 import os
 import re
 import io
+import base64
 import time
 import shutil
 import tempfile
@@ -17,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
+from threading import Lock
 from typing import Optional, Any, Generator
 
 # ── Dify SDK (must import first — triggers gevent monkey-patch) ──
@@ -56,7 +58,11 @@ MAX_MARKDOWN_BYTES = 5 * 1024 * 1024  # 5 MB
 
 # Total wall-clock budget for Mermaid rendering across all diagrams. Diagrams
 # still running after this are cancelled and reported as timed-out.
-MERMAID_TOTAL_BUDGET_SECONDS = 120
+MERMAID_TOTAL_BUDGET_SECONDS = 75
+
+# Bound the amount of generated media that can be embedded in one request.
+MAX_MERMAID_DIAGRAMS = 50
+MAX_MERMAID_TOTAL_BYTES = 32 * 1024 * 1024
 
 # Number of diagrams rendered at the same time.
 MERMAID_MAX_WORKERS = 4
@@ -84,26 +90,21 @@ MERMAID_BLOCK_RE = re.compile(
 CJK_CHAR_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
 LATIN_CHAR_RE = re.compile(r"[A-Za-z]")
 
-# Fonts that carry CJK glyphs, under the names Word stores in OOXML.
-CJK_FONT_NAMES = frozenset({
-    "SimSun", "NSimSun", "SimHei", "FangSong", "FangSong_GB2312",
-    "KaiTi", "KaiTi_GB2312", "STSong", "STHeiti", "DengXian",
-    "Microsoft YaHei", "Microsoft YaHei UI", "Microsoft JhengHei",
-    "Yu Gothic", "MS Mincho", "MS Gothic",
-})
-_CJK_FONT_NAMES_LOWER = frozenset(name.lower() for name in CJK_FONT_NAMES)
-
 # ── Profile defaults (ported from getProfileDocxDefaults) ───
 
 PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
     "academic": {
-        "body_font": "SimSun",
+        "body_font": "Times New Roman",
+        "body_cjk_font": "SimSun",
         "body_size_pt": 12,
-        "heading1_font": "SimHei",
+        "heading1_font": "Times New Roman",
+        "heading1_cjk_font": "SimHei",
         "heading1_size_pt": 16,
-        "heading2_font": "SimHei",
+        "heading2_font": "Times New Roman",
+        "heading2_cjk_font": "SimHei",
         "heading2_size_pt": 14,
-        "heading3_font": "SimHei",
+        "heading3_font": "Times New Roman",
+        "heading3_cjk_font": "SimHei",
         "heading3_size_pt": 12,
         "line_spacing": 1.5,
         "margin_top_mm": 25.4,
@@ -113,12 +114,16 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "business": {
         "body_font": "Arial",
+        "body_cjk_font": "Microsoft YaHei",
         "body_size_pt": 11,
         "heading1_font": "Arial",
+        "heading1_cjk_font": "Microsoft YaHei",
         "heading1_size_pt": 18,
         "heading2_font": "Arial",
+        "heading2_cjk_font": "Microsoft YaHei",
         "heading2_size_pt": 14,
         "heading3_font": "Arial",
+        "heading3_cjk_font": "Microsoft YaHei",
         "heading3_size_pt": 12,
         "line_spacing": 1.5,
         "margin_top_mm": 25.4,
@@ -128,12 +133,16 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "technical": {
         "body_font": "Arial",
+        "body_cjk_font": "Microsoft YaHei",
         "body_size_pt": 11,
         "heading1_font": "Arial",
+        "heading1_cjk_font": "Microsoft YaHei",
         "heading1_size_pt": 16,
         "heading2_font": "Arial",
+        "heading2_cjk_font": "Microsoft YaHei",
         "heading2_size_pt": 14,
         "heading3_font": "Arial",
+        "heading3_cjk_font": "Microsoft YaHei",
         "heading3_size_pt": 12,
         "line_spacing": 1.35,
         "margin_top_mm": 19,
@@ -142,13 +151,17 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "margin_right_mm": 19,
     },
     "official": {
-        "body_font": "FangSong",
+        "body_font": "Times New Roman",
+        "body_cjk_font": "FangSong",
         "body_size_pt": 16,
-        "heading1_font": "SimHei",
+        "heading1_font": "Times New Roman",
+        "heading1_cjk_font": "SimHei",
         "heading1_size_pt": 16,
-        "heading2_font": "KaiTi",
+        "heading2_font": "Times New Roman",
+        "heading2_cjk_font": "KaiTi",
         "heading2_size_pt": 16,
-        "heading3_font": "FangSong",
+        "heading3_font": "Times New Roman",
+        "heading3_cjk_font": "FangSong",
         "heading3_size_pt": 16,
         "line_spacing": 1.75,
         "margin_top_mm": 37,
@@ -157,13 +170,17 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "margin_right_mm": 26,
     },
     "thesis": {
-        "body_font": "SimSun",
+        "body_font": "Times New Roman",
+        "body_cjk_font": "SimSun",
         "body_size_pt": 12,
-        "heading1_font": "SimHei",
+        "heading1_font": "Times New Roman",
+        "heading1_cjk_font": "SimHei",
         "heading1_size_pt": 22,
-        "heading2_font": "SimHei",
+        "heading2_font": "Times New Roman",
+        "heading2_cjk_font": "SimHei",
         "heading2_size_pt": 16,
-        "heading3_font": "SimHei",
+        "heading3_font": "Times New Roman",
+        "heading3_cjk_font": "SimHei",
         "heading3_size_pt": 14,
         "line_spacing": 1.5,
         "margin_top_mm": 30,
@@ -174,42 +191,27 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
     "template": {},
 }
 
-# ── Pandoc metadata per profile (ported from STYLE_PROFILE_METADATA) ──
+# ── Pandoc metadata derived from the profile defaults ────────
 
-PROFILE_METADATA: dict[str, dict[str, str]] = {
-    "template": {},
-    "academic": {
-        "mainfont": "Times New Roman",
-        "CJKmainfont": "SimSun",
-        "fontsize": "12pt",
-        "linestretch": "1.5",
-    },
-    "business": {
-        "mainfont": "Arial",
-        "CJKmainfont": "Microsoft YaHei",
-        "fontsize": "11pt",
-        "linestretch": "1.5",
-    },
-    "technical": {
-        "mainfont": "Arial",
-        "CJKmainfont": "Microsoft YaHei",
-        "monofont": "Consolas",
-        "fontsize": "11pt",
-        "linestretch": "1.35",
-    },
-    "official": {
-        "mainfont": "Times New Roman",
-        "CJKmainfont": "FangSong",
-        "fontsize": "16pt",
-        "linestretch": "1.75",
-    },
-    "thesis": {
-        "mainfont": "Times New Roman",
-        "CJKmainfont": "SimSun",
-        "fontsize": "12pt",
-        "linestretch": "1.5",
-    },
-}
+def _build_profile_metadata() -> dict[str, dict[str, str]]:
+    metadata_by_profile: dict[str, dict[str, str]] = {}
+    for profile, defaults in PROFILE_DEFAULTS.items():
+        if not defaults:
+            metadata_by_profile[profile] = {}
+            continue
+        metadata = {
+            "mainfont": defaults["body_font"],
+            "CJKmainfont": defaults["body_cjk_font"],
+            "fontsize": f"{defaults['body_size_pt']}pt",
+            "linestretch": str(defaults["line_spacing"]),
+        }
+        if profile == "technical":
+            metadata["monofont"] = "Consolas"
+        metadata_by_profile[profile] = metadata
+    return metadata_by_profile
+
+
+PROFILE_METADATA = _build_profile_metadata()
 
 # ── Bundled template mapping ─────────────────────────────────
 
@@ -318,8 +320,18 @@ def normalize_profile(value: Optional[str]) -> str:
     return "template"
 
 
-def parse_pt(value) -> Optional[float]:
-    """Parse a pt value, return None if 0, negative, or non-numeric."""
+MIN_FONT_SIZE_PT = 1.0
+MAX_FONT_SIZE_PT = 96.0
+MIN_LINE_SPACING = 0.5
+MAX_LINE_SPACING = 4.0
+MIN_MARGIN_MM = 1.0
+MAX_MARGIN_MM = 50.0
+
+
+def _parse_number_in_range(
+    value, minimum: float, maximum: float
+) -> Optional[float]:
+    """Parse a finite number inside an inclusive range."""
     if value is None:
         return None
     # Guard against bool (subclass of int): float(True) == 1.0
@@ -327,19 +339,26 @@ def parse_pt(value) -> Optional[float]:
         return None
     try:
         v = float(value)
-        return v if v > 0 else None
+        if not (minimum <= v <= maximum):
+            return None
+        return v
     except (TypeError, ValueError):
         return None
 
 
+def parse_pt(value) -> Optional[float]:
+    """Parse a font-size value in points, returning None outside safe bounds."""
+    return _parse_number_in_range(value, MIN_FONT_SIZE_PT, MAX_FONT_SIZE_PT)
+
+
 def parse_spacing(value) -> Optional[float]:
-    """Parse line spacing, return None if 0 or invalid."""
-    return parse_pt(value)
+    """Parse a line-spacing multiplier, returning None outside safe bounds."""
+    return _parse_number_in_range(value, MIN_LINE_SPACING, MAX_LINE_SPACING)
 
 
 def parse_mm(value) -> Optional[float]:
-    """Parse mm value, return None if 0 or invalid."""
-    return parse_pt(value)
+    """Parse a margin in millimeters, returning None outside safe bounds."""
+    return _parse_number_in_range(value, MIN_MARGIN_MM, MAX_MARGIN_MM)
 
 
 # ── Title sanitization ───────────────────────────────────────
@@ -364,10 +383,31 @@ def sanitize_filename(name: str) -> str:
 # comment above for why a path-based import is needed.
 
 
+class _MermaidRenderState:
+    """Thread-safe accounting for the total rendered image size."""
+
+    def __init__(self, max_total_bytes: int):
+        self.max_total_bytes = max_total_bytes
+        self.total_bytes = 0
+        self._lock = Lock()
+
+    def reserve(self, size: int) -> bool:
+        with self._lock:
+            if self.total_bytes + size > self.max_total_bytes:
+                return False
+            self.total_bytes += size
+            return True
+
+    def release(self, size: int) -> None:
+        with self._lock:
+            self.total_bytes = max(0, self.total_bytes - size)
+
+
 def _render_one_with_retry(index: int, diagram: str, temp_dir: str,
                             errors: list[str],
                             api_url: str | None = None,
-                            deadline: float | None = None) -> tuple[int, str | None, str | None]:
+                            deadline: float | None = None,
+                            render_state: _MermaidRenderState | None = None) -> tuple[int, str | None, str | None]:
     """Render one Mermaid diagram, retrying transient failures.
 
     `deadline` is the `time.monotonic()` point after which no attempt is
@@ -386,11 +426,21 @@ def _render_one_with_retry(index: int, diagram: str, temp_dir: str,
         errors.append(message)
         return index, None, message
 
+    if render_state is not None and not render_state.reserve(len(png_bytes)):
+        message = (
+            f"Diagram {index}: total rendered image size exceeds the "
+            f"{render_state.max_total_bytes // (1024 * 1024)}MB limit."
+        )
+        errors.append(message)
+        return index, None, message
+
     png_path = os.path.join(temp_dir, f"diagram-{index}.png")
     try:
         with open(png_path, "wb") as f:
             f.write(png_bytes)
     except OSError as e:
+        if render_state is not None:
+            render_state.release(len(png_bytes))
         message = f"Diagram {index}: {e}"
         errors.append(message)
         return index, None, message
@@ -434,9 +484,17 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True,
         segments.append((last_end, len(markdown_text), False, 0))
 
     # Render the diagrams concurrently. Every worker writes to its own file,
-    # so no locking is needed.
+    # while the shared state enforces the total image-size limit.
     results: dict[int, str | None] = {}
-    workers = max(1, min(MERMAID_MAX_WORKERS, len(matches)))
+    render_limit = max(0, MAX_MERMAID_DIAGRAMS)
+    render_matches = matches[:render_limit]
+    for skipped_index in range(render_limit + 1, len(matches) + 1):
+        errors.append(
+            f"Diagram {skipped_index}: skipped because the document exceeds "
+            f"the {render_limit}-diagram limit."
+        )
+    render_state = _MermaidRenderState(MAX_MERMAID_TOTAL_BYTES)
+    workers = max(1, min(MERMAID_MAX_WORKERS, len(render_matches)))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {
             pool.submit(
@@ -447,8 +505,9 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True,
                 [],
                 api_url,
                 deadline,
+                render_state,
             ): idx
-            for idx, match in enumerate(matches, 1)
+            for idx, match in enumerate(render_matches, 1)
         }
         for future in as_completed(futures):
             idx, png_path, message = future.result()
@@ -467,7 +526,12 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True,
             original_text = markdown_text[start:end]
             png_path = results.get(idx)
             if png_path is not None:
-                parts.append(f"![Mermaid Diagram {idx}](<{png_path}>)\n\n")
+                with open(png_path, "rb") as f:
+                    encoded = base64.b64encode(f.read()).decode("ascii")
+                parts.append(
+                    f"![Mermaid Diagram {idx}]"
+                    f"(data:image/png;base64,{encoded})\n\n"
+                )
                 count += 1
             else:
                 parts.append(original_text + "\n\n")
@@ -558,8 +622,8 @@ class _PandocWarningCollector(logging.Handler):
             return
         if "Could not fetch resource" in message:
             message += (
-                " — images are resolved against the plugin's working directory; "
-                "use an absolute path or a data: URI to embed them."
+                " — Pandoc runs in a sandbox and does not read external or local "
+                "image files; use a data: URI to embed an image."
             )
         sink.append(message)
 
@@ -630,6 +694,7 @@ def convert_via_pandoc(
     extra_args = [
         "--from", "gfm+raw_html",
         "--to", "docx",
+        "--sandbox",
         "--reference-doc", reference_docx,
         "--resource-path", resource_path,
     ]
@@ -723,37 +788,19 @@ def _strip_dangling_image_rels(docx_bytes):
 
 # ── DOCX style overrides ─────────────────────────────────────
 
-def _is_cjk_font(font_name: str) -> bool:
-    """True when the font carries CJK glyphs.
-
-    The preset table uses the Latin names Word stores in OOXML — SimSun is
-    宋体, SimHei is 黑体 — so the presence of ideographs alone is not enough;
-    the known CJK font names are listed explicitly.
-    """
-    name = (font_name or "").strip()
-    if not name:
-        return False
-    if CJK_CHAR_RE.search(name):
-        return True
-    return name.lower() in _CJK_FONT_NAMES_LOWER
-
-
-def _cjk_font_for(font_name: Optional[str], profile_cjk_font: Optional[str],
-                  explicit: bool = False) -> Optional[str]:
-    """Pick the East Asian font to pair with a Latin font.
-
-    A font the user named explicitly fills both slots — they asked for that
-    font. A preset default keeps the profile's CJK font, so a Latin preset
-    font (Arial) does not take over the East Asian slot and send Chinese text
-    to an arbitrary system fallback.
-    """
+def _resolve_font_pair(
+    override: object,
+    profile: dict[str, Any],
+    font_key: str,
+    cjk_key: str,
+) -> tuple[Optional[str], Optional[str]]:
+    """Resolve one font pair, keeping explicit user fonts in both slots."""
+    explicit = _clean_font(override)
     if explicit:
-        return font_name
-    if not font_name:
-        return profile_cjk_font
-    if _is_cjk_font(font_name):
-        return font_name
-    return profile_cjk_font or font_name
+        return explicit, explicit
+    font = profile.get(font_key)
+    cjk_font = profile.get(cjk_key) or font
+    return font, cjk_font
 
 
 def _clean_font(value) -> Optional[str]:
@@ -861,6 +908,7 @@ def _set_font(run_or_style, font_name: str, cjk_font: str | None = None) -> None
     rFonts.set(qn("w:ascii"), font_name)
     rFonts.set(qn("w:hAnsi"), font_name)
     rFonts.set(qn("w:eastAsia"), cjk_font or font_name)
+    rFonts.set(qn("w:cs"), font_name)
 
 
 def _set_font_size(run_or_style, size_pt: float) -> None:
@@ -932,25 +980,27 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> li
     expected style names. Empty list on full success.
     """
     profile = PROFILE_DEFAULTS.get(style_profile, {})
-    profile_cjk_font = PROFILE_METADATA.get(style_profile, {}).get("CJKmainfont")
     warnings: list[str] = []
 
     # Resolve effective values: user param > profile default > None (skip)
-    body_font = _clean_font(params.get("body_font")) or profile.get("body_font")
+    body_font, body_cjk = _resolve_font_pair(
+        params.get("body_font"), profile, "body_font", "body_cjk_font"
+    )
     body_size = parse_pt(params.get("body_size_pt")) or profile.get("body_size_pt")
     line_spacing = parse_spacing(params.get("line_spacing")) or profile.get("line_spacing")
 
-    h1_font = _clean_font(params.get("heading1_font")) or profile.get("heading1_font")
+    h1_font, h1_cjk = _resolve_font_pair(
+        params.get("heading1_font"), profile, "heading1_font", "heading1_cjk_font"
+    )
     h1_size = parse_pt(params.get("heading1_size_pt")) or profile.get("heading1_size_pt")
-    h2_font = _clean_font(params.get("heading2_font")) or profile.get("heading2_font")
+    h2_font, h2_cjk = _resolve_font_pair(
+        params.get("heading2_font"), profile, "heading2_font", "heading2_cjk_font"
+    )
     h2_size = parse_pt(params.get("heading2_size_pt")) or profile.get("heading2_size_pt")
-    h3_font = _clean_font(params.get("heading3_font")) or profile.get("heading3_font")
+    h3_font, h3_cjk = _resolve_font_pair(
+        params.get("heading3_font"), profile, "heading3_font", "heading3_cjk_font"
+    )
     h3_size = parse_pt(params.get("heading3_size_pt")) or profile.get("heading3_size_pt")
-
-    body_cjk = _cjk_font_for(body_font, profile_cjk_font, bool(params.get("body_font")))
-    h1_cjk = _cjk_font_for(h1_font, profile_cjk_font, bool(params.get("heading1_font")))
-    h2_cjk = _cjk_font_for(h2_font, profile_cjk_font, bool(params.get("heading2_font")))
-    h3_cjk = _cjk_font_for(h3_font, profile_cjk_font, bool(params.get("heading3_font")))
 
     # Normal style + aliases (BodyText, Compact, etc.)
     effective_color = "000000" if style_profile != "template" else None
@@ -1125,10 +1175,15 @@ class Md2DocxTool(Tool):
 
             # Mermaid preprocessing
             stage = "mermaid_preprocessing"
-            try:
-                mermaid_api_url = validate_api_url(parameters.get("mermaid_api_url"))
-            except ValueError as e:
-                raise RuntimeError(str(e)) from e
+            mermaid_api_url = None
+            has_mermaid_blocks = (
+                mermaid_enabled and MERMAID_BLOCK_RE.search(markdown_content) is not None
+            )
+            if has_mermaid_blocks:
+                try:
+                    mermaid_api_url = validate_api_url(parameters.get("mermaid_api_url"))
+                except ValueError as e:
+                    raise RuntimeError(str(e)) from e
             processed_md, mermaid_count, mermaid_dir, mermaid_errors = preprocess_mermaid(
                 markdown_content, enabled=mermaid_enabled, api_url=mermaid_api_url
             )

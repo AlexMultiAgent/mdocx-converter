@@ -9,11 +9,13 @@ pip install -r requirements.txt                                # install runtime
 pip install -r requirements-dev.txt                            # install dev deps (pytest, dify_plugin)
 python -c "import ast; ast.parse(open('src/md2docx.py', encoding='utf-8').read()); print('Syntax OK')"  # syntax check
 pytest tests/ -v                                               # run test suite
+python scripts/package.py --output MD2Docx.difypkg             # build deterministic package
+$env:RUN_LIVE_MERMAID="1"; pytest tests/test_mermaid_live.py -v # optional public API check
 ```
 
 > The syntax check needs `encoding='utf-8'`: the source contains UTF-8 punctuation and the default locale encoding on a Chinese Windows install is GBK, which raises `UnicodeDecodeError`.
 
-Tests live in `tests/`: `smoke_test.py` (pure functions), `test_invoke.py` (Dify Tool entry with mocked deps), `test_docx_output.py` (end-to-end pandoc conversion), `test_mermaid_converter.py` (standalone Mermaid tool). `conftest.py` auto-skips when `dify_plugin` is missing.
+Tests live in `tests/`: `smoke_test.py` (pure functions), `test_invoke.py` (Dify Tool entry with mocked deps), `test_docx_output.py` (end-to-end pandoc conversion plus security/limits), `test_mermaid_converter.py` (standalone Mermaid tool), `test_packaging.py` (archive contract), and `test_mermaid_live.py` (opt-in public API integration). `conftest.py` auto-skips when `dify_plugin` is missing.
 
 ## Architecture
 
@@ -30,12 +32,12 @@ markdown_content
   │     custom_template (uploaded file) > built-in 8 ref.docx (profile × language)
   │
   ├─ 3. Mermaid preprocessing (if enabled):
-  │     regex ```mermaid blocks → Mermaid Ink API (4 workers in parallel, 120s total budget)
-  │     Replace blocks with ![diagram](temp.png) in markdown
+  │     regex ```mermaid blocks → Mermaid Ink API (4 workers, 75s total budget)
+  │     Replace blocks with data:image/png URIs in markdown
   │     Falls back to preserving original code block if API fails
   │
   ├─ 4. Pandoc conversion:
-  │     pypandoc.convert_text() with --reference-doc and --metadata
+  │     pypandoc.convert_text() with --sandbox, --reference-doc and --metadata
   │     pypandoc-binary provides pandoc at pip install time (no runtime download)
   │     Pandoc's own warnings are captured and surfaced to the caller
   │
@@ -57,6 +59,7 @@ dify-plugin-MD2Docx/
 ├── main.py                    # Plugin entry point
 ├── requirements.txt           # pypandoc-binary, python-docx, requests, lxml
 ├── PRIVACY.md                 # Mermaid Ink API & Pandoc download disclosure
+├── scripts/package.py         # deterministic .difypkg builder (excluded from package)
 ├── icon.svg                   # Referenced by manifest `icon:` — keep byte-identical to _assets/icon.svg
 ├── _assets/
 │   └── icon.svg               # Canonical icon location (the marketplace check resolves _assets/<icon>)
@@ -110,9 +113,9 @@ Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`,
 
 ### Style system (three layers)
 
-**Layer 1 — Pandoc metadata** (`build_pandoc_metadata`): Sets `mainfont`, `CJKmainfont`, `fontsize`, `linestretch` via `--metadata`. These come from `PROFILE_METADATA` plus per-parameter overrides. A `body_font` override replaces **both** `mainfont` and `CJKmainfont` — the user named that font explicitly, so it fills both slots. The split East Asian slot only applies to Layer 2, where the preset defaults are in play.
+**Layer 1 — Pandoc metadata** (`build_pandoc_metadata`): Sets `mainfont`, `CJKmainfont`, `fontsize`, `linestretch` via `--metadata`. `PROFILE_METADATA` is derived from `PROFILE_DEFAULTS`, eliminating a second hand-maintained preset table, then per-parameter overrides are applied. A `body_font` override replaces **both** `mainfont` and `CJKmainfont` — the user named that font explicitly, so it fills both slots.
 
-> ⚠️ **Layer 1 never reaches the output.** Pandoc's docx writer ignores `mainfont` / `CJKmainfont` / `fontsize` / `linestretch` once a `--reference-doc` is supplied: with any of the 8 bundled templates, `word/document.xml` and `word/styles.xml` come out **byte-identical** with and without the metadata — only `docProps/custom.xml` records it. The reference template's own `docDefaults` set the base font, so **Layer 2 is what actually formats the document**. Change Layer 2 when you change how a document looks, and keep `PROFILE_METADATA` and `PROFILE_DEFAULTS` in agreement so the two never disagree about a preset.
+> ⚠️ **Layer 1 never reaches the output.** Pandoc's docx writer ignores `mainfont` / `CJKmainfont` / `fontsize` / `linestretch` once a `--reference-doc` is supplied: with any of the 8 bundled templates, `word/document.xml` and `word/styles.xml` come out **byte-identical** with and without the metadata — only `docProps/custom.xml` records it. The reference template's own `docDefaults` set the base font, so **Layer 2 is what actually formats the document**. Change `PROFILE_DEFAULTS`; both layers now derive from that one table.
 
 **Layer 2 — DOCX XML overrides** (`apply_style_overrides`): After pandoc finishes, opens the .docx via `python-docx` and modifies styles using lxml for raw XML access:
 
@@ -121,23 +124,22 @@ Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`,
 - `SourceCode` (paragraph) + `VerbatimChar` (character) — Consolas 10pt, color #000000; shading #F3F4F6 on the paragraph style only
 - Page margins — via `section.top_margin` etc. in python-docx
 
-Two rules the layer depends on:
+Rules the layer depends on:
 
 - **Style resolution is by display name.** Style ids are not portable — `a` is Normal in the English templates but List Number in the Chinese one — so body and heading styles are matched by name only. Matching by id would put the body font on list and table styles.
-- **The East Asian font slot is separate.** `w:rFonts/@w:eastAsia` gets the profile's CJK font while `ascii`/`hAnsi` get the Latin font, so the `business`/`technical` presets (Arial body) do not send Chinese text to an arbitrary system fallback. A font the user named explicitly fills **both** slots — they asked for that font. `w:szCs` is written alongside `w:sz` so complex-script text keeps the same size.
+- **Latin, East Asian, and complex-script slots are separate.** `w:rFonts/@w:ascii` and `w:hAnsi` get the profile's Latin font, `w:eastAsia` gets its CJK font, and `w:cs` gets the Latin face for complex scripts. A font the user named explicitly fills all slots — they asked for that font. `w:szCs` is written alongside `w:sz` so complex-script text keeps the same size.
 
-  > CJK fonts are recognised by name, not by the presence of ideographs: OOXML stores the Latin names (`SimSun` is 宋体, `SimHei` is 黑体). See `CJK_FONT_NAMES`.
 - **Theme fonts are removed when a font is set.** The Chinese reference templates define their headings with `w:asciiTheme="majorHAnsi"` and no explicit font; per ECMA-376 the theme attribute wins, so the override would be a silent no-op without dropping it.
 - **Style properties are written in schema order.** `w:rPr` and `w:pPr` have a fixed child sequence and Word offers to repair a document whose properties are out of order. New elements are inserted at their schema position and the properties of the styles the plugin rewrites are normalised.
 - **Non-`template` profiles force body and heading text to black** (`000000`). The reference templates carry Word's blue accent heading colours; Chinese formal documents use black, so the override is intentional.
 
 **Layer 3 — Profile defaults** (`PROFILE_DEFAULTS`): Hardcoded per profile:
 
-- `academic`: SimSun body 12pt, SimHei headings 16/14/12pt, 1.5x, margins 25.4mm
-- `thesis`: SimSun body 12pt, SimHei headings 22/16/14pt (GB/T 7713), 1.5x, margins 30mm
-- `business`: Arial body 11pt, Arial headings 18/14/12pt, 1.5x, margins 25.4mm (Chinese text: Microsoft YaHei)
-- `technical`: Arial body 11pt, Arial headings 16/14/12pt, 1.35x, Consolas code, margins 19mm (Chinese text: Microsoft YaHei)
-- `official`: FangSong body 16pt, SimHei/KaiTi/FangSong headings 16pt, 1.75x, margins 37/35/28/26mm (GB/T 9704)
+- `academic`: Times New Roman / SimSun body 12pt, Times New Roman / SimHei headings 16/14/12pt, 1.5x, margins 25.4mm
+- `thesis`: Times New Roman / SimSun body 12pt, Times New Roman / SimHei headings 22/16/14pt (GB/T 7713), 1.5x, margins 30mm
+- `business`: Arial / Microsoft YaHei body 11pt, Arial / Microsoft YaHei headings 18/14/12pt, 1.5x, margins 25.4mm
+- `technical`: Arial / Microsoft YaHei body 11pt, Arial / Microsoft YaHei headings 16/14/12pt, 1.35x, Consolas code, margins 19mm
+- `official`: Times New Roman / FangSong body 16pt, Times New Roman / SimHei, KaiTi, FangSong headings 16pt, 1.75x, margins 37/35/28/26mm (GB/T 9704)
 - `template`: no defaults (rely on reference.docx entirely)
 
 ### Key design decisions
@@ -148,9 +150,10 @@ Two rules the layer depends on:
 - **python-docx + lxml**: Style overrides use python-docx for high-level access + lxml for raw XML manipulation when needed (fonts, spacing, shading, colors)
 - **User overrides > Profile defaults**: Every style parameter can be overridden individually; `0` or empty means "use profile default"
 - **Script style**: Avoiding `from __future__ import annotations` to maintain compatibility
-- **Safety guards**: `markdown_content` is capped at 5 MB (`MAX_MARKDOWN_BYTES`) to prevent OOM in the Dify plugin sandbox; `mermaid_code` is capped at 256 KB (`MAX_MERMAID_CODE_BYTES`)
-- **Mermaid resilience**: 3 attempts per diagram (1s/2s backoff), 4 diagrams rendered in parallel, a 120s total budget that also clamps the per-request timeout, and a 30s per-attempt ceiling. A diagram that cannot be rendered is kept as its original code block.
-- **Mermaid endpoint validation**: `mermaid_api_url` must be http(s) and must not point at a link-local address (which covers the cloud metadata endpoint `169.254.169.254`). Private ranges stay allowed because a self-hosted instance commonly lives on an internal network.
+- **Safety guards**: `markdown_content` is capped at 5 MB; Mermaid is capped at 50 diagrams and 32 MB total rendered PNG data; `mermaid_code` is capped at 256 KB. Numeric overrides have runtime bounds in addition to YAML `min`/`max`.
+- **Mermaid resilience**: retry only transient failures (network, 408/425/429, 5xx), with 1s/2s bounded backoff, 4 diagrams in parallel, a 75s total budget, and a 30s per-attempt ceiling. A request cannot sleep past its deadline. A diagram that cannot be rendered is kept as its original code block.
+- **Mermaid endpoint validation**: `mermaid_api_url` must be http(s), contain no query/fragment, and must not resolve to a link-local address. HTTP redirects are not followed. Private ranges stay allowed because a self-hosted instance commonly lives on an internal network.
+- **Pandoc is sandboxed**: `--sandbox` blocks URL fetches and arbitrary local-file reads from user Markdown. Mermaid PNGs are embedded as data URIs so they still work. User-supplied images must also use data URIs.
 - **Pandoc warnings are surfaced**: pypandoc forwards pandoc's stderr to the `pypandoc` logger; a handler installed once per process collects it so an image that could not be resolved is reported instead of being silently dropped from the DOCX. The destination lives in a `ContextVar`, because the daemon runs tool calls concurrently and a conversion must only see its own pandoc warnings.
 - **Pandoc output cleanup**: `_strip_dangling_image_rels` removes image/oleObject relationships inherited from reference templates whose target files are missing, so python-docx can always open the produced DOCX
 - **custom_template safety**: A `str` value for `custom_template` is rejected with a clear warning instead of being written as a corrupted binary
@@ -184,9 +187,15 @@ The validators live in `langgenius/dify-marketplace-toolkit` under `toolkit/chec
 
 ### Packaging without the CLI
 
-`dify-plugin-cli` is not on PyPI, so `dify-plugin plugin package` is unavailable. The `.difypkg` is a plain zip: walk this directory, drop what `.difyignore` excludes, **keep `.difyignore` itself**, sort the entries by ASCII path, and write them with `ZIP_DEFLATED` and no directory entries. Verify by unzipping the artifact and re-running the checks against the extracted tree (manifest fields, `_assets/<icon>`, each tool YAML's `extra.python.source`, and the SDK's `load_single_subclass_from_source`).
+`dify-plugin-cli` is not on PyPI, so `dify-plugin plugin package` is unavailable. Build with the checked-in deterministic script:
 
-The daemon rejects a package whose **uncompressed** size exceeds `MAX_PLUGIN_PACKAGE_SIZE` (50 MB by default, `internal/types/app/default.go` in `dify-plugin-daemon`). The current package is ~250 KB compressed / ~320 KB uncompressed — never vendor the Pandoc binary into it.
+```bash
+python scripts/package.py --output MD2Docx.difypkg
+```
+
+The script walks this directory, applies `.difyignore`, keeps `.difyignore` itself, sorts entries by ASCII path, and writes them with `ZIP_DEFLATED` and no directory entries. CI builds and uploads the package for both the minimum supported SDK and the current tested SDK.
+
+The daemon rejects a package whose **uncompressed** size exceeds `MAX_PLUGIN_PACKAGE_SIZE` (50 MB by default, `internal/types/app/default.go` in `dify-plugin-daemon`). The current package is ~255 KB compressed / ~335 KB uncompressed — never vendor the Pandoc binary into it.
 
 ## Deployment tuning (self-hosted Dify)
 

@@ -571,7 +571,7 @@ class TestCjkFontHandling:
 
         heading1 = _find_style_by_id(doc, "1")
         ascii_font, east_asia, _ = _style_fonts(heading1)
-        assert ascii_font == "SimHei"
+        assert ascii_font == "Times New Roman"
         assert east_asia == "SimHei"
 
 
@@ -631,7 +631,7 @@ class TestStyleResolutionScope:
 
         normal = _find_style_by_id(doc, "a1")
         ascii_font, _, size = _style_fonts(normal)
-        assert ascii_font == "SimSun"
+        assert ascii_font == "Times New Roman"
         assert size == "24"
 
 
@@ -681,6 +681,254 @@ class TestMermaidBlockDetection:
 
     def test_crlf_block_is_detected(self):
         assert len(self._blocks("```mermaid\r\ngraph TD; A-->B\r\n```")) == 1
+
+
+class TestSandboxedPandoc:
+    def test_pandoc_runs_in_sandbox(self, monkeypatch):
+        """Pandoc must not fetch URLs or arbitrary filesystem paths from Markdown."""
+        from md2docx import convert_via_pandoc
+
+        seen = {}
+
+        def fake_convert(source, to, format=None, extra_args=(), outputfile=None, **kw):
+            seen["extra_args"] = list(extra_args)
+            with open(outputfile, "wb") as f:
+                f.write(b"PK")
+            return ""
+
+        monkeypatch.setattr("md2docx.pypandoc.convert_text", fake_convert)
+        convert_via_pandoc(
+            "# Doc", "reference.docx", "", "", {},
+        )
+
+        assert "--sandbox" in seen["extra_args"]
+
+
+class TestMermaidOutputLimits:
+    def test_mermaid_images_are_embedded_as_data_uris(self, monkeypatch):
+        """Rendered diagrams must remain usable when Pandoc is sandboxed."""
+        from md2docx import preprocess_mermaid
+
+        monkeypatch.setattr(
+            "md2docx.render_mermaid_via_api",
+            lambda diagram, api_url=None, timeout=None: b"\x89PNG\r\n\x1a\nabc",
+        )
+        processed, count, temp_dir, errors = preprocess_mermaid(
+            "```mermaid\ngraph TD; A-->B\n```\n"
+        )
+        try:
+            assert count == 1
+            assert errors == []
+            assert "data:image/png;base64," in processed
+            assert "diagram-1.png" not in processed
+        finally:
+            if temp_dir and os.path.isdir(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_diagram_count_is_capped(self, monkeypatch):
+        from md2docx import preprocess_mermaid
+
+        monkeypatch.setattr("md2docx.MAX_MERMAID_DIAGRAMS", 2, raising=False)
+        monkeypatch.setattr(
+            "md2docx.render_mermaid_via_api",
+            lambda diagram, api_url=None, timeout=None: b"\x89PNG\r\n\x1a\nabc",
+        )
+        markdown = "\n\n".join(
+            f"```mermaid\ngraph TD; A{i}-->B\n```" for i in range(3)
+        )
+        processed, count, temp_dir, errors = preprocess_mermaid(markdown)
+        try:
+            assert count == 2
+            assert any("Diagram 3" in error for error in errors)
+            assert "```mermaid\ngraph TD; A2-->B\n```" in processed
+        finally:
+            if temp_dir and os.path.isdir(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_total_rendered_bytes_are_capped(self, monkeypatch):
+        from md2docx import preprocess_mermaid
+
+        monkeypatch.setattr("md2docx.MAX_MERMAID_TOTAL_BYTES", 20, raising=False)
+        monkeypatch.setattr(
+            "md2docx.render_mermaid_via_api",
+            lambda diagram, api_url=None, timeout=None: b"\x89PNG\r\n\x1a\n1234",
+        )
+        markdown = "\n\n".join(
+            f"```mermaid\ngraph TD; A{i}-->B\n```" for i in range(2)
+        )
+        processed, count, temp_dir, errors = preprocess_mermaid(markdown)
+        try:
+            assert count == 1
+            assert any("Diagram 2" in error for error in errors)
+        finally:
+            if temp_dir and os.path.isdir(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+class TestMermaidRetryClassification:
+    def _http_error(self, status):
+        import requests
+
+        response = requests.Response()
+        response.status_code = status
+        response.url = "https://mermaid.invalid/img"
+        return requests.HTTPError(f"HTTP {status}", response=response)
+
+    def test_client_error_is_not_retried(self):
+        """A malformed diagram returning 400 must fail immediately."""
+        from _mermaid_render import render_mermaid_with_retry
+
+        calls = []
+
+        def bad(*args, **kwargs):
+            calls.append(1)
+            raise self._http_error(400)
+
+        with pytest.raises(Exception):
+            render_mermaid_with_retry("bad", renderer=bad)
+        assert len(calls) == 1
+
+    def test_server_error_is_retried(self, monkeypatch):
+        from _mermaid_render import render_mermaid_with_retry
+
+        calls = []
+
+        def flaky(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise self._http_error(503)
+            return b"\x89PNG\r\n\x1a\nabc"
+
+        monkeypatch.setattr("time.sleep", lambda seconds: None)
+        result = render_mermaid_with_retry("ok", renderer=flaky)
+        assert result.startswith(b"\x89PNG")
+        assert len(calls) == 2
+
+    def test_backoff_does_not_sleep_past_the_deadline(self, monkeypatch):
+        import time
+        from _mermaid_render import render_mermaid_with_retry
+
+        sleeps = []
+
+        def bad(*args, **kwargs):
+            raise self._http_error(503)
+
+        monkeypatch.setattr("time.sleep", lambda seconds: sleeps.append(seconds))
+        with pytest.raises(Exception):
+            render_mermaid_with_retry(
+                "bad",
+                renderer=bad,
+                deadline=time.monotonic() + 0.25,
+            )
+        assert sleeps and sleeps[0] <= 0.25
+
+    def test_redirects_are_not_followed(self, monkeypatch):
+        import _mermaid_render
+
+        seen = {}
+
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            def iter_content(self, chunk_size):
+                return [b"\x89PNG\r\n\x1a\nabc"]
+
+            def close(self):
+                return None
+
+        def fake_get(url, **kwargs):
+            seen.update(kwargs)
+            return Response()
+
+        monkeypatch.setattr("_mermaid_render.requests.get", fake_get)
+        _mermaid_render.render_mermaid_via_api("graph TD; A-->B", timeout=1)
+        assert seen.get("allow_redirects") is False
+
+    def test_public_endpoint_requests_png_explicitly(self, monkeypatch):
+        """Mermaid Ink otherwise defaults to JPEG for the /img endpoint."""
+        import _mermaid_render
+
+        seen = {}
+
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            def iter_content(self, chunk_size):
+                return [b"\x89PNG\r\n\x1a\nabc"]
+
+            def close(self):
+                return None
+
+        def fake_get(url, **kwargs):
+            seen["url"] = url
+            return Response()
+
+        monkeypatch.setattr("_mermaid_render.requests.get", fake_get)
+        _mermaid_render.render_mermaid_via_api("graph TD; A-->B", timeout=1)
+        assert "?type=png" in seen["url"]
+
+
+class TestMermaidApiHostResolution:
+    def test_hostname_resolving_to_link_local_is_rejected(self, monkeypatch):
+        import socket
+        from md2docx import validate_api_url
+
+        monkeypatch.setattr(
+            "socket.getaddrinfo",
+            lambda *args, **kwargs: [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 0))
+            ],
+        )
+        with pytest.raises(ValueError, match="link-local"):
+            validate_api_url("https://metadata.example")
+
+    def test_query_string_is_rejected(self):
+        from md2docx import validate_api_url
+
+        with pytest.raises(ValueError, match="query"):
+            validate_api_url("https://mermaid.example/render?token=secret")
+
+
+class TestNumericInputBounds:
+    def test_subpoint_font_sizes_are_rejected(self):
+        from md2docx import parse_pt
+
+        assert parse_pt(0.1) is None
+
+    def test_extreme_line_spacing_is_rejected(self):
+        from md2docx import parse_spacing
+
+        assert parse_spacing(100) is None
+
+    def test_extreme_margin_is_rejected(self):
+        from md2docx import parse_mm
+
+        assert parse_mm(1000) is None
+
+
+class TestProfileFontPairs:
+    def test_academic_uses_latin_and_cjk_font_slots(self, pandoc_available):
+        from docx import Document
+
+        ref = os.path.join(TEMPLATE_DIR, "reference_english_academic.docx")
+        docx_io = convert_via_pandoc(
+            "# Heading\n\nbody\n", ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("academic", None, None, None),
+        )
+        doc = Document(docx_io)
+        apply_style_overrides(doc, "academic", {})
+
+        normal = _find_style_by_id(doc, "a")
+        rPr = normal._element.find(f"{W_NS}rPr")
+        rFonts = rPr.find(f"{W_NS}rFonts")
+        assert rFonts.get(f"{W_NS}ascii") == "Times New Roman"
+        assert rFonts.get(f"{W_NS}eastAsia") == "SimSun"
+        assert rFonts.get(f"{W_NS}cs") == "Times New Roman"
 
 
 class TestFilenameLength:
@@ -851,7 +1099,7 @@ class TestThemeFontAttributes:
             assert rFonts.get(f"{W_NS}{attribute}") is None, (
                 f"w:{attribute} would override the explicit font"
             )
-        assert rFonts.get(f"{W_NS}ascii") == "SimHei"
+        assert rFonts.get(f"{W_NS}ascii") == "Times New Roman"
         assert rFonts.get(f"{W_NS}eastAsia") == "SimHei"
 
 
@@ -991,15 +1239,38 @@ class TestImageResolution:
     silently dropped from the DOCX.
     """
 
-    def test_absolute_image_path_is_embedded(self, pandoc_available, tmp_path):
+    def test_absolute_image_path_is_blocked_in_sandbox(self, pandoc_available, tmp_path):
         import zipfile
 
         png = tmp_path / "logo.png"
         png.write_bytes(_make_png())
 
         ref = os.path.join(TEMPLATE_DIR, "reference_english_academic.docx")
+        warnings: list[str] = []
         docx_io = convert_via_pandoc(
             f"# Doc\n\n![logo]({png})\n",
+            ref,
+            TEMPLATE_DIR,
+            "",
+            build_pandoc_metadata("academic", None, None, None),
+            warnings=warnings,
+        )
+        media = [
+            name
+            for name in zipfile.ZipFile(docx_io).namelist()
+            if name.startswith("word/media")
+        ]
+        assert media == []
+        assert any("sandbox" in warning for warning in warnings)
+
+    def test_data_uri_image_is_embedded_in_sandbox(self, pandoc_available):
+        import base64
+        import zipfile
+
+        data_uri = "data:image/png;base64," + base64.b64encode(_make_png()).decode("ascii")
+        ref = os.path.join(TEMPLATE_DIR, "reference_english_academic.docx")
+        docx_io = convert_via_pandoc(
+            f"# Doc\n\n![logo]({data_uri})\n",
             ref,
             TEMPLATE_DIR,
             "",
@@ -1010,7 +1281,7 @@ class TestImageResolution:
             for name in zipfile.ZipFile(docx_io).namelist()
             if name.startswith("word/media")
         ]
-        assert media, "the PNG should have been embedded in the DOCX"
+        assert media
 
     def test_unresolvable_image_is_reported_as_a_warning(
         self, pandoc_available, tmp_path, monkeypatch

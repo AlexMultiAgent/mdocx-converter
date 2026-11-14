@@ -10,6 +10,12 @@ jobs:
   dify-plugin:
     name: Dify plugin tests
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dify-plugin-version:
+          - "0.9.1"
+          - "0.11.0"
     defaults:
       run:
         working-directory: dify-plugin-MD2Docx
@@ -23,13 +29,23 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
+          pip install -r requirements.txt -r requirements-dev.txt "dify_plugin==${{ matrix.dify-plugin-version }}"
 
       - name: Syntax check
         run: python -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8')) for p in pathlib.Path('src').glob('*.py')]; print('Syntax OK')"
 
       - name: Run tests
         run: pytest tests/ -v
+
+      - name: Build plugin package
+        run: python scripts/package.py --output dist/MD2Docx.difypkg
+
+      - name: Upload plugin package
+        uses: actions/upload-artifact@v4
+        with:
+          name: MD2Docx-dify-plugin-${{ matrix.dify-plugin-version }}
+          path: dify-plugin-MD2Docx/dist/MD2Docx.difypkg
+          if-no-files-found: error
 
   template-sync:
     name: Template sync check

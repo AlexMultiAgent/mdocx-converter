@@ -26,8 +26,7 @@
 ### 从本地 `.difypkg`
 
 ```bash
-pip install dify-plugin-cli
-dify-plugin plugin package .
+python scripts/package.py --output MD2Docx.difypkg
 # 在 Dify: 插件 → 本地 → 上传 → 选择生成的 .difypkg
 ```
 
@@ -38,18 +37,18 @@ dify-plugin plugin package .
 - **6 种样式预设**，内置 8 个中英文参考模板：`technical`（技术文档）、`business`（商业报告）、`official`（GB/T 9704 公文）、`academic`（学术论文）、`thesis`（GB/T 7713 学位论文）、`template`（完全自定义）。`thesis` 与 `template` 共用 academic 模板。
 - **Mermaid 渲染**：通过 Mermaid Ink API 将代码块转为 PNG。可在 DOCX 内嵌，也可通过独立 `Mermaid to Image` 工具单独渲染。
 - **13 项样式覆盖**：正文/标题字体、字号、行距、四边距均可逐项覆盖。
-- **中文优先**：自动中英文检测，SimSun / SimHei / FangSong / KaiTi 全覆盖。
+- **中英文字体分槽**：西文使用 Times New Roman / Arial，中文使用 SimSun / SimHei / FangSong / KaiTi / Microsoft YaHei。
 - **离线可用**：`pypandoc-binary` 内置 Pandoc，首次调用无网络依赖。
 
 ## 样式预设
 
-| 样式 | 正文字体 | 字号 | 标题字体 | 行距 | 边距 (mm) | 适用标准 |
-|------|---------|------|---------|------|-----------|---------|
-| `technical` | Arial | 11 pt | Arial 16/14/12 pt | 1.35 | 19 | 技术博客 / API 文档 |
-| `business` | Arial | 11 pt | Arial 18/14/12 pt | 1.5 | 25.4 | 商务报告 / 内部备忘录 |
-| `official` | FangSong | 16 pt | SimHei/KaiTi/FangSong 16 pt | 1.75 | 37/35/28/26 | GB/T 9704 |
-| `academic` | SimSun | 12 pt | SimHei 16/14/12 pt | 1.5 | 25.4 | CSSCI 期刊 / 学术写作 |
-| `thesis` | SimSun | 12 pt | SimHei 22/16/14 pt | 1.5 | 30 | GB/T 7713 |
+| 样式 | 正文字体（西文 / 中文） | 字号 | 标题字体（西文 / 中文） | 行距 | 边距 (mm) | 适用标准 |
+|------|------------------------|------|--------------------------|------|-----------|---------|
+| `technical` | Arial / Microsoft YaHei | 11 pt | Arial / Microsoft YaHei 16/14/12 pt | 1.35 | 19 | 技术博客 / API 文档 |
+| `business` | Arial / Microsoft YaHei | 11 pt | Arial / Microsoft YaHei 18/14/12 pt | 1.5 | 25.4 | 商务报告 / 内部备忘录 |
+| `official` | Times New Roman / FangSong | 16 pt | Times / SimHei、KaiTi、FangSong 16 pt | 1.75 | 37/35/28/26 | GB/T 9704 |
+| `academic` | Times New Roman / SimSun | 12 pt | Times New Roman / SimHei 16/14/12 pt | 1.5 | 25.4 | CSSCI 期刊 / 学术写作 |
+| `thesis` | Times New Roman / SimSun | 12 pt | Times New Roman / SimHei 22/16/14 pt | 1.5 | 30 | GB/T 7713 |
 | `template` | 参考文件决定 | — | — | — | — | 完全自定义 |
 
 > `official` 和 `thesis` 的英文模板仅作兼容性配套，无特定英文标准依据。
@@ -70,7 +69,7 @@ dify-plugin plugin package .
 
 | # | 参数 | 类型 | 必填 | 默认值 | 说明 |
 |---|------|------|------|--------|------|
-| 1 | `markdown_content` | string | 是 | — | Markdown 文本（最大 5MB） |
+| 1 | `markdown_content` | string | 是 | — | Markdown 文本（最大 5MB；图片请使用 `data:` URI） |
 | 2 | `title` | string | 否 | `"Document"` | 输出文件名（不含 `.docx`） |
 | 3 | `style_profile` | select | 否 | `academic` | 样式预设 |
 | 4 | `reference_language` | select | 否 | `auto` | 模板语言：自动/英文/中文 |
@@ -80,6 +79,8 @@ dify-plugin plugin package .
 ### Markdown to DOCX (Advanced)（19 项）
 
 包含上述 6 项全部参数，加上 13 项样式覆盖：`body_font`、`body_size_pt`、`line_spacing`、`margin_top_mm`、`margin_bottom_mm`、`margin_left_mm`、`margin_right_mm`、`heading1_font`、`heading1_size_pt`、`heading2_font`、`heading2_size_pt`、`heading3_font`、`heading3_size_pt`。全部默认为样式预设值（`0` = 使用默认值）。
+
+字号允许 1–96 pt，行距允许 0.5–4.0，页边距允许 1–50 mm；越界值会回退到当前样式预设。
 
 ### Mermaid to Image（2 项）
 
@@ -106,7 +107,7 @@ mermaid_ink:
     - "3000:3000"
 ```
 
-然后在工具参数中设置 `mermaid_api_url` 为 `http://<服务器地址>:3000`（compose 内部用 `http://mermaid_ink:3000`）。
+然后在工具参数中设置 `mermaid_api_url` 为 `http://<服务器地址>:3000`（compose 内部用 `http://mermaid_ink:3000`）。请直接填写最终地址，插件不会跟随 HTTP 重定向。
 
 如使用 Dify 的 `.env` 配置：
 
@@ -117,7 +118,7 @@ MERMAID_INK_URL=http://your-server:3000
 ## 网络与隐私
 
 - **Mermaid Ink**：Mermaid 源码文本会发送至渲染服务。不传输其他文档内容。可通过 `mermaid_enabled=false` 关闭或使用自部署实例。
-- **Pandoc**：随 `pypandoc-binary` 内置，无网络访问。
+- **Pandoc**：随 `pypandoc-binary` 内置，并启用 `--sandbox`；Markdown 无法读取本地文件或触发外部图片请求。需要嵌入图片时使用 `data:` URI。
 - **临时文件**：每次转换后自动清理。
 
 完整说明：[PRIVACY.md](./PRIVACY.md)
@@ -150,6 +151,9 @@ PLUGIN_MAX_EXECUTION_TIMEOUT=1800
 pip install -r requirements.txt
 pip install -r requirements-dev.txt
 pytest tests/ -v
+python scripts/package.py --output MD2Docx.difypkg
 ```
+
+设置 `RUN_LIVE_MERMAID=1` 后运行 `pytest tests/test_mermaid_live.py -v`，可验证公共 Mermaid Ink 服务；普通测试不依赖外部网络。
 
 仓库：[mdocx-converter](https://github.com/AlexMultiAgent/mdocx-converter)

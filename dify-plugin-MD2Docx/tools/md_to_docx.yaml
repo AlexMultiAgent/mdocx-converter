@@ -11,7 +11,8 @@ description:
     zh_Hans: "将 Markdown 文本转换为 Word DOCX 文档，支持样式预设、模板和 Mermaid 渲染。"
   llm: >
     Convert Markdown text to a formatted Microsoft Word DOCX document. Supports style profiles (academic/thesis/technical/business/official/template),
-    automatic Chinese/English language detection, Mermaid diagram rendering to images, and fine-grained control over fonts, sizes, spacing, and margins.
+    automatic Chinese/English language detection, and Mermaid diagram rendering to images.
+    Use the separate Advanced tool when the user explicitly requests font, size, spacing, or margin overrides.
     Use when the user requests a Word document export from Markdown content.
 
 parameters:
@@ -22,8 +23,8 @@ parameters:
       en_US: "Markdown Content"
       zh_Hans: "Markdown 内容"
     human_description:
-      en_US: "The Markdown text to convert (max 5 MB; supports GFM syntax, Mermaid code blocks, tables, and images)."
-      zh_Hans: "要转换的 Markdown 文本（最大 5MB；支持 GFM 语法、Mermaid 代码块、表格和图片）。"
+      en_US: "The Markdown text to convert (max 5 MB; supports GFM syntax, Mermaid code blocks, tables, and data-URI images)."
+      zh_Hans: "要转换的 Markdown 文本（最大 5MB；支持 GFM 语法、Mermaid 代码块、表格和 data URI 图片）。"
     llm_description: "The full markdown text content to be converted to a docx document"
     form: llm
 

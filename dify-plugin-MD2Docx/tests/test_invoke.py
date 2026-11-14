@@ -134,11 +134,12 @@ class TestMd2DocxToolInvoke:
         assert "empty" in text_msgs[0].data.lower()
 
     def test_mermaid_disabled(self):
-        """mermaid_enabled=False should skip rendering, no warning."""
+        """mermaid_enabled=False should ignore even a malformed Mermaid URL."""
         tool = self._make_tool()
         messages = list(tool._invoke({
             "markdown_content": "# Hello\n\nWorld.",
             "mermaid_enabled": False,
+            "mermaid_api_url": "ftp://invalid.example",
         }))
 
         json_msgs = [m for m in messages if m.type == "json"]
@@ -148,6 +149,21 @@ class TestMd2DocxToolInvoke:
         success_jsons = [m for m in json_msgs if m.data.get("status") == "success"]
         assert len(success_jsons) == 1
         assert success_jsons[0].data["warnings"] == []
+
+    def test_mermaid_url_is_ignored_when_no_mermaid_blocks_exist(self):
+        """A document without Mermaid fences must not be blocked by an unused URL."""
+        tool = self._make_tool()
+        messages = list(tool._invoke({
+            "markdown_content": "# Hello\n\nNo diagrams here.",
+            "mermaid_enabled": True,
+            "mermaid_api_url": "ftp://invalid.example",
+        }))
+
+        json_msgs = [m for m in messages if m.type == "json"]
+        blob_msgs = [m for m in messages if m.type == "blob"]
+        assert len(blob_msgs) == 1
+        assert len(json_msgs) == 1
+        assert json_msgs[0].data["status"] == "success"
 
     def test_style_profile_template(self):
         """template profile should still produce a blob."""

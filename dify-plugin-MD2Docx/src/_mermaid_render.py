@@ -11,6 +11,7 @@ import base64
 import ipaddress
 import json
 import os
+import socket
 import time
 import zlib
 from urllib.parse import urlparse
@@ -22,7 +23,7 @@ import requests
 MERMAID_INK_URL = os.environ.get("MERMAID_INK_URL", "https://mermaid.ink")
 
 PLUGIN_USER_AGENT = (
-    "md2docx-dify-plugin/0.0.2 "
+    "md2docx-dify-plugin/0.0.3 "
     "(+https://github.com/AlexMultiAgent/mdocx-converter)"
 )
 
@@ -84,6 +85,10 @@ def validate_api_url(api_url: str | None) -> str | None:
         raise ValueError(
             f"mermaid_api_url must use http or https, got '{parsed.scheme or 'no'} scheme'."
         )
+    if parsed.query:
+        raise ValueError("mermaid_api_url must not contain a query string.")
+    if parsed.fragment:
+        raise ValueError("mermaid_api_url must not contain a fragment.")
 
     host = parsed.hostname
     if not host:
@@ -100,6 +105,18 @@ def validate_api_url(api_url: str | None) -> str | None:
         raise ValueError(
             f"mermaid_api_url must not point at the link-local address {host}."
         )
+    if address is None:
+        try:
+            addresses = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        except OSError:
+            addresses = []
+        for info in addresses:
+            resolved = ipaddress.ip_address(info[4][0])
+            if resolved.is_link_local:
+                raise ValueError(
+                    f"mermaid_api_url host '{host}' resolves to the link-local "
+                    f"address {resolved}."
+                )
 
     return candidate
 
@@ -122,17 +139,24 @@ def render_mermaid_via_api(
     """
     base_url = api_url or MERMAID_INK_URL
     encoded = _encode_mermaid_pako(diagram)
+    request_timeout = timeout or MERMAID_REQUEST_TIMEOUT_SECONDS
+    request_deadline = time.monotonic() + request_timeout
     resp = requests.get(
-        f"{base_url}/img/pako:{encoded}",
+        f"{base_url.rstrip('/')}/img/pako:{encoded}?type=png",
         headers={"User-Agent": PLUGIN_USER_AGENT},
-        timeout=timeout or MERMAID_REQUEST_TIMEOUT_SECONDS,
+        timeout=request_timeout,
         stream=True,
+        allow_redirects=False,
     )
     try:
         resp.raise_for_status()
         chunks = []
         total = 0
         for chunk in resp.iter_content(chunk_size=64 * 1024):
+            if time.monotonic() > request_deadline:
+                raise MermaidRenderError(
+                    "Mermaid rendering exceeded its request deadline."
+                )
             total += len(chunk)
             if total > MAX_RESPONSE_BYTES:
                 raise MermaidRenderError(
@@ -142,6 +166,22 @@ def render_mermaid_via_api(
     finally:
         resp.close()
     return b"".join(chunks)
+
+
+def _is_retryable(error: Exception) -> bool:
+    """Return whether another attempt could reasonably succeed."""
+    if isinstance(error, requests.HTTPError):
+        status = error.response.status_code if error.response is not None else None
+        return status in (408, 425, 429) or (
+            status is not None and 500 <= status < 600
+        )
+    if isinstance(error, (requests.Timeout, requests.ConnectionError, OSError)):
+        return True
+    if isinstance(error, requests.RequestException):
+        return False
+    if isinstance(error, MermaidRenderError):
+        return False
+    return True
 
 
 def render_mermaid_with_retry(
@@ -161,7 +201,8 @@ def render_mermaid_with_retry(
     """
     render = renderer or render_mermaid_via_api
     last_error: Exception | None = None
-    for attempt in range(max(1, attempts)):
+    max_attempts = max(1, attempts)
+    for attempt in range(max_attempts):
         request_timeout = timeout
         if deadline is not None:
             remaining = deadline - time.monotonic()
@@ -182,8 +223,19 @@ def render_mermaid_with_retry(
             return png_bytes
         except Exception as e:
             last_error = e
-            if attempt < max(1, attempts) - 1:
+            if not _is_retryable(e):
+                raise
+            if attempt < max_attempts - 1:
                 # 1s, 2s, 4s, ...
-                time.sleep(1 * (2 ** attempt))
+                delay = 1 * (2 ** attempt)
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise MermaidRenderError(
+                            "Mermaid rendering ran out of time between attempts."
+                        ) from e
+                    delay = min(delay, remaining)
+                if delay > 0:
+                    time.sleep(delay)
 
     raise last_error if last_error else MermaidRenderError("Mermaid rendering failed.")
