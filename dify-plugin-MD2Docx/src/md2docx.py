@@ -75,7 +75,12 @@ MERMAID_BLOCK_RE = re.compile(
     r"(?P<body>.*?)"
     r"^[ \t]{0,3}(?P=fence)[ \t]*\r?$"
 )
-CJK_CHAR_RE = re.compile(r"[㐀-䶿一-鿿豈-﫿]")
+# CJK ideograph blocks, pinned with explicit escapes: written as literal
+# characters the lower bound silently became U+8C48 instead of U+F900, which
+# swallowed Hangul and Yi syllables and made Korean documents pick the
+# Chinese template here while the VS Code extension picked the English one.
+# Keep these as escapes - U+F900 and U+8C48 are indistinguishable by eye.
+CJK_CHAR_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
 LATIN_CHAR_RE = re.compile(r"[A-Za-z]")
 
 # Fonts that carry CJK glyphs, under the names Word stores in OOXML.

@@ -3,6 +3,7 @@ Smoke tests for md2docx conversion pipeline.
 Run outside Dify to verify core logic works.
 """
 import os
+import re
 import sys
 import shutil
 
@@ -28,11 +29,84 @@ class TestLanguageDetection:
         assert detect_language("Hello world") == "english"
 
     def test_chinese(self):
-        assert detect_language("你好世界" * 10) == "chinese"
+        assert detect_language("\u4f60\u597d\u4e16\u754c" * 10) == "chinese"
 
     def test_mixed_mostly_english(self):
         # Single CJK char among many Latin chars should stay English
-        assert detect_language("Hello " + "你" + " world! This is a long English sentence.") == "english"
+        assert detect_language("Hello " + "\u4f60" + " world! This is a long English sentence.") == "english"
+
+    def test_korean_is_not_chinese(self):
+        """Hangul syllables sit inside the U+8C48-U+FAFF span but are not Chinese."""
+        korean = "\uac08\ub155\ud558\uc138\uc694\ubc18\uac11\uc2b5\ub2c8\ub2e4"
+        assert detect_language(korean + " " * 10) == "english"
+
+    def test_yi_is_not_chinese(self):
+        """Yi syllables sit inside the same span."""
+        yi = "".join(chr(code) for code in range(0xA000, 0xA00A))
+        assert detect_language(yi + " " * 10) == "english"
+
+    def test_cjk_compatibility_ideographs_are_chinese(self):
+        """U+F900-U+FAFF is the CJK compatibility block and must be detected."""
+        compat = "\uf900\u66f4\u8eca\u8cc8\u6ed1\u4e32"
+        assert detect_language(compat + " " * 10) == "chinese"
+
+    def test_cjk_extension_a_is_chinese(self):
+        """U+3400-U+4DBF is the CJK extension A block."""
+        ext_a = "".join(chr(code) for code in range(0x3400, 0x340A))
+        assert detect_language(ext_a + " " * 10) == "chinese"
+
+
+class TestCjkCharacterRange:
+    """The CJK range must be pinned with explicit escapes.
+
+    Written as literal characters the lower bound silently became U+8C48
+    instead of U+F900, which swallowed Hangul and Yi syllables and made
+    Korean documents pick the Chinese template here while the VS Code
+    extension (which uses explicit escapes) picked the English one.
+
+    Every boundary below is written as an escape for the same reason the
+    implementation must be: U+F900 and U+8C48 render as near-identical
+    glyphs and cannot be told apart by eye.
+    """
+
+    # CJK Extension A, CJK Unified Ideographs, CJK Compatibility Ideographs
+    CJK_BLOCKS = (
+        "\u3400", "\u4dbf",
+        "\u4e00", "\u9fff",
+        "\uf900", "\ufaff",
+    )
+    OUTSIDE = (
+        "\uac00", "\ud7a3",   # Hangul syllables
+        "\ua000", "\ua489",   # Yi syllables
+        "\uf8ff", "\ufb00",   # just outside the compatibility block
+    )
+
+    def test_the_cjk_blocks_are_inside_the_range(self):
+        from md2docx import CJK_CHAR_RE
+
+        for char in self.CJK_BLOCKS:
+            assert CJK_CHAR_RE.search(char) is not None, (
+                f"U+{ord(char):04X} should match"
+            )
+
+    def test_the_neighbouring_scripts_are_outside_the_range(self):
+        from md2docx import CJK_CHAR_RE
+
+        for char in self.OUTSIDE:
+            assert CJK_CHAR_RE.search(char) is None, (
+                f"U+{ord(char):04X} should not match"
+            )
+
+    def test_the_range_matches_the_vs_code_extension(self):
+        """Both ends must classify a document the same way."""
+        from md2docx import CJK_CHAR_RE
+
+        vs_code_range = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+        for code_point in range(0x3000, 0xFB00):
+            char = chr(code_point)
+            assert bool(CJK_CHAR_RE.search(char)) == bool(vs_code_range.search(char)), (
+                f"U+{code_point:04X} differs from the VS Code extension"
+            )
 
 
 class TestNormalizeProfile:
