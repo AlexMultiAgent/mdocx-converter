@@ -86,10 +86,12 @@ Both layers read the same preset table, `PROFILE_PRESETS` in `src/profiles.ts`. 
 
 **Layer 2 — DOCX XML overrides** (`applyDocxStyleOverrides`): After pandoc finishes, opens the .docx as a ZIP via `adm-zip` and directly edits `word/styles.xml` and `word/document.xml`. This handles:
 
-- `Normal` style (plus aliases: `a`, `a1`, `Text`, `BodyText`, `Body Text`, `FirstParagraph`, `Compact`) — font, size, line spacing
-- `Heading1`/`Heading2`/`Heading3` — font, size
-- `SourceCode` + `VerbatimChar` (paragraph styles only) — Consolas 10pt, color #000000, shading #F3F4F6, for every profile whose preset declares a `codeStyle`
+- Body styles — font, size, line spacing
+- Heading 1 / 2 / 3 — font, size
+- Source code + verbatim char — font, size, color, shading
 - Page margins — `w:pgMar` in `word/document.xml` (mm → twips conversion), defaulting to the preset's margins
+
+Styles are matched by **display name** (`w:name`), never by `w:styleId`. See "Matching styles by display name" below for why.
 
 Profile defaults live in `PROFILE_PRESETS` (`src/profiles.ts`):
 
@@ -106,34 +108,24 @@ Profile defaults live in `PROFILE_PRESETS` (`src/profiles.ts`):
 
 `template` is an empty preset, so it applies **no** style overrides at all and relies entirely on the reference DOCX. Its zero-override behaviour is a consequence of the empty preset, not a special case in the consumer.
 
-> ⚠️ **The two preset tables disagree, and the Layer-2 one wins.** `STYLE_PROFILE_METADATA` (Layer 1) and `getProfileDocxDefaults()` (Layer 2) carry independent line-spacing numbers:
->
-> | Profile | Layer 1 `linestretch` | Layer 2 `lineSpacing` |
-> |---|---|---|
-> | `academic` | 1.5 | 1.5 |
-> | `business` | 1.25 | **1.3** |
-> | `technical` | 1.2 | **1.25** |
->
-> Because Layer 1 is a no-op, the effective spacing is the Layer-2 value — but the two tables drifting apart is how the Dify plugin's `PROFILE_METADATA` / `PROFILE_DEFAULTS` pair got out of step in the first place. Change both together.
+#### Matching styles by display name
 
-### ⚠️ Known defect: style ids are not portable, and the heading overrides do not apply
+`src/docxStyles.ts` resolves every target style by its **display name** (`w:name`), not by `w:styleId`.
 
-Layer 2 resolves styles by **`w:styleId`**, and the ids differ per template. Measured against the six bundled templates:
+This matters because `w:styleId` is not portable across templates — Word mints arbitrary ids when a template is saved. The ids for the same style differ per template, and some ids collide with unrelated styles:
 
-| Style | English templates | Chinese templates |
+| Display name | old Chinese template | old English template |
 |---|---|---|
-| Normal | id `a` | id `a1` |
-| List Number | — | id `a` |
-| Normal Table | id `a1` | — |
-| heading 1 / 2 / 3 | ids `1` / `2` / `3` | ids `1` / `21` / `31` |
-| `SourceCode` / `VerbatimChar` | present | present |
+| Normal | `a1` | `a` |
+| heading 1 / 2 / 3 | `1` / `21` / `31` | `1` / `2` / `3` |
+| **List Number** | **`a`** | — |
+| **Normal Table** | `a3` | **`a1`** |
 
-Two consequences:
+An id-based lookup that guessed `a`/`a1` therefore hit *List Number* on the Chinese template and *Normal Table* on the English one, pushing the body font onto a style that no body paragraph uses. When nothing matched, the old code fell back to *creating* the style — which produced ten unreferenced orphans (`a`, `a1`, `Text`, `Body Text`, `1`, `2`, `21`, `3`, `31`, `Code`) in every exported file, and left the headings with the template's own formatting.
 
-1. **The heading overrides never take effect.** No template has a `w:styleId="Heading1"`, so `upsertStyleOverride()` falls through to `insertDocxStyle()` and *creates* three orphan `w:customStyle="1"` styles that no paragraph references. The headings keep the template's own formatting, and the exported file carries three dead styles.
-2. **The body aliases hit the wrong style on Chinese templates.** `a` is *List Number* there, so the body font/size/spacing also lands on the list-numbering style; the English templates get the body font applied to *Normal Table* via `a1`.
+`upsertStyleOverride()` now matches on the name (case-insensitively, so OOXML's `heading 1` and Word's `Heading 1` both hit), with an exact `w:styleId` match as a second chance, and only creates a style when **neither** matched. `BODY_STYLE_NAMES` deliberately excludes `List Number` and `Normal Table`.
 
-The Dify plugin already avoids this by matching on the **display name** (`w:name`) instead of the id. The same fix belongs here — do not "fix" it by hard-coding `1`/`21`/`31`, because the ids are template-specific and the names are not.
+The Dify plugin reaches the same result through python-docx, whose `doc.styles[name]` lookup is name-first.
 
 ### Binary resolution
 
