@@ -4780,9 +4780,10 @@ Node 版本必须是 24 —— `node --test` 的 glob 支持需要 Node 21+。
 
 新建 `scripts/check-preset-parity.py`：
 
-- 读 `VSC-plugin-MD2Docx-Converter/out/profiles.js`（需要先 `npm run compile`）里的 `PROFILE_PRESETS`
-- import `dify-plugin-MD2Docx/src/md2docx.py` 里的 `PROFILE_DEFAULTS`
+- 读 `VSC-plugin-MD2Docx-Converter/out/profiles.js`（需要先 `npm run compile`）里的 `PROFILE_PRESETS`，以及 `out/templates.js` 里的 `BUNDLED_REFERENCE_DOCX`
+- import `dify-plugin-MD2Docx/src/md2docx.py` 里的 `PROFILE_DEFAULTS` 和 `TEMPLATE_MAP`
 - 逐个 profile 比较：正文字体（latin + eastAsia）、各标题字体（latin + eastAsia）、各字号、四边页边距、行距（倍数或定值 twips）
+- 再比较每个 profile × 每种语言的模板**文件名**（VS Code 侧存的是相对路径，Dify 侧存的是裸文件名，比文件名本身）
 - 有任何一项不一致就打印出来并以非零码退出
 
 用法（仓库根）：
