@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
+import type { CancellationToken } from 'vscode';
 import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 import { promises as fsp } from 'fs';
-import { execFile, spawn } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import AdmZip = require('adm-zip');
 import { normalizeReferenceLanguageSetting, resolveReferenceLanguage } from './language';
 import type { ReferenceLanguage, ReferenceLanguageSetting } from './language';
@@ -21,7 +21,6 @@ import { getBundledReferenceDocxCandidates } from './templates';
 import { resolveDocumentTitle } from './document';
 import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, parseMermaidBlocks, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 
-const execFileAsync = promisify(execFile);
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
 const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
 const EXPORT_ACADEMIC_PAPER_COMMAND_ID = 'mdocxConverter.exportAcademicPaper';
@@ -34,6 +33,7 @@ const CHECK_ENVIRONMENT_COMMAND_ID = 'mdocxConverter.checkEnvironment';
 const CONFIGURATION_SECTION = 'mdocxConverter';
 const LEGACY_CONFIGURATION_SECTION = 'paperifyMd';
 const MERMAID_API_NOTICE_SHOWN_KEY = 'mdocxConverter.mermaidApiNoticeShown';
+const EXPORT_CANCELLED_MESSAGE = 'Export cancelled.';
 
 type MermaidRenderer = 'auto' | 'local' | 'api';
 
@@ -81,6 +81,32 @@ class UserFacingError extends Error {
     constructor(message: string) {
         super(message);
         this.name = 'UserFacingError';
+    }
+}
+
+/**
+ * The user cancelled the export.
+ *
+ * A dedicated error keeps the cancellation apart from a real failure: the
+ * export ends with a notice, not with an error toast.
+ */
+class ExportCancelledError extends UserFacingError {
+    constructor() {
+        super(EXPORT_CANCELLED_MESSAGE);
+        this.name = 'ExportCancelledError';
+    }
+}
+
+/**
+ * Stop the export when the user cancelled it.
+ *
+ * `vscode.CancellationToken` has no `throwIfCancellationRequested` — the
+ * token only reports `isCancellationRequested` and `onCancellationRequested`
+ * — so the check lives here.
+ */
+function throwIfCancellationRequested(token: CancellationToken | undefined): void {
+    if (token?.isCancellationRequested) {
+        throw new ExportCancelledError();
     }
 }
 
@@ -169,54 +195,91 @@ async function runExport(
     outputChannel.appendLine(`Starting export for ${markdownUri.fsPath}`);
 
     let prepared: PreparedMarkdown | undefined;
+    let cancellationToken: vscode.CancellationToken | undefined;
 
     try {
-        const settings = readSettings(markdownUri, exportOverrides);
-        const outputPath = await resolveOutputPath(markdownUri, settings.outputDirectory);
-        const markdownText = await fsp.readFile(markdownUri.fsPath, 'utf8');
-        const resolvedLanguage = resolveReferenceLanguage(markdownText, settings.referenceLanguage);
-        const referenceDocx = await resolveReferenceDocx(markdownUri, settings.referenceDocx, resolvedLanguage, settings.styleProfile, extensionPath);
+        await vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: 'Exporting Markdown to DOCX',
+                cancellable: true
+            },
+            async (progress, token) => {
+                cancellationToken = token;
 
-        logMissingLocalImages(markdownUri.fsPath, markdownText, outputChannel);
+                const settings = readSettings(markdownUri, exportOverrides);
+                const outputPath = await resolveOutputPath(markdownUri, settings.outputDirectory);
+                const markdownText = await fsp.readFile(markdownUri.fsPath, 'utf8');
+                const resolvedLanguage = resolveReferenceLanguage(markdownText, settings.referenceLanguage);
+                const referenceDocx = await resolveReferenceDocx(markdownUri, settings.referenceDocx, resolvedLanguage, settings.styleProfile, extensionPath);
 
-        prepared = await prepareMarkdown(markdownUri.fsPath, markdownText, settings, outputChannel);
+                logMissingLocalImages(markdownUri.fsPath, markdownText, outputChannel);
 
-        // The title goes into the DOCX core properties, not into the body —
-        // a title paragraph would fight with the template's own title style.
-        const documentTitle = resolveDocumentTitle(markdownText, settings.documentTitle, markdownUri.fsPath);
-        outputChannel.appendLine(`Document title: ${documentTitle}`);
+                reportStage(progress, outputChannel, 'Preparing Markdown');
 
-        const pandoc = await requirePandoc(settings.pandocPath);
-        outputChannel.appendLine(`Using Pandoc: ${pandoc.command}`);
-        outputChannel.appendLine(`Pandoc version: ${pandoc.versionLine}`);
+                prepared = await prepareMarkdown(
+                    markdownUri.fsPath,
+                    markdownText,
+                    settings,
+                    outputChannel,
+                    (completed, total) => {
+                        reportStage(progress, outputChannel, `Rendering Mermaid diagrams (${completed}/${total})`);
+                    },
+                    token
+                );
 
-        if (referenceDocx) {
-            outputChannel.appendLine(`Using reference DOCX: ${referenceDocx}`);
-            outputChannel.appendLine(`Reference language mode: ${settings.referenceLanguage} -> ${resolvedLanguage}`);
-        } else {
-            outputChannel.appendLine('No reference DOCX found. Exporting with Pandoc defaults.');
-        }
+                throwIfCancellationRequested(token);
 
-        await runPandoc({
-            pandoc,
-            sourceMarkdownPath: prepared.markdownPath,
-            originalMarkdownPath: markdownUri.fsPath,
-            outputPath,
-            referenceDocx,
-            settings,
-            documentTitle,
-            tempDir: prepared.tempDir,
-            outputChannel
-        });
+                const pandoc = await requirePandoc(settings.pandocPath);
+                outputChannel.appendLine(`Using Pandoc: ${pandoc.command}`);
+                outputChannel.appendLine(`Pandoc version: ${pandoc.versionLine}`);
 
-        outputChannel.appendLine(`Export completed: ${outputPath}`);
-        void vscode.window.showInformationMessage(`DOCX exported successfully: ${path.basename(outputPath)}`);
+                if (referenceDocx) {
+                    outputChannel.appendLine(`Using reference DOCX: ${referenceDocx}`);
+                    outputChannel.appendLine(`Reference language mode: ${settings.referenceLanguage} -> ${resolvedLanguage}`);
+                } else {
+                    outputChannel.appendLine('No reference DOCX found. Exporting with Pandoc defaults.');
+                }
 
-        if (settings.openAfterExport) {
-            await openExportedDocx(outputPath, outputChannel);
-        }
+                // The title goes into the DOCX core properties, not into the
+                // body — a title paragraph would fight with the template's own
+                // title style.
+                const documentTitle = resolveDocumentTitle(markdownText, settings.documentTitle, markdownUri.fsPath);
+                outputChannel.appendLine(`Document title: ${documentTitle}`);
+
+                reportStage(progress, outputChannel, 'Running Pandoc');
+
+                await runPandoc({
+                    pandoc,
+                    sourceMarkdownPath: prepared.markdownPath,
+                    originalMarkdownPath: markdownUri.fsPath,
+                    outputPath,
+                    referenceDocx,
+                    settings,
+                    documentTitle,
+                    tempDir: prepared.tempDir,
+                    outputChannel,
+                    token
+                });
+
+                reportStage(progress, outputChannel, 'Applying styles');
+
+                outputChannel.appendLine(`Export completed: ${outputPath}`);
+                void vscode.window.showInformationMessage(`DOCX exported successfully: ${path.basename(outputPath)}`);
+
+                if (settings.openAfterExport) {
+                    await openExportedDocx(outputPath, outputChannel);
+                }
+            }
+        );
     } catch (error) {
         const message = getErrorMessage(error);
+        if (error instanceof ExportCancelledError || cancellationToken?.isCancellationRequested) {
+            outputChannel.appendLine(EXPORT_CANCELLED_MESSAGE);
+            void vscode.window.showInformationMessage(EXPORT_CANCELLED_MESSAGE);
+            return;
+        }
+
         outputChannel.appendLine(`Export failed: ${message}`);
         void vscode.window.showErrorMessage(message);
     } finally {
@@ -229,6 +292,21 @@ async function runExport(
             }
         }
     }
+}
+
+/**
+ * Announce a stage of the export.
+ *
+ * The notification carries the stage for the user, the output panel carries
+ * it for the log — the panel is where the export leaves a trail.
+ */
+function reportStage(
+    progress: vscode.Progress<{ message?: string; increment?: number }>,
+    outputChannel: vscode.OutputChannel,
+    message: string
+): void {
+    progress.report({ message });
+    outputChannel.appendLine(message);
 }
 
 interface ExportOverrides {
@@ -563,7 +641,9 @@ async function prepareMarkdown(
     markdownPath: string,
     markdownText: string,
     settings: ExportSettings,
-    outputChannel: vscode.OutputChannel
+    outputChannel: vscode.OutputChannel,
+    onProgress?: (completed: number, total: number) => void,
+    token?: CancellationToken
 ): Promise<PreparedMarkdown> {
     const blocks = parseMermaidBlocks(markdownText);
     if (blocks.length === 0) {
@@ -607,53 +687,67 @@ async function prepareMarkdown(
         : validateMermaidApiUrl(settings.mermaidApiUrl);
 
     let usedApiFallback = false;
+    let completed = 0;
 
     const rendered = await mapWithConcurrency(blocks, 4, async (block, index) => {
-        const fileName = `diagram-${index + 1}.${settings.mermaidOutputFormat}`;
+        try {
+            throwIfCancellationRequested(token);
 
-        if (localMermaid) {
-            const inputPath = path.join(assetsDir, `diagram-${index + 1}.mmd`);
-            const outputPath = path.join(assetsDir, fileName);
-            await fsp.writeFile(inputPath, block.code.trim(), 'utf8');
-            try {
-                await runExecutable(
-                    localMermaid.command,
-                    ['-i', inputPath, '-o', outputPath, '-b', 'transparent'],
-                    { shell: localMermaid.useShell, cwd: path.dirname(markdownPath) }
-                );
-                if (!(await exists(outputPath))) {
-                    throw new Error(`Mermaid CLI did not write ${fileName}`);
-                }
-                return { fileName, succeeded: true };
-            } catch (error) {
-                outputChannel.appendLine(`Mermaid CLI failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
-                if (settings.mermaidRenderer === 'local') {
-                    throw error;
+            const fileName = `diagram-${index + 1}.${settings.mermaidOutputFormat}`;
+
+            if (localMermaid) {
+                const inputPath = path.join(assetsDir, `diagram-${index + 1}.mmd`);
+                const outputPath = path.join(assetsDir, fileName);
+                await fsp.writeFile(inputPath, block.code.trim(), 'utf8');
+                try {
+                    await runExecutable(
+                        localMermaid.command,
+                        ['-i', inputPath, '-o', outputPath, '-b', 'transparent'],
+                        { shell: localMermaid.useShell, cwd: path.dirname(markdownPath), token }
+                    );
+                    if (!(await exists(outputPath))) {
+                        throw new Error(`Mermaid CLI did not write ${fileName}`);
+                    }
+                    return { fileName, succeeded: true };
+                } catch (error) {
+                    outputChannel.appendLine(`Mermaid CLI failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
+                    // A killed CLI means the user cancelled — the diagram must
+                    // not fall through to the API fallback.
+                    throwIfCancellationRequested(token);
+                    if (settings.mermaidRenderer === 'local') {
+                        throw error;
+                    }
                 }
             }
-        }
 
-        const remainingMs = deadline - Date.now();
-        if (apiUrl && remainingMs > 0) {
-            // The Mermaid Ink client only ever returns PNG bytes, so the file
-            // has to carry the `.png` extension even when the local renderer
-            // is configured for SVG.
-            const apiFileName = `diagram-${index + 1}.png`;
-            const outputPath = path.join(assetsDir, apiFileName);
-            try {
-                const image = await renderMermaidWithRetry(block.code, {
-                    apiUrl,
-                    totalBudgetMs: remainingMs
-                });
-                await fsp.writeFile(outputPath, image);
-                usedApiFallback = true;
-                return { fileName: apiFileName, succeeded: true };
-            } catch (error) {
-                outputChannel.appendLine(`Mermaid Ink API failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
+            const remainingMs = deadline - Date.now();
+            if (apiUrl && remainingMs > 0) {
+                // The Mermaid Ink client only ever returns PNG bytes, so the file
+                // has to carry the `.png` extension even when the local renderer
+                // is configured for SVG.
+                const apiFileName = `diagram-${index + 1}.png`;
+                const outputPath = path.join(assetsDir, apiFileName);
+                try {
+                    const image = await renderMermaidWithRetry(block.code, {
+                        apiUrl,
+                        totalBudgetMs: remainingMs
+                    });
+                    await fsp.writeFile(outputPath, image);
+                    usedApiFallback = true;
+                    return { fileName: apiFileName, succeeded: true };
+                } catch (error) {
+                    outputChannel.appendLine(`Mermaid Ink API failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
+                }
             }
-        }
 
-        return { fileName, succeeded: false };
+            return { fileName, succeeded: false };
+        } finally {
+            // Every diagram advances the counter — the successful ones and the
+            // failed ones alike. A path that forgot to advance would leave the
+            // progress bar stuck below the total.
+            completed += 1;
+            onProgress?.(completed, blocks.length);
+        }
     });
 
     let processedMarkdown = '';
@@ -873,6 +967,7 @@ async function runPandoc(options: {
     documentTitle: string;
     tempDir?: string;
     outputChannel: vscode.OutputChannel;
+    token?: CancellationToken;
 }): Promise<void> {
     const { pandoc, sourceMarkdownPath, originalMarkdownPath, outputPath, referenceDocx, settings, documentTitle, tempDir, outputChannel } = options;
     const resourcePathSeparator = process.platform === 'win32' ? ';' : ':';
@@ -917,9 +1012,12 @@ async function runPandoc(options: {
     outputChannel.appendLine(`Running Pandoc with args: ${args.join(' ')}`);
 
     try {
+        throwIfCancellationRequested(options.token);
+
         const result = await runExecutable(pandoc.command, args, {
             shell: pandoc.useShell,
-            cwd: path.dirname(originalMarkdownPath)
+            cwd: path.dirname(originalMarkdownPath),
+            token: options.token
         });
 
         if (result.stdout.trim()) {
@@ -947,6 +1045,10 @@ async function runPandoc(options: {
             outputChannel.appendLine('Applied DOCX style overrides.');
         }
     } catch (error) {
+        if (options.token?.isCancellationRequested) {
+            throw new ExportCancelledError();
+        }
+
         const message = getProcessErrorMessage(error);
         throw new UserFacingError(message);
     }
@@ -1040,16 +1142,29 @@ async function runExecutable(
     options: {
         cwd?: string;
         shell?: boolean;
+        token?: CancellationToken;
     }
 ): Promise<{ stdout: string; stderr: string; }> {
     return execExecutable(command, args, {
         cwd: options.cwd,
         shell: options.shell,
         windowsHide: true,
-        maxBuffer: 16 * 1024 * 1024
+        maxBuffer: 16 * 1024 * 1024,
+        token: options.token
     });
 }
 
+/**
+ * Run a child process and collect its output.
+ *
+ * `spawn` instead of `execFile`, because only `spawn` hands out the child
+ * handle — that is what makes a cancelled export able to terminate the
+ * process instead of waiting for it to finish.
+ *
+ * The rejected error carries `stdout` and `stderr`, because
+ * {@link getProcessErrorMessage} pattern-matches pandoc's own diagnostics to
+ * tell the user what went wrong.
+ */
 async function execExecutable(
     command: string,
     args: string[],
@@ -1058,13 +1173,67 @@ async function execExecutable(
         shell?: boolean;
         windowsHide?: boolean;
         maxBuffer?: number;
+        token?: CancellationToken;
     }
 ): Promise<{ stdout: string; stderr: string; }> {
-    return execFileAsync(command, args, {
-        cwd: options.cwd,
-        shell: options.shell,
-        windowsHide: options.windowsHide,
-        maxBuffer: options.maxBuffer ?? 16 * 1024 * 1024
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, {
+            cwd: options.cwd,
+            shell: options.shell !== undefined ? options.shell : shouldRunThroughShell(command),
+            windowsHide: options.windowsHide ?? true
+        });
+
+        let stdout = '';
+        let stderr = '';
+        let settled = false;
+        const maxBuffer = options.maxBuffer ?? 16 * 1024 * 1024;
+
+        child.stdout?.on('data', (chunk: Buffer) => {
+            stdout += chunk.toString();
+            if (stdout.length > maxBuffer) {
+                child.kill();
+            }
+        });
+
+        child.stderr?.on('data', (chunk: Buffer) => {
+            stderr += chunk.toString();
+            if (stderr.length > maxBuffer) {
+                child.kill();
+            }
+        });
+
+        const cancellation = options.token?.onCancellationRequested(() => {
+            child.kill();
+        });
+
+        child.on('error', (error) => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            cancellation?.dispose();
+            reject(error);
+        });
+
+        child.on('close', (code) => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            cancellation?.dispose();
+
+            if (code === 0) {
+                resolve({ stdout, stderr });
+                return;
+            }
+
+            const error = new Error(`Process exited with code ${code}`) as Error & { stdout?: string; stderr?: string; };
+            error.stdout = stdout;
+            error.stderr = stderr;
+            reject(error);
+        });
     });
 }
 
