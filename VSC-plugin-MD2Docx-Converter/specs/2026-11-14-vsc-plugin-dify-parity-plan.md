@@ -69,8 +69,10 @@ test('test harness runs', () => {
 
 - [ ] **Step 2: 运行测试确认它能跑通**
 
-Run: `node --test test/unit/`
-Expected: PASS，输出 `# pass 1`
+Run: `node --test "test/unit/**/*.test.js"`
+Expected: PASS，输出 `ℹ pass 1`
+
+> 注意：Node 24 的 `--test` 不再递归目录参数，`node --test test/unit/` 会失败（它把目录当模块 require）。必须用 glob 形式，且引号要保留（Windows 下 shell 会吃掉未加引号的 `*`）。所有测试文件必须命名为 `*.test.js` 才会被 glob 匹配。
 
 - [ ] **Step 3: 在 package.json 加入脚本**
 
@@ -82,7 +84,7 @@ Expected: PASS，输出 `# pass 1`
     "package": "vsce package --allow-missing-repository",
     "watch": "tsc -watch -p ./",
     "vscode:prepublish": "npm run compile",
-    "test": "npm run compile && node --test test/unit/",
+    "test": "npm run compile && node --test \"test/unit/**/*.test.js\"",
     "test:e2e": "node test/e2e/run.js",
     "build:templates": "npm run compile && node scripts/build-templates.js"
   },
@@ -91,7 +93,7 @@ Expected: PASS，输出 `# pass 1`
 - [ ] **Step 4: 运行 npm test 确认通过**
 
 Run: `npm test`
-Expected: `tsc` 无错误，随后 `# pass 1`
+Expected: `tsc` 无错误，随后 `ℹ pass 1`
 
 - [ ] **Step 5: 提交**
 
