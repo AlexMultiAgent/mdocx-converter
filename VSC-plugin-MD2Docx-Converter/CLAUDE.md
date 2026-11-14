@@ -153,12 +153,12 @@ The Dify plugin reaches the same result through python-docx, whose `doc.styles[n
 
 ### Key design decisions
 
-- The extension does **not** bundle pandoc or mmdc — it discovers them at runtime and fails with install guidance
+- The extension does **not** bundle pandoc or mmdc — it discovers them at runtime. A missing mmdc is no longer fatal: with `mermaidRenderer=auto` the Mermaid Ink API renders the diagram instead, and a diagram that fails both ways is kept as a code block so the rest of the export still succeeds
 - **Pandoc is not sandboxed here.** Unlike the Dify plugin, no `--sandbox` is passed, so local image paths and remote image URLs resolve normally and the Mermaid PNGs are found through `--resource-path`. The same Markdown therefore behaves differently in the two products: the Dify plugin requires `data:` URIs for every image.
 - `openAfterExport` uses `explorer.exe /select,` on Windows instead of `vscode.env.openExternal` to avoid shell association errors
 - Error messages are pattern-matched from pandoc stderr/stdout to produce user-friendly guidance (permission denied, image not found, unknown syntax)
 - Temp files are cleaned up unless `keepIntermediateFiles` is set
-- Logic is split into pure modules under `src/` (e.g. `src/document.ts`, `src/language.ts`, `src/profiles.ts`, `src/templates.ts`) with `src/extension.ts` as the only module allowed to import `vscode` — this keeps the helpers unit-testable via `node --test`
+- Logic is split into pure modules under `src/` (see the source layout above) with `src/extension.ts` as the only module allowed to import `vscode` — this keeps the helpers unit-testable via `node --test`
 - Style presets live in exactly one place (`PROFILE_PRESETS` in `src/profiles.ts`); both the pandoc layer and the DOCX layer read it, and pandoc metadata is derived from it rather than stored alongside it
 - No bundler: TypeScript compiles `src/` to CommonJS in `out/`, and the unit tests live in `test/unit/`
 
@@ -171,4 +171,4 @@ The Dify plugin reaches the same result through python-docx, whose `doc.styles[n
 - `specs/2026-11-14-vsc-plugin-dify-parity-design.md` — the design for reaching parity with the Dify plugin (preset split, font-slot handling, template set).
 - `specs/2026-11-14-vsc-plugin-dify-parity-plan.md` — the implementation plan for that design.
 - `../AGENTS.md` — repo-wide gotcha cheat sheet (marketplace release flow, CI, environment limits).
-- `../dify-plugin-MD2Docx/CLAUDE.md` — the Dify counterpart; its style-system section documents the fixes (name-based style matching, theme-font removal, OOXML child order) that this side has not adopted yet.
+- `../dify-plugin-MD2Docx/CLAUDE.md` — the Dify counterpart. Name-based style matching and OOXML child order are now adopted on both sides; the Dify side additionally strips theme-font attributes, which this side does not need because it replaces the whole `w:rFonts` element.
