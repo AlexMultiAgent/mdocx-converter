@@ -3418,6 +3418,13 @@ async function prepareMarkdown(
 
     // The budget is shared by every diagram in this export, not per diagram.
     const deadline = Date.now() + MERMAID_TOTAL_BUDGET_MS;
+
+    // A malformed API URL is a configuration error, not a diagram error —
+    // fail the export with a clear message instead of retrying a bad URL.
+    const apiUrl = settings.mermaidRenderer === 'local'
+        ? undefined
+        : validateMermaidApiUrl(settings.mermaidApiUrl);
+
     let usedApiFallback = false;
 
     const rendered = await mapWithConcurrency(blocks, 4, async (block, index) => {
@@ -3443,10 +3450,10 @@ async function prepareMarkdown(
         }
 
         const remainingMs = deadline - Date.now();
-        if (settings.mermaidRenderer !== 'local' && remainingMs > 0) {
+        if (apiUrl && remainingMs > 0) {
             try {
                 const image = await renderMermaidWithRetry(block.code, {
-                    apiUrl: settings.mermaidApiUrl,
+                    apiUrl,
                     totalBudgetMs: remainingMs
                 });
                 await fsp.writeFile(outputPath, image);
@@ -3486,9 +3493,9 @@ async function prepareMarkdown(
         outputChannel.appendLine(`${failedCount} of ${blocks.length} Mermaid diagrams could not be rendered and were kept as code blocks.`);
     }
 
-    if (usedApiFallback) {
-        outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${settings.mermaidApiUrl}`);
-        await notifyMermaidApiFallback(settings.mermaidApiUrl);
+    if (usedApiFallback && apiUrl) {
+        outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${apiUrl}`);
+        await notifyMermaidApiFallback(apiUrl);
     }
 
     return {
@@ -3502,7 +3509,7 @@ async function prepareMarkdown(
 import 段加入：
 
 ```ts
-import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, parseMermaidBlocks, renderMermaidWithRetry } from './mermaid';
+import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, parseMermaidBlocks, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 ```
 
 删除 `MERMAID_BLOCK_REGEX` 常量（已搬到 `src/mermaid.ts`）。
