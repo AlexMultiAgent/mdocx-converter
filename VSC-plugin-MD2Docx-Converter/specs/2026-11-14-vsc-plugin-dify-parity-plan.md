@@ -2933,7 +2933,51 @@ git commit -m "feat: add mermaid block parser and Mermaid Ink API client"
         mermaidApiUrl: readConfigValue(config, legacyConfig, 'mermaidApiUrl', 'https://mermaid.ink').trim() || 'https://mermaid.ink',
 ```
 
-- [ ] **Step 3: 改造 prepareMarkdown**
+- [ ] **Step 3: 保存 extension context（一次性通知要用）**
+
+模块级加一个变量，`activate` 里赋值：
+
+```ts
+let extensionContext: vscode.ExtensionContext | undefined;
+
+export function activate(context: vscode.ExtensionContext): void {
+    extensionContext = context;
+    ...
+```
+
+- [ ] **Step 4: 一次性隐私告知**
+
+设计规格 2.4 要求：只要**实际调用了远程 API**，除了输出面板那行日志，还要弹一次一次性通知，附「打开设置」按钮，状态存在 `context.globalState`。
+
+```ts
+const MERMAID_API_NOTICE_SHOWN_KEY = 'mdocxConverter.mermaidApiNoticeShown';
+
+async function notifyMermaidApiFallback(host: string): Promise<void> {
+    const state = extensionContext?.globalState;
+    if (!state || state.get<boolean>(MERMAID_API_NOTICE_SHOWN_KEY)) {
+        return;
+    }
+
+    await state.update(MERMAID_API_NOTICE_SHOWN_KEY, true);
+
+    const openSettingsLabel = 'Open Settings';
+    const choice = await vscode.window.showInformationMessage(
+        `Mermaid diagrams were rendered by the Mermaid Ink API. The diagram content was sent to ${host}.`,
+        openSettingsLabel
+    );
+
+    if (choice === openSettingsLabel) {
+        await vscode.commands.executeCommand(
+            'workbench.action.openSettings',
+            'mdocxConverter.mermaidRenderer'
+        );
+    }
+}
+```
+
+**这次导出里可能有多张图走了 API 兜底，但通知只能弹一次** —— 在 `prepareMarkdown` 里用一个布尔变量记下「本次导出用过 API」，等并发渲染全部结束后再调一次这个函数，不要在每个 worker 里调。
+
+- [ ] **Step 5: 改造 prepareMarkdown**
 
 把 `src/extension.ts` 的 `prepareMarkdown` 整体替换为：
 
@@ -2942,8 +2986,7 @@ async function prepareMarkdown(
     markdownPath: string,
     markdownText: string,
     settings: ExportSettings,
-    outputChannel: vscode.OutputChannel,
-    onProgress?: (completed: number, total: number) => void
+    outputChannel: vscode.OutputChannel
 ): Promise<PreparedMarkdown> {
     const blocks = parseMermaidBlocks(markdownText);
     if (blocks.length === 0) {
@@ -2977,12 +3020,9 @@ async function prepareMarkdown(
         outputChannel.appendLine('Mermaid CLI unavailable, falling back to the Mermaid Ink API.');
     }
 
+    // The budget is shared by every diagram in this export, not per diagram.
     const deadline = Date.now() + MERMAID_TOTAL_BUDGET_MS;
-    let completed = 0;
-    const markCompleted = () => {
-        completed += 1;
-        onProgress?.(completed, blocks.length);
-    };
+    let usedApiFallback = false;
 
     const rendered = await mapWithConcurrency(blocks, 4, async (block, index) => {
         const fileName = `diagram-${index + 1}.${settings.mermaidOutputFormat}`;
@@ -2997,7 +3037,6 @@ async function prepareMarkdown(
                     ['-i', inputPath, '-o', outputPath, '-b', 'transparent'],
                     { shell: localMermaid.useShell, cwd: path.dirname(markdownPath) }
                 );
-                markCompleted();
                 return { fileName, succeeded: true };
             } catch (error) {
                 outputChannel.appendLine(`Mermaid CLI failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
@@ -3007,19 +3046,21 @@ async function prepareMarkdown(
             }
         }
 
-        if (settings.mermaidRenderer !== 'local' && Date.now() < deadline) {
+        const remainingMs = deadline - Date.now();
+        if (settings.mermaidRenderer !== 'local' && remainingMs > 0) {
             try {
-                const image = await renderMermaidWithRetry(block.code, { apiUrl: settings.mermaidApiUrl });
+                const image = await renderMermaidWithRetry(block.code, {
+                    apiUrl: settings.mermaidApiUrl,
+                    totalBudgetMs: remainingMs
+                });
                 await fsp.writeFile(outputPath, image);
-                outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${settings.mermaidApiUrl}`);
-                markCompleted();
+                usedApiFallback = true;
                 return { fileName, succeeded: true };
             } catch (error) {
                 outputChannel.appendLine(`Mermaid Ink API failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
             }
         }
 
-        markCompleted();
         return { fileName, succeeded: false };
     });
 
@@ -3029,12 +3070,11 @@ async function prepareMarkdown(
     blocks.forEach((block, index) => {
         processedMarkdown += markdownText.slice(lastIndex, block.start);
         const result = rendered[index];
+        processedMarkdown = ensureTrailingBlankLine(processedMarkdown);
         if (result.succeeded) {
             const relativeDiagramPath = `./mermaid-assets/${result.fileName}`.replace(/\\/g, '/');
-            processedMarkdown = ensureTrailingBlankLine(processedMarkdown);
             processedMarkdown += `![Mermaid Diagram ${index + 1}](${relativeDiagramPath})\n\n`;
         } else {
-            processedMarkdown = ensureTrailingBlankLine(processedMarkdown);
             processedMarkdown += '```mermaid\n' + block.code + '\n```\n\n';
         }
         lastIndex = block.end;
@@ -3048,6 +3088,11 @@ async function prepareMarkdown(
     const failedCount = rendered.filter((item) => !item.succeeded).length;
     if (failedCount > 0) {
         outputChannel.appendLine(`${failedCount} of ${blocks.length} Mermaid diagrams could not be rendered and were kept as code blocks.`);
+    }
+
+    if (usedApiFallback) {
+        outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${settings.mermaidApiUrl}`);
+        await notifyMermaidApiFallback(settings.mermaidApiUrl);
     }
 
     return {
@@ -3066,17 +3111,20 @@ import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, parseMermaidBlocks, render
 
 删除 `MERMAID_BLOCK_REGEX` 常量（已搬到 `src/mermaid.ts`）。
 
-- [ ] **Step 4: 编译校验**
+> ⚠️ **`totalBudgetMs` 必须传 `remainingMs`，不能省略。** 省略会退回 `renderMermaidWithRetry` 的默认值 120 秒 —— 那是**每张图**各算一份，10 张图最坏能拖 20 分钟。设计规格 2.4 写的是「全部图表共享 120s 总预算」。
+
+- [ ] **Step 6: 编译校验**
 
 Run: `npm run compile`
 Expected: 无 TypeScript 错误
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 7: 提交**
 
 ```bash
 git add src/extension.ts package.json
 git commit -m "feat: fall back to the Mermaid Ink API and keep failed diagrams as code blocks"
 ```
+
 
 ---
 
