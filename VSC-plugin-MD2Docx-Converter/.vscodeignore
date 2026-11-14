@@ -1,6 +1,7 @@
 .vscode/**
 .vscode-test/**
 .claude/**
+.remember/**
 node_modules/**
 !node_modules/adm-zip/**
 src/**
