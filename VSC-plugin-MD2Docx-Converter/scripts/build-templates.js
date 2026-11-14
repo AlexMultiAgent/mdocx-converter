@@ -11,9 +11,20 @@ const A4_WIDTH_TWIPS = 11906;
 const A4_HEIGHT_TWIPS = 16838;
 const HEADER_TWIPS = 850;
 const FOOTER_TWIPS = 990;
+const GUTTER_TWIPS = 0;
+const COLUMNS_SPACE_TWIPS = 720;
 const FOOTER_REL_ID = 'rId900';
-const PAGE_NUMBER_FONT = 'SimSun';
-const PAGE_NUMBER_SIZE_PT = 14;
+
+// Structural OOXML constants — the same for every template. They are layout
+// scaffolding, not per-profile design data, so they stay here rather than in
+// the preset tables.
+const BODY_SPACING_AFTER_TWIPS = 0;
+const HEADING_FIRST_LINE_INDENT_TWIPS = 0;
+const CODE_SPACING_BEFORE_TWIPS = 60;
+const CODE_SPACING_AFTER_TWIPS = 60;
+const CODE_INDENT_TWIPS = 280;
+const CODE_JUSTIFICATION = 'left';
+const DOC_GRID_LINE_PITCH = 312;
 
 const PROFILE_ORDER = ['academic', 'business', 'technical', 'official', 'thesis'];
 const LANGUAGE_ORDER = ['english', 'chinese'];
@@ -50,19 +61,52 @@ function paragraphStyle({ id, name, basedOn = 'Normal', pPr = '', rPr = '', cust
         + `</w:style>`;
 }
 
-function buildStyles(profile, language) {
+function requirePreset(profile) {
     const preset = PROFILE_PRESETS[profile];
+    if (!preset) {
+        throw new Error(`No style preset for profile "${profile}"`);
+    }
+    return preset;
+}
+
+function requireLayout(profile) {
     const layout = TEMPLATE_LAYOUT[profile];
     if (!layout) {
         throw new Error(`No template layout for profile "${profile}"`);
     }
+    return layout;
+}
+
+/** Line height and rule come from the preset — never from a literal here. */
+function resolveLineSpacing(preset, profile) {
+    if (preset.lineSpacingRule === undefined) {
+        throw new Error(`Preset "${profile}" defines no lineSpacingRule`);
+    }
+
+    if (preset.lineSpacingTwips !== undefined) {
+        return { twips: preset.lineSpacingTwips, rule: preset.lineSpacingRule };
+    }
+
+    if (preset.lineSpacing !== undefined) {
+        return { twips: Math.round(preset.lineSpacing * 240), rule: preset.lineSpacingRule };
+    }
+
+    throw new Error(`Preset "${profile}" defines neither lineSpacing nor lineSpacingTwips`);
+}
+
+function buildStyles(profile, language) {
+    const preset = requirePreset(profile);
+    const layout = requireLayout(profile);
+    const codeStyle = preset.codeStyle;
+    if (!codeStyle) {
+        throw new Error(`Preset "${profile}" defines no codeStyle`);
+    }
 
     const indent = layout.indentTwips[language];
-    const lineTwips = preset.lineSpacingTwips ?? Math.round((preset.lineSpacing ?? 1.5) * 240);
-    const lineRule = preset.lineSpacingTwips ? 'exact' : 'auto';
+    const { twips: lineTwips, rule: lineRule } = resolveLineSpacing(preset, profile);
 
     const bodyPPr = '<w:widowControl/>'
-        + `<w:spacing w:after="0" w:line="${lineTwips}" w:lineRule="${lineRule}"/>`
+        + `<w:spacing w:after="${BODY_SPACING_AFTER_TWIPS}" w:line="${lineTwips}" w:lineRule="${lineRule}"/>`
         + (indent ? `<w:ind w:firstLine="${indent}"/>` : '')
         + `<w:jc w:val="${layout.justification}"/>`;
     const bodyRPr = fontXml(preset.body.ascii, preset.body.eastAsia) + sizeXml(preset.bodySizePt);
@@ -96,56 +140,40 @@ function buildStyles(profile, language) {
             custom: false,
             pPr: '<w:keepNext/><w:keepLines/>'
                 + `<w:spacing w:before="${layout.headingBeforeTwips[index]}" w:after="${layout.headingAfterTwips[index]}" w:line="${lineTwips}" w:lineRule="${lineRule}"/>`
-                + '<w:ind w:firstLine="0"/>'
+                + `<w:ind w:firstLine="${HEADING_FIRST_LINE_INDENT_TWIPS}"/>`
                 + `<w:jc w:val="${layout.headingAlign[index]}"/>`
                 + `<w:outlineLvl w:val="${index}"/>`,
             rPr: fontXml(heading.font.ascii, heading.font.eastAsia) + sizeXml(heading.sizePt) + '<w:b/><w:bCs/>'
         }));
     });
 
-    const codeStyle = preset.codeStyle;
-    if (codeStyle) {
-        definitions.push(paragraphStyle({
-            id: 'SourceCode',
-            name: 'Source Code',
-            pPr: '<w:wordWrap w:val="off"/>'
-                + `<w:spacing w:before="60" w:after="60" w:line="${Math.round(codeStyle.lineSpacing * 240)}" w:lineRule="auto"/>`
-                + '<w:ind w:left="280" w:right="280" w:firstLine="0"/>'
-                + '<w:jc w:val="left"/>'
-                + `<w:shd w:val="clear" w:color="auto" w:fill="${escapeXml(codeStyle.shadingFill)}"/>`,
-            rPr: fontXml(codeStyle.font, codeStyle.font) + sizeXml(codeStyle.sizePt)
-        }));
+    const codeShading = codeStyle.shadingFill
+        ? `<w:shd w:val="clear" w:color="auto" w:fill="${escapeXml(codeStyle.shadingFill)}"/>`
+        : '';
 
-        definitions.push(
-            '<w:style w:type="character" w:customStyle="1" w:styleId="VerbatimChar">'
-            + '<w:name w:val="Verbatim Char"/>'
-            + `<w:rPr>${fontXml(codeStyle.font, codeStyle.font)}${sizeXml(codeStyle.sizePt)}</w:rPr>`
-            + '</w:style>'
-        );
-    } else {
-        definitions.push(paragraphStyle({
-            id: 'SourceCode',
-            name: 'Source Code',
-            pPr: '<w:wordWrap w:val="off"/>'
-                + '<w:spacing w:before="60" w:after="60" w:line="240" w:lineRule="auto"/>'
-                + '<w:ind w:left="280" w:right="280" w:firstLine="0"/>'
-                + '<w:jc w:val="left"/>',
-            rPr: fontXml('Consolas', 'Consolas') + sizeXml(9)
-        }));
+    definitions.push(paragraphStyle({
+        id: 'SourceCode',
+        name: 'Source Code',
+        pPr: '<w:wordWrap w:val="off"/>'
+            + `<w:spacing w:before="${CODE_SPACING_BEFORE_TWIPS}" w:after="${CODE_SPACING_AFTER_TWIPS}" w:line="${Math.round(codeStyle.lineSpacing * 240)}" w:lineRule="auto"/>`
+            + `<w:ind w:left="${CODE_INDENT_TWIPS}" w:right="${CODE_INDENT_TWIPS}" w:firstLine="${HEADING_FIRST_LINE_INDENT_TWIPS}"/>`
+            + `<w:jc w:val="${CODE_JUSTIFICATION}"/>`
+            + codeShading,
+        rPr: fontXml(codeStyle.font, codeStyle.font) + sizeXml(codeStyle.sizePt)
+    }));
 
-        definitions.push(
-            '<w:style w:type="character" w:customStyle="1" w:styleId="VerbatimChar">'
-            + '<w:name w:val="Verbatim Char"/>'
-            + `<w:rPr>${fontXml('Consolas', 'Consolas')}${sizeXml(9)}</w:rPr>`
-            + '</w:style>'
-        );
-    }
+    definitions.push(
+        '<w:style w:type="character" w:customStyle="1" w:styleId="VerbatimChar">'
+        + '<w:name w:val="Verbatim Char"/>'
+        + `<w:rPr>${fontXml(codeStyle.font, codeStyle.font)}${sizeXml(codeStyle.sizePt)}</w:rPr>`
+        + '</w:style>'
+    );
 
     return definitions.join('');
 }
 
 function buildDocument(profile) {
-    const preset = PROFILE_PRESETS[profile];
+    const preset = requirePreset(profile);
     return (
         `<w:footerReference w:type="default" r:id="${FOOTER_REL_ID}"/>`
         + '<w:footnotePr><w:numRestart w:val="eachSect"/></w:footnotePr>'
@@ -155,17 +183,17 @@ function buildDocument(profile) {
         + ` w:right="${mmToTwips(preset.marginRightMm)}"`
         + ` w:bottom="${mmToTwips(preset.marginBottomMm)}"`
         + ` w:left="${mmToTwips(preset.marginLeftMm)}"`
-        + ` w:header="${HEADER_TWIPS}" w:footer="${FOOTER_TWIPS}" w:gutter="0"/>`
-        + '<w:cols w:space="720"/>'
-        + '<w:docGrid w:linePitch="312"/>'
+        + ` w:header="${HEADER_TWIPS}" w:footer="${FOOTER_TWIPS}" w:gutter="${GUTTER_TWIPS}"/>`
+        + `<w:cols w:space="${COLUMNS_SPACE_TWIPS}"/>`
+        + `<w:docGrid w:linePitch="${DOC_GRID_LINE_PITCH}"/>`
     );
 }
 
-function buildFooter() {
+function buildFooter(pageNumberFont, pageNumberSizePt) {
     return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
         + '<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
         + '<w:p><w:pPr><w:jc w:val="center"/></w:pPr>'
-        + `<w:r><w:rPr>${fontXml(PAGE_NUMBER_FONT, PAGE_NUMBER_FONT)}${sizeXml(PAGE_NUMBER_SIZE_PT)}</w:rPr><w:fldChar w:fldCharType="begin"/></w:r>`
+        + `<w:r><w:rPr>${fontXml(pageNumberFont, pageNumberFont)}${sizeXml(pageNumberSizePt)}</w:rPr><w:fldChar w:fldCharType="begin"/></w:r>`
         + '<w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>'
         + '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
         + '<w:r><w:t>1</w:t></w:r>'
@@ -182,7 +210,20 @@ function replaceStyleBlock(stylesXml, styleId, replacement) {
     return stylesXml;
 }
 
+/** Strip the base document's sample body, keeping only the section properties. */
+function buildDocumentBody(documentXml) {
+    return documentXml.replace(/<w:body\b[^>]*>[\s\S]*<\/w:body>/, (bodyXml) => {
+        const sectPrMatch = bodyXml.match(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/);
+        if (!sectPrMatch) {
+            throw new Error('Base reference DOCX has no sectPr');
+        }
+        return `<w:body>${sectPrMatch[0]}</w:body>`;
+    });
+}
+
 function buildTemplate(baseZip, profile, language) {
+    const layout = requireLayout(profile);
+
     let stylesXml = baseZip.readAsText('word/styles.xml');
 
     for (const styleId of ['Normal', 'BodyText', 'FirstParagraph', 'Compact', 'Heading1', 'Heading2', 'Heading3', 'SourceCode', 'VerbatimChar']) {
@@ -191,7 +232,7 @@ function buildTemplate(baseZip, profile, language) {
 
     stylesXml = stylesXml.replace(/<\/w:styles>\s*$/, `${buildStyles(profile, language)}</w:styles>`);
 
-    let documentXml = baseZip.readAsText('word/document.xml');
+    let documentXml = buildDocumentBody(baseZip.readAsText('word/document.xml'));
     documentXml = documentXml.replace(/<w:sectPr\b[\s\S]*?<\/w:sectPr>/, `<w:sectPr>${buildDocument(profile)}</w:sectPr>`);
 
     let contentTypes = baseZip.readAsText('[Content_Types].xml');
@@ -222,7 +263,7 @@ function buildTemplate(baseZip, profile, language) {
         }
     }
 
-    output.addFile('word/footer1.xml', Buffer.from(buildFooter(), 'utf8'));
+    output.addFile('word/footer1.xml', Buffer.from(buildFooter(layout.pageNumberFont, layout.pageNumberSizePt), 'utf8'));
 
     return output;
 }

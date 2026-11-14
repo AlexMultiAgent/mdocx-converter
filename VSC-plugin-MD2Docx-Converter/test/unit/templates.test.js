@@ -85,9 +85,43 @@ for (const profile of GENERATED_PROFILES) {
             const normal = styles.match(/<w:style\b[^>]*w:styleId="Normal"[^>]*>[\s\S]*?<\/w:style>/)[0];
             const preset = PROFILE_PRESETS[profile];
             const expectedTwips = preset.lineSpacingTwips ?? Math.round(preset.lineSpacing * 240);
-            const expectedRule = preset.lineSpacingTwips ? 'exact' : 'auto';
             assert.match(normal, new RegExp(`w:line="${expectedTwips}"`));
-            assert.match(normal, new RegExp(`w:lineRule="${expectedRule}"`));
+            assert.match(normal, new RegExp(`w:lineRule="${preset.lineSpacingRule}"`));
+        });
+
+        test(`${profile}/${language} gives code blocks the preset code style`, () => {
+            const zip = readTemplate(profile, language);
+            const styles = zip.readAsText('word/styles.xml');
+            const sourceCode = styles.match(/<w:style\b[^>]*w:styleId="SourceCode"[^>]*>[\s\S]*?<\/w:style>/)[0];
+            const codeStyle = PROFILE_PRESETS[profile].codeStyle;
+            assert.ok(codeStyle, 'the preset must declare a code style');
+            assert.match(sourceCode, new RegExp(`w:ascii="${codeStyle.font}"`));
+            assert.match(sourceCode, new RegExp(`w:eastAsia="${codeStyle.font}"`));
+            assert.match(sourceCode, new RegExp(`<w:sz w:val="${codeStyle.sizePt * 2}"/>`));
+            assert.match(sourceCode, new RegExp(`w:line="${Math.round(codeStyle.lineSpacing * 240)}"`));
+            if (codeStyle.shadingFill) {
+                assert.match(sourceCode, new RegExp(`w:fill="${codeStyle.shadingFill}"`));
+            } else {
+                assert.ok(!/<w:shd\b/.test(sourceCode), 'no shading when the preset declares none');
+            }
+        });
+
+        test(`${profile}/${language} renders the page number with the layout font`, () => {
+            const zip = readTemplate(profile, language);
+            const footer = zip.readAsText('word/footer1.xml');
+            const layout = TEMPLATE_LAYOUT[profile];
+            assert.match(footer, new RegExp(`w:ascii="${layout.pageNumberFont}"`));
+            assert.match(footer, new RegExp(`w:eastAsia="${layout.pageNumberFont}"`));
+            assert.match(footer, new RegExp(`<w:sz w:val="${layout.pageNumberSizePt * 2}"/>`));
+        });
+
+        test(`${profile}/${language} carries no placeholder body content`, () => {
+            const zip = readTemplate(profile, language);
+            const document = zip.readAsText('word/document.xml');
+            const body = document.match(/<w:body\b[^>]*>[\s\S]*<\/w:body>/)[0];
+            const inner = body.replace(/<w:body\b[^>]*>/, '').replace(/<\/w:body>/, '');
+            assert.ok(!/<w:p\b/.test(inner), 'the body must hold no sample paragraphs');
+            assert.match(inner, /<w:sectPr\b/, 'the body must keep the section properties');
         });
     }
 }

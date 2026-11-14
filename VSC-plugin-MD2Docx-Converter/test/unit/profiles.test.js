@@ -77,6 +77,8 @@ test('template layout covers every profile that has one', () => {
         assert.equal(layout.headingAlign.length, 3);
         assert.equal(layout.headingBeforeTwips.length, 3);
         assert.equal(layout.headingAfterTwips.length, 3);
+        assert.ok(layout.pageNumberFont, `${name} must name a page-number font`);
+        assert.ok(layout.pageNumberSizePt > 0, `${name} must size the page number`);
     }
 
     assert.ok(TEMPLATE_LAYOUT.academic);
@@ -104,7 +106,23 @@ test('official pins an exact line height and no multiplier', () => {
 
 test('the code style lives in the preset, not in the consumer', () => {
     assert.equal(PROFILE_PRESETS.technical.codeStyle.font, 'Consolas');
-    assert.equal(PROFILE_PRESETS.academic.codeStyle, undefined);
+    assert.equal(PROFILE_PRESETS.technical.codeStyle.shadingFill, 'F3F4F6');
+});
+
+test('every profile that owns a template declares a code style', () => {
+    for (const name of ['academic', 'business', 'technical', 'official', 'thesis']) {
+        const codeStyle = PROFILE_PRESETS[name].codeStyle;
+        assert.ok(codeStyle, `${name} must declare a code style`);
+        assert.ok(codeStyle.font, `${name} code style must name a font`);
+        assert.ok(codeStyle.sizePt > 0, `${name} code style must size the text`);
+        assert.ok(codeStyle.lineSpacing > 0, `${name} code style must space the lines`);
+    }
+});
+
+test('every profile that owns a template declares a line spacing rule', () => {
+    for (const name of ['academic', 'business', 'technical', 'official', 'thesis']) {
+        assert.ok(PROFILE_PRESETS[name].lineSpacingRule, `${name} must declare a line spacing rule`);
+    }
 });
 
 test('normalizeStyleProfile trims and lowercases', () => {
