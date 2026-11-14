@@ -1577,6 +1577,537 @@ git commit -m "feat: regenerate all reference templates from a declarative style
 提交信息就是上面这一行，不要加 body。仓库 CLAUDE.md 禁止任何 `Co-Authored-By:` / Claude 共同作者标记。
 
 
+### Task 5b: 按显示名匹配样式（修掉孤儿样式与误伤）
+
+**动机 —— 一个已实测确认的真实缺陷。**
+
+插件的 DOCX 样式覆盖层按 `w:styleId` 找目标样式，但样式 id 是**每个模板各不同的**，靠一张硬编码的别名表去猜：
+
+```ts
+Normal:  styleId 'Normal', aliases ['a', 'a1', 'Text', 'BodyText', 'Body Text', 'FirstParagraph', 'Compact']
+Heading1: styleId 'Heading1', aliases ['1']
+Heading2: styleId 'Heading2', aliases ['2', '21']
+Heading3: styleId 'Heading3', aliases ['3', '31']
+```
+
+实测三种模板下的真实映射：
+
+| 显示名 | 旧中文模板 styleId | 旧英文模板 styleId | 新模板 styleId |
+|---|---|---|---|
+| Normal | `a1` | `a` | `Normal` |
+| heading 1 / 2 / 3 | `1` / `21` / `31` | `1` / `2` / `3` | `Heading1` / `Heading2` / `Heading3` |
+| Body Text | `af` | 不存在 | `BodyText` |
+| Text | 不存在 | `Text` | 不存在 |
+| **List Number** | **`a`** | 不存在 | 不存在 |
+| **Normal Table** | `a3` | **`a1`** | 不存在 |
+
+由此产生三个问题：
+
+1. **每次导出都新建 10 个无人引用的孤儿样式。** 在新模板上实测：覆盖前 50 个样式 → 覆盖后 60 个，新建了 `a`, `a1`, `Text`, `Body Text`, `1`, `2`, `21`, `3`, `31`, `Code` —— 因为别名表里每个 legacy id 都不存在，`upsertStyleOverride()` 一律走「找不到 → 新建」分支。这些样式没有任何段落引用，纯粹是垃圾。
+2. **正文样式误伤别的样式。** 旧中文模板里 `a` 是 **List Number**，旧英文模板里 `a1` 是 **Normal Table** —— 正文字体/字号/行距被套到了列表编号样式和表格样式上。
+3. **整套装配靠逐模板硬编码 id 猜测**，换一个用户自带的 `reference.docx` 就可能全错。
+
+Dify 插件早已避开这个问题：python-docx 的 `doc.styles[name]` **优先按显示名查**（`get_by_name`），styleId 只是已废弃的回退。VSC 侧要改成同一套思路。
+
+**注意：** 「标题覆盖从未生效」这个说法并不准确 —— 旧模板的标题 id 恰好是 `1`/`2`/`21`/`3`/`31`，而别名表正好包含这些，所以标题**是生效的**（只是同时白造了三个孤儿 `Heading1/2/3`）。新模板下标题也能直接命中 `Heading1/2/3`。真正要修的是孤儿样式、误伤、以及脆弱的匹配机制。
+
+**Files:**
+- Create: `src/docxStyles.ts`（纯模块：DOCX XML 操作 + 样式匹配）
+- Modify: `src/extension.ts`（改为引用新模块）
+- Test: `test/unit/docxStyles.test.js`
+
+#### Step 1：写失败的测试
+
+`test/unit/docxStyles.test.js`：
+
+```js
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const {
+    buildDocxStyleOverrides,
+    upsertStyleOverride,
+    BODY_STYLE_NAMES,
+    HEADING_1_STYLE_NAMES
+} = require('../../out/docxStyles.js');
+
+const STYLE_REGEX = /<w:style\b[^>]*>[\s\S]*?<\/w:style>/g;
+
+function styleIds(xml) {
+    return [...xml.matchAll(/w:styleId="([^"]+)"/g)].map((m) => m[1]);
+}
+
+function styleByName(xml, name) {
+    for (const block of xml.match(STYLE_REGEX) || []) {
+        const found = block.match(/<w:name w:val="([^"]+)"/)?.[1];
+        if (found && found.toLowerCase() === name.toLowerCase()) {
+            return block;
+        }
+    }
+    return undefined;
+}
+
+const LEGACY_CHINESE_STYLES = `
+<w:style w:type="paragraph" w:styleId="a"><w:name w:val="List Number"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="a1"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="a3"><w:name w:val="Normal Table"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="1"><w:name w:val="heading 1"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="21"><w:name w:val="heading 2"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="31"><w:name w:val="heading 3"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="af"><w:name w:val="Body Text"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+`;
+
+const CANONICAL_STYLES = `
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="BodyText"><w:name w:val="Body Text"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="FirstParagraph"><w:name w:val="First Paragraph"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Compact"><w:name w:val="Compact"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:pPr><w:spacing w:after="0"/></w:pPr></w:style>
+`;
+
+test('body override matches styles by display name, not by hard-coded ids', () => {
+    const override = { styleId: 'Normal', styleNames: BODY_STYLE_NAMES, asciiFont: 'Arial', eastAsiaFont: 'Arial', sizePt: 11 };
+    const updated = upsertStyleOverride(LEGACY_CHINESE_STYLES, override);
+
+    assert.ok(styleByName(updated, 'Normal').includes('w:ascii="Arial"'), 'Normal must be styled');
+    assert.ok(styleByName(updated, 'Body Text').includes('w:ascii="Arial"'), 'Body Text must be styled');
+});
+
+test('body override does not touch List Number', () => {
+    const override = { styleId: 'Normal', styleNames: BODY_STYLE_NAMES, asciiFont: 'Arial', eastAsiaFont: 'Arial', sizePt: 11 };
+    const updated = upsertStyleOverride(LEGACY_CHINESE_STYLES, override);
+
+    assert.ok(!styleByName(updated, 'List Number').includes('Arial'), 'List Number must be left alone');
+});
+
+test('body override does not touch Normal Table', () => {
+    const override = { styleId: 'Normal', styleNames: BODY_STYLE_NAMES, asciiFont: 'Arial', eastAsiaFont: 'Arial', sizePt: 11 };
+    const updated = upsertStyleOverride(LEGACY_CHINESE_STYLES, override);
+
+    assert.ok(!styleByName(updated, 'Normal Table').includes('Arial'), 'Normal Table must be left alone');
+});
+
+test('heading override reaches the heading style regardless of its id', () => {
+    const override = { styleId: 'Heading1', styleNames: HEADING_1_STYLE_NAMES, asciiFont: 'SimHei', eastAsiaFont: 'SimHei', sizePt: 16 };
+    const updated = upsertStyleOverride(LEGACY_CHINESE_STYLES, override);
+
+    assert.ok(styleByName(updated, 'heading 1').includes('w:ascii="SimHei"'), 'heading 1 must be styled');
+});
+
+test('no orphan styles are created when the target already exists', () => {
+    const override = { styleId: 'Heading1', styleNames: HEADING_1_STYLE_NAMES, asciiFont: 'SimHei', eastAsiaFont: 'SimHei', sizePt: 16 };
+    const before = styleIds(LEGACY_CHINESE_STYLES);
+    const after = styleIds(upsertStyleOverride(LEGACY_CHINESE_STYLES, override));
+
+    assert.deepEqual(after.sort(), before.sort(), 'no style may be added');
+});
+
+test('no orphan styles are created for canonical templates either', () => {
+    const override = { styleId: 'Normal', styleNames: BODY_STYLE_NAMES, asciiFont: 'Arial', eastAsiaFont: 'Arial', sizePt: 11 };
+    const before = styleIds(CANONICAL_STYLES);
+    const after = styleIds(upsertStyleOverride(CANONICAL_STYLES, override));
+
+    assert.deepEqual(after.sort(), before.sort(), 'no style may be added');
+});
+
+test('a genuinely missing style is still created', () => {
+    const override = { styleId: 'Heading1', styleNames: HEADING_1_STYLE_NAMES, asciiFont: 'SimHei', eastAsiaFont: 'SimHei', sizePt: 16 };
+    const updated = upsertStyleOverride('<w:styles></w:styles>', override);
+
+    assert.ok(styleIds(updated).includes('Heading1'), 'the missing style must be inserted');
+});
+
+test('buildDocxStyleOverrides returns overrides that carry display names', () => {
+    const overrides = buildDocxStyleOverrides({
+        styleProfile: 'academic',
+        bodyFont: '', bodySizePt: undefined,
+        heading1Font: '', heading1SizePt: undefined,
+        heading2Font: '', heading2SizePt: undefined,
+        heading3Font: '', heading3SizePt: undefined,
+        lineSpacing: undefined
+    });
+
+    const normal = overrides.find((o) => o.styleId === 'Normal');
+    assert.ok(normal.styleNames.includes('Normal'));
+    assert.ok(normal.styleNames.includes('Body Text'));
+    assert.ok(!normal.styleNames.includes('List Number'));
+});
+
+test('the template profile produces no overrides at all', () => {
+    const overrides = buildDocxStyleOverrides({
+        styleProfile: 'template',
+        bodyFont: '', bodySizePt: undefined,
+        heading1Font: '', heading1SizePt: undefined,
+        heading2Font: '', heading2SizePt: undefined,
+        heading3Font: '', heading3SizePt: undefined,
+        lineSpacing: undefined
+    });
+
+    assert.deepEqual(overrides, []);
+});
+```
+
+#### Step 2：运行测试确认失败
+
+Run: `npm test`
+Expected: FAIL —— `Cannot find module '../../out/docxStyles.js'`
+
+#### Step 3：创建 `src/docxStyles.ts`
+
+把 `src/extension.ts` 里现有的纯 XML 操作函数**整体搬过来**，并把匹配逻辑改成按显示名：
+
+```ts
+import { PROFILE_PRESETS } from './profiles';
+import type { CodeStyle, ProfilePreset, StyleProfile } from './profiles';
+
+export interface DocxStyleOverride {
+    styleId: string;
+    /** Display names (w:name) to match. Matched case-insensitively. */
+    styleNames: string[];
+    asciiFont?: string;
+    eastAsiaFont?: string;
+    sizePt?: number;
+    lineSpacingTwips?: number;
+    lineSpacingRule?: 'auto' | 'exact';
+    color?: string;
+    shadingFill?: string;
+}
+
+/**
+ * Display names of the paragraph styles that carry body text.
+ *
+ * Matched by name, never by id: style ids differ between templates
+ * (Chinese Word templates use `a`/`a1`, pandoc's use `Normal`), while
+ * display names are stable. `Text` covers English templates that name the
+ * body style `Text`; `List Number` and `Normal Table` are deliberately
+ * absent — they are different styles that happen to own the ids `a`/`a1`
+ * in some templates.
+ */
+export const BODY_STYLE_NAMES = ['Normal', 'Body Text', 'Text', 'First Paragraph', 'Compact'];
+export const HEADING_1_STYLE_NAMES = ['heading 1'];
+export const HEADING_2_STYLE_NAMES = ['heading 2'];
+export const HEADING_3_STYLE_NAMES = ['heading 3'];
+export const SOURCE_CODE_STYLE_NAMES = ['Source Code'];
+export const VERBATIM_CHAR_STYLE_NAMES = ['Verbatim Char'];
+
+const STYLE_BLOCK_REGEX = /<w:style\b[^>]*>[\s\S]*?<\/w:style>/g;
+
+export function escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+export function escapeXmlAttribute(value: string): string {
+    return value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+export function ensureChildElement(xml: string, tagName: string): string {
+    if (new RegExp(`<${tagName}\\b`).test(xml)) {
+        return xml;
+    }
+
+    return xml.replace(/(<w:style\b[^>]*>)/, `$1<${tagName}/>`);
+}
+
+export function upsertInsideElement(xml: string, tagName: string, childRegex: RegExp, childXml: string): string {
+    const elementRegex = new RegExp(`<${tagName}\\b[^>]*(?:/>|>[\\s\\S]*?</${tagName}>)`);
+    return xml.replace(elementRegex, (elementXml) => {
+        if (childRegex.test(elementXml)) {
+            return elementXml.replace(childRegex, childXml);
+        }
+
+        if (elementXml.endsWith('/>')) {
+            return elementXml.replace(/\/>$/, `>${childXml}</${tagName}>`);
+        }
+
+        return elementXml.replace(new RegExp(`</${tagName}>$`), `${childXml}</${tagName}>`);
+    });
+}
+
+export function upsertXmlAttribute(xml: string, attrName: string, value: string): string {
+    const attrRegex = new RegExp(`${escapeRegex(attrName)}="[^"]*"`);
+    if (attrRegex.test(xml)) {
+        return xml.replace(attrRegex, `${attrName}="${escapeXmlAttribute(value)}"`);
+    }
+
+    return xml.replace(/<(\w+:\w+)([^>]*)\/>/, (match, tag, attrs) => `<${tag}${attrs} ${attrName}="${escapeXmlAttribute(value)}"/>`);
+}
+
+export function upsertLineSpacingAttributes(xml: string, lineTwips: number, rule: string): string {
+    let updated = upsertXmlAttribute(xml, 'w:line', String(lineTwips));
+    updated = upsertXmlAttribute(updated, 'w:lineRule', rule);
+    return updated;
+}
+
+export function updateStyleXml(styleXml: string, override: DocxStyleOverride): string {
+    let updated = styleXml;
+    updated = ensureChildElement(updated, 'w:rPr');
+
+    if (override.lineSpacingTwips || override.shadingFill) {
+        updated = ensureChildElement(updated, 'w:pPr');
+    }
+
+    if (override.asciiFont || override.eastAsiaFont) {
+        const ascii = override.asciiFont || override.eastAsiaFont || '';
+        const eastAsia = override.eastAsiaFont || override.asciiFont || '';
+        const fontXml = `<w:rFonts w:ascii="${escapeXmlAttribute(ascii)}" w:hAnsi="${escapeXmlAttribute(ascii)}" w:eastAsia="${escapeXmlAttribute(eastAsia)}" w:cs="${escapeXmlAttribute(ascii)}"/>`;
+        updated = upsertInsideElement(updated, 'w:rPr', /<w:rFonts\b[^>]*\/>/, fontXml);
+    }
+
+    if (override.sizePt) {
+        const halfPoints = String(Math.round(override.sizePt * 2));
+        updated = upsertInsideElement(updated, 'w:rPr', /<w:sz\b[^>]*\/>/, `<w:sz w:val="${halfPoints}"/>`);
+        updated = upsertInsideElement(updated, 'w:rPr', /<w:szCs\b[^>]*\/>/, `<w:szCs w:val="${halfPoints}"/>`);
+    }
+
+    if (override.lineSpacingTwips) {
+        const rule = override.lineSpacingRule ?? 'auto';
+        updated = upsertLineSpacingAttributes(updated, override.lineSpacingTwips, rule);
+    }
+
+    if (override.color) {
+        updated = upsertInsideElement(updated, 'w:rPr', /<w:color\b[^>]*\/>/, `<w:color w:val="${escapeXmlAttribute(override.color)}"/>`);
+    }
+
+    if (override.shadingFill) {
+        updated = upsertInsideElement(updated, 'w:pPr', /<w:shd\b[^>]*\/>/, `<w:shd w:val="clear" w:color="auto" w:fill="${escapeXmlAttribute(override.shadingFill)}"/>`);
+    }
+
+    return updated;
+}
+
+export function insertDocxStyle(stylesXml: string, override: DocxStyleOverride): string {
+    const styleType = override.styleId.endsWith('Char') ? 'character' : 'paragraph';
+    const styleName = override.styleId.replace(/([a-z])([A-Z])/g, '$1 $2');
+    const baseStyleXml = `<w:style w:type="${styleType}" w:customStyle="1" w:styleId="${escapeXmlAttribute(override.styleId)}"><w:name w:val="${escapeXmlAttribute(styleName)}"/></w:style>`;
+    const updatedStyleXml = updateStyleXml(baseStyleXml, override);
+    return stylesXml.replace(/<\/w:styles>\s*$/, `${updatedStyleXml}</w:styles>`);
+}
+
+/**
+ * Apply an override to every style whose display name matches, plus the
+ * style whose id matches exactly. Creates the style only when nothing
+ * matched — matching by name first is what keeps this from spawning
+ * duplicate styles alongside an existing heading style.
+ */
+export function upsertStyleOverride(stylesXml: string, override: DocxStyleOverride): string {
+    const wantedNames = new Set(override.styleNames.map((name) => name.toLowerCase()));
+    let matched = false;
+
+    const updated = stylesXml.replace(STYLE_BLOCK_REGEX, (styleXml) => {
+        const styleId = styleXml.match(/w:styleId="([^"]+)"/)?.[1];
+        const styleName = styleXml.match(/<w:name w:val="([^"]+)"/)?.[1];
+
+        const idMatches = styleId === override.styleId;
+        const nameMatches = styleName !== undefined && wantedNames.has(styleName.toLowerCase());
+
+        if (!idMatches && !nameMatches) {
+            return styleXml;
+        }
+
+        matched = true;
+        return updateStyleXml(styleXml, override);
+    });
+
+    if (matched) {
+        return updated;
+    }
+
+    return insertDocxStyle(updated, override);
+}
+
+export interface StyleOverrideInput {
+    styleProfile: StyleProfile;
+    bodyFont: string;
+    bodySizePt?: number;
+    heading1Font: string;
+    heading1SizePt?: number;
+    heading2Font: string;
+    heading2SizePt?: number;
+    heading3Font: string;
+    heading3SizePt?: number;
+    lineSpacing?: number;
+}
+
+export function buildDocxStyleOverrides(settings: StyleOverrideInput): DocxStyleOverride[] {
+    const preset: ProfilePreset = PROFILE_PRESETS[settings.styleProfile];
+    const effectiveColor = preset.color;
+    const bodyFont = resolveFontPair(settings.bodyFont, preset.body);
+    const heading1Font = resolveFontPair(settings.heading1Font, preset.heading1);
+    const heading2Font = resolveFontPair(settings.heading2Font, preset.heading2);
+    const heading3Font = resolveFontPair(settings.heading3Font, preset.heading3);
+    const lineSpacing = resolveLineSpacingTwips(settings.styleProfile, settings.lineSpacing);
+
+    const overrides: DocxStyleOverride[] = [
+        {
+            styleId: 'Normal',
+            styleNames: BODY_STYLE_NAMES,
+            asciiFont: bodyFont?.ascii,
+            eastAsiaFont: bodyFont?.eastAsia,
+            sizePt: settings.bodySizePt ?? preset.bodySizePt,
+            lineSpacingTwips: lineSpacing?.twips,
+            lineSpacingRule: lineSpacing?.rule,
+            color: effectiveColor
+        },
+        {
+            styleId: 'Heading1',
+            styleNames: HEADING_1_STYLE_NAMES,
+            asciiFont: heading1Font?.ascii,
+            eastAsiaFont: heading1Font?.eastAsia,
+            sizePt: settings.heading1SizePt ?? preset.heading1SizePt,
+            color: effectiveColor
+        },
+        {
+            styleId: 'Heading2',
+            styleNames: HEADING_2_STYLE_NAMES,
+            asciiFont: heading2Font?.ascii,
+            eastAsiaFont: heading2Font?.eastAsia,
+            sizePt: settings.heading2SizePt ?? preset.heading2SizePt,
+            color: effectiveColor
+        },
+        {
+            styleId: 'Heading3',
+            styleNames: HEADING_3_STYLE_NAMES,
+            asciiFont: heading3Font?.ascii,
+            eastAsiaFont: heading3Font?.eastAsia,
+            sizePt: settings.heading3SizePt ?? preset.heading3SizePt,
+            color: effectiveColor
+        }
+    ];
+
+    if (preset.codeStyle) {
+        overrides.push(...buildCodeStyleOverrides(preset.codeStyle));
+    }
+
+    return overrides.filter((override) => hasDocxStyleOverrideValue(override));
+}
+
+export function buildCodeStyleOverrides(codeStyle: CodeStyle): DocxStyleOverride[] {
+    return [
+        {
+            styleId: 'SourceCode',
+            styleNames: SOURCE_CODE_STYLE_NAMES,
+            asciiFont: codeStyle.font,
+            eastAsiaFont: codeStyle.font,
+            sizePt: codeStyle.sizePt,
+            lineSpacingTwips: Math.round(codeStyle.lineSpacing * 240),
+            lineSpacingRule: 'auto',
+            color: '000000',
+            shadingFill: codeStyle.shadingFill
+        },
+        {
+            styleId: 'VerbatimChar',
+            styleNames: VERBATIM_CHAR_STYLE_NAMES,
+            asciiFont: codeStyle.font,
+            eastAsiaFont: codeStyle.font,
+            sizePt: codeStyle.sizePt,
+            color: '000000'
+        }
+    ];
+}
+
+export function hasDocxStyleOverrideValue(override: DocxStyleOverride): boolean {
+    return Boolean(
+        override.asciiFont
+        || override.eastAsiaFont
+        || override.sizePt
+        || override.lineSpacingTwips
+        || override.color
+        || override.shadingFill
+    );
+}
+```
+
+**注意：** `resolveFontPair` 和 `resolveLineSpacingTwips` 从 `./profiles` import（它们已经是纯模块里的导出）。
+
+#### Step 4：改写 `src/extension.ts`
+
+- import 段加入：
+
+```ts
+import {
+    buildDocxStyleOverrides,
+    escapeRegex,
+    escapeXmlAttribute,
+    ensureChildElement,
+    insertDocxStyle,
+    updateStyleXml,
+    upsertInsideElement,
+    upsertLineSpacingAttributes,
+    upsertStyleOverride,
+    upsertXmlAttribute
+} from './docxStyles';
+import type { DocxStyleOverride } from './docxStyles';
+```
+
+- **删除** `src/extension.ts` 里这些本地定义（已搬到新模块）：`escapeRegex`、`escapeXmlAttribute`、`ensureChildElement`、`upsertInsideElement`、`upsertXmlAttribute`、`upsertLineSpacingAttributes`、`updateStyleXml`、`insertDocxStyle`、`upsertStyleOverride`、`applyStyleOverrideToPrimaryAndAliases`、`hasDocxStyleOverrideValue`、`buildCodeStyleOverrides`、`buildDocxStyleOverrides`，以及 `interface DocxStyleOverride`。
+
+- `applyDocxStyleOverrides()` 里原来调用 `applyStyleOverrideToPrimaryAndAliases(stylesXml, override)` 的地方，改为调用 `upsertStyleOverride(stylesXml, override)`。
+
+- `buildDocxStyleOverrides(settings)` 现在从 `./docxStyles` 导入，调用点不变（它接受 `ExportSettings`，而 `ExportSettings` 的字段是 `styleProfile`/`bodyFont`/`bodySizePt`/... ，与 `StyleOverrideInput` 结构兼容 —— `ExportSettings` 多出的字段不影响）。
+
+  如果 TypeScript 报类型不兼容，就在调用点显式构造：
+
+```ts
+const docxStyleOverrides = buildDocxStyleOverrides({
+    styleProfile: settings.styleProfile,
+    bodyFont: settings.bodyFont,
+    bodySizePt: settings.bodySizePt,
+    heading1Font: settings.heading1Font,
+    heading1SizePt: settings.heading1SizePt,
+    heading2Font: settings.heading2Font,
+    heading2SizePt: settings.heading2SizePt,
+    heading3Font: settings.heading3Font,
+    heading3SizePt: settings.heading3SizePt,
+    lineSpacing: settings.lineSpacing
+});
+```
+
+  优先用显式构造 —— 明确、无歧义。
+
+- `exportDocxStyleOverrides`（如果 `extension.ts` 里为了测试导出过）—— 如果有，确认它仍然工作。
+
+#### Step 5：运行测试确认通过
+
+Run: `npm test`
+Expected: PASS
+
+#### Step 6：端到端验证「不再产生孤儿样式」
+
+用真实模板跑一遍，覆盖前后对比样式数量：
+
+```bash
+node -e "
+const fs=require('fs');
+const AdmZip=require('adm-zip');
+const D=require('./out/docxStyles.js');
+const zip=new AdmZip('multi-templates/reference_english_technical.docx');
+let styles=zip.readAsText('word/styles.xml');
+const before=[...styles.matchAll(/w:styleId=\"([^\"]+)\"/g)].length;
+for (const o of D.buildDocxStyleOverrides({styleProfile:'technical',bodyFont:'',bodySizePt:undefined,heading1Font:'',heading1SizePt:undefined,heading2Font:'',heading2SizePt:undefined,heading3Font:'',heading3SizePt:undefined,lineSpacing:undefined})) {
+  styles=D.upsertStyleOverride(styles,o);
+}
+const after=[...styles.matchAll(/w:styleId=\"([^\"]+)\"/g)].length;
+console.log('覆盖前', before, '覆盖后', after, after===before ? '=> 无孤儿样式 PASS' : '=> 仍产生孤儿 FAIL');
+"
+```
+
+Expected: `覆盖前 50 覆盖后 50 => 无孤儿样式 PASS`
+
+#### Step 7：提交
+
+```bash
+git add src/docxStyles.ts src/extension.ts test/unit/docxStyles.test.js
+git commit -m "fix: match DOCX styles by display name instead of hard-coded style ids
+```
+
+提交信息就是上面这一行。仓库 CLAUDE.md 禁止任何 `Co-Authored-By:` / Claude 共同作者标记。
+
+
 ### Task 6: Dify 侧同步
 
 **Files:**
