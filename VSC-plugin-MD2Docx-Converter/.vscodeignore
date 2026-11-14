@@ -8,6 +8,9 @@ src/**
 tsconfig.json
 package-lock.json
 test_*.js
+test/**
+specs/**
+CLAUDE.md
 tmp*
 .gitignore
 examples/**
@@ -21,9 +24,13 @@ out/**/*.map
 !assets/icon.png
 !assets/banner.png
 !assets/mermaid-example.png
-!multi-templates/reference_english_business.docx
 !multi-templates/reference_english_academic.docx
+!multi-templates/reference_english_business.docx
 !multi-templates/reference_english_technical.docx
-!multi-templates/reference_chinese_business.docx
+!multi-templates/reference_english_official.docx
+!multi-templates/reference_english_thesis.docx
 !multi-templates/reference_chinese_academic.docx
+!multi-templates/reference_chinese_business.docx
 !multi-templates/reference_chinese_technical.docx
+!multi-templates/reference_chinese_official.docx
+!multi-templates/reference_chinese_thesis.docx
