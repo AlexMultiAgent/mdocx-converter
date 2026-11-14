@@ -2446,11 +2446,44 @@ export function upsertLineSpacingAttributes(xml: string, lineTwips: number, rule
 
 - [ ] **Step 8: 补上 Task 5b 评审指出的测试盲区**
 
-Task 5b 的规格评审做了变异测试，发现三处断言没有区分力：
+Task 5b 的规格评审做了变异测试，发现两处断言没有区分力：
 
 1. **现有 fixture 缺 `</w:styles>` 根标签**，`insertDocxStyle()` 依赖根标签插入，所以「不新建孤儿样式」这条断言看不到插入动作 —— 把插入改成「无根标签也能追加」，9 个测试仍然全过。把 fixture 补上 `</w:styles>` 根标签，并在插入路径上补一条断言。
 2. **「精确 styleId 命中」这半条规则没有任何测试钉住** —— 把 `idMatches` 改成 `false`，9 个测试仍然全过。补一条：目标样式显示名不匹配、但 styleId 精确匹配时，样式被改、且**不新建**。
-3. **`HEADING_1_STYLE_NAMES` 的拼写没被钉住** —— 改成 `['Heading 1']` 9 个测试仍然全过（大小写不敏感，两种拼写行为等价）。补一条断言把常量内容钉住。
+
+> 评审顺带查了第三条（「`HEADING_1_STYLE_NAMES` 的拼写没被钉住」）—— **不成立**。把常量改成 `'heading1'` 这种真正会失配的拼写会让现有测试变红；改成 `'Heading 1'` 行为本来就该等价。这条不用管。
+
+- [ ] **Step 8b: 修 `STYLE_BLOCK_REGEX` 遇到自闭合 `<w:style/>` 的问题**
+
+`src/docxStyles.ts` 的样式块提取正则是：
+
+```ts
+const STYLE_BLOCK_REGEX = /<w:style\b[^>]*>[\s\S]*?<\/w:style>/g;
+```
+
+它要求成对闭合标签。模板里存在自闭合样式元素时，惰性匹配会一路吞到**下一个** `</w:style>`，把两个样式并成一个块 —— 于是 `<w:rPr>` 被写到 `<w:styles>` 外面（CT_Styles 不允许这种子元素，Word 会判定文件损坏），而且 heading 覆盖会被施加到合并后的块上。
+
+改成同时接受自闭合形式：
+
+```ts
+const STYLE_BLOCK_REGEX = /<w:style\b[^>]*(?:\/>|>[\s\S]*?<\/w:style>)/g;
+```
+
+`[^>]*` 贪婪吃到 `>` 之前，自闭合时靠回溯把 `/` 让给 `\/>` 分支。
+
+补一条测试：自闭合样式块后面紧跟一个正常样式块时，两个块各自独立处理，且不会在 `<w:styles>` 外面留下任何元素。
+
+- [ ] **Step 8c: `insertDocxStyle` 用 override 里带的显示名**
+
+现在新建样式时，显示名是从 styleId 推导的：
+
+```ts
+const styleName = override.styleId.replace(/([a-z])([A-Z])/g, '$1 $2');
+```
+
+`Heading1` → `"Heading1"`，而期望的是 `"heading 1"`；`VerbatimChar` → `"Verbatim Char"` 恰好正确。override 里本来就带着权威的显示名（`styleNames`），创建路径却另起一套 —— 同一份数据两个真相源。
+
+改成用 `override.styleNames[0]`（没有才回退到现在的推导逻辑）。`styleType` 的判断也一并改：`VerbatimChar` 这类字符样式应该写成 `w:type="character"`，不能靠 `styleId.endsWith('Char')` 猜 —— 改成由 `styleNames`/`styleId` 明确判断，字符样式不给段落底纹。
 
 - [ ] **Step 9: 跑测试**
 
