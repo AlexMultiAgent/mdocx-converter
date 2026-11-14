@@ -199,7 +199,7 @@ python scripts/package.py --output MD2Docx.difypkg
 
 The script walks this directory, applies `.difyignore`, keeps `.difyignore` itself, sorts entries by ASCII path, writes them with `ZIP_DEFLATED` and no directory entries, and refuses to build unless every entry in `REQUIRED_ENTRIES` is present (manifest, `main.py`, both icons, the three tool YAMLs, the three `src/` modules). The entry **order and contents** are reproducible, but each zip entry embeds the source file's mtime — two builds of the same tree are **not** byte-identical. CI builds and uploads the package for both the minimum supported SDK and the current tested SDK.
 
-The daemon rejects a package whose **uncompressed** size exceeds `MAX_PLUGIN_PACKAGE_SIZE` (50 MB by default, `internal/types/app/default.go` in `dify-plugin-daemon`). The current package is ~255 KB compressed / ~335 KB uncompressed — never vendor the Pandoc binary into it.
+The daemon rejects a package whose **uncompressed** size exceeds `MAX_PLUGIN_PACKAGE_SIZE` (50 MB by default, `internal/types/app/default.go` in `dify-plugin-daemon`). The current package is ~140 KB compressed / ~220 KB uncompressed — never vendor the Pandoc binary into it.
 
 ## Deployment tuning (self-hosted Dify)
 

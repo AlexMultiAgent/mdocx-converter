@@ -25,7 +25,7 @@ Unit tests live in `test/unit/*.test.js` — 10 files — and run on Node's buil
 - A glob that matches nothing exits 0, so a renamed test file looks like a passing run. If `npm test` reports zero tests, the naming convention was broken.
 - Node 18/20 lack `--test` glob support; use Node >= 22.
 
-`npm run test:e2e` (`test/e2e/run.js`) is a **manual end-to-end check** — it drives the real `pandoc` for each of the 5 profiles × 2 languages against the bundled templates, then asserts the exported body font, body size, heading font, heading size, page size and all four margins. It needs pandoc on the runner, so it is **not** wired into CI. The repo CI (`.github/workflows/ci.yml`) runs three jobs: the Dify plugin's pytest suite, this extension's `npm test`, and `scripts/sync-templates.sh --check`.
+`npm run test:e2e` (`test/e2e/run.js`) is a **manual end-to-end check** — it drives the real `pandoc` for each of the 5 profiles × 2 languages against the bundled templates, applies the extension's own override layer from `out/docxStyles.js`, then asserts the exported body font, body size, heading font, heading size, page size, the page-number footer and all four margins. It needs pandoc on the runner, so it is **not** wired into CI. The repo CI (`.github/workflows/ci.yml`) runs three jobs: the Dify plugin's pytest suite, this extension's `npm test`, and `scripts/sync-templates.sh --check`.
 
 ## Architecture
 
@@ -52,7 +52,8 @@ This is a **VS Code extension** that exports Markdown files to DOCX. Everything 
 Markdown file
   │
   ├─ 1. Mermaid preprocessing: regex-extract ```mermaid blocks → mmdc → PNG/SVG
-  │     Falls back to the Mermaid Ink API when mmdc is unavailable
+  │     Falls back to the Mermaid Ink API when mmdc is unavailable (4 diagrams at a time, shared 120s budget)
+  │     A diagram that fails both ways stays a code block — the export still succeeds
   │     Replaces each fenced block with ![Mermaid Diagram N](path/to/rendered.png)
   │     Produces a temp Markdown file in os.tmpdir()
   │
@@ -62,7 +63,7 @@ Markdown file
   │     NOT sandboxed — local image paths and remote URLs still resolve
   │
   └─ 3. DOCX style overrides: adm-zip opens the generated .docx
-        Edits word/styles.xml  — font, size, spacing, color, shading, resolved by display name
+        Edits word/styles.xml  — font, size, spacing, color, shading per display name
         Edits word/document.xml — page margins (w:pgMar)
 ```
 
@@ -89,7 +90,7 @@ The 5 submenu commands override `styleProfile` and `referenceLanguage` regardles
 
 Bundled template mapping lives in the `BUNDLED_REFERENCE_DOCX` constant in `src/templates.ts`. Academic and `template` profiles share the same academic reference files. Technical, business, official and thesis each have their own English/Chinese pair.
 
-This extension ships the same **10** templates as the Dify plugin — academic, technical, business, official and thesis, each in an English and a Chinese variant. **The VS Code side is the source of truth for the template files**: `scripts/sync-templates.sh` copies them into `dify-plugin-MD2Docx/multi-templates/`, and `scripts/sync-templates.sh --check` (run by CI) fails when they drift.
+This extension ships the same **10** templates as the Dify plugin — academic, technical, business, official and thesis, each in an English and a Chinese variant. **The VS Code side is the source of truth for the template files**: they are **generated** by `npm run build:templates` from `src/profiles.ts` + `scripts/reference-base.docx`, `scripts/sync-templates.sh` copies them into `dify-plugin-MD2Docx/multi-templates/`, and `scripts/sync-templates.sh --check` (run by CI) fails when they drift. Never hand-edit a `.docx` under `multi-templates/` — the next build overwrites it.
 
 ### Language auto-detection
 
@@ -164,6 +165,8 @@ The Dify plugin reaches the same result through python-docx, whose `doc.styles[n
 - Logic is split into pure modules under `src/` (see the source layout above) with `src/extension.ts` as the only module allowed to import `vscode` — this keeps the helpers unit-testable via `node --test`
 - Style presets live in exactly one place (`PROFILE_PRESETS` in `src/profiles.ts`); both the pandoc layer and the DOCX layer read it, and pandoc metadata is derived from it rather than stored alongside it
 - No bundler: TypeScript compiles `src/` to CommonJS in `out/`, and the unit tests live in `test/unit/`
+- The export runs inside `vscode.window.withProgress` and is cancellable: the pandoc call uses `spawn` (not `execFile`) so the child process can be killed, and a cancelled export reports "Export cancelled." rather than a failure
+- The document title comes from `mdocxConverter.documentTitle`, else the first ATX heading (`src/document.ts`), else the sanitised file name
 
 ### VSIX packaging
 
