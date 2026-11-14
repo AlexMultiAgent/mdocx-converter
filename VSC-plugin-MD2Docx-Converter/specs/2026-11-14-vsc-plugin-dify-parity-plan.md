@@ -447,9 +447,16 @@ export interface FontPair {
     eastAsia: string;
 }
 
+/** Code-block styling, present only when the profile styles code blocks. */
+export interface CodeStyle {
+    font: string;
+    sizePt: number;
+    /** Multiple, not twips. */
+    lineSpacing: number;
+    shadingFill: string;
+}
+
 export interface ProfilePreset {
-    /** Pandoc metadata applied via --metadata. */
-    metadata: Record<string, string>;
     body?: FontPair;
     bodySizePt?: number;
     heading1?: FontPair;
@@ -458,11 +465,17 @@ export interface ProfilePreset {
     heading2SizePt?: number;
     heading3?: FontPair;
     heading3SizePt?: number;
-    /** Line spacing multiplier — feeds pandoc `linestretch` and the `auto` line rule. */
+    /** Monospace font, feeds pandoc `monofont`. */
+    monoFont?: string;
+    /** Text colour applied to body and heading styles. */
+    color?: string;
+    /** Code style — absent means the profile does not touch code blocks. */
+    codeStyle?: CodeStyle;
+    /** Line spacing multiplier — feeds pandoc `linestretch`. */
     lineSpacing?: number;
-    /** Explicit line height in twips; overrides the multiplier when present. */
+    /** Fixed line height in twips; wins over the multiplier for the DOCX layer. */
     lineSpacingTwips?: number;
-    /** Line spacing rule used when writing w:spacing into the DOCX. */
+    /** The line rule that goes with the spacing value. */
     lineSpacingRule?: 'auto' | 'exact';
     marginTopMm?: number;
     marginBottomMm?: number;
@@ -470,25 +483,19 @@ export interface ProfilePreset {
     marginRightMm?: number;
 }
 
+export type HeadingAlignment = 'left' | 'center';
+
 export interface ProfileLayout {
     justification: 'both' | 'left';
     indentTwips: { chinese: number; english: number };
-    headingAlign: ('left' | 'center')[];
-    headingBeforeTwips: number[];
-    headingAfterTwips: number[];
+    headingAlign: [HeadingAlignment, HeadingAlignment, HeadingAlignment];
+    headingBeforeTwips: [number, number, number];
+    headingAfterTwips: [number, number, number];
 }
 
 export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
-    template: {
-        metadata: {}
-    },
+    template: {},
     academic: {
-        metadata: {
-            mainfont: 'Times New Roman',
-            CJKmainfont: 'SimSun',
-            fontsize: '12pt',
-            linestretch: '1.5'
-        },
         body: { ascii: 'Times New Roman', eastAsia: 'SimSun' },
         bodySizePt: 12,
         heading1: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
@@ -497,6 +504,7 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         heading2SizePt: 14,
         heading3: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
         heading3SizePt: 12,
+        color: '000000',
         lineSpacing: 1.5,
         marginTopMm: 25.4,
         marginBottomMm: 25.4,
@@ -504,12 +512,6 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         marginRightMm: 31.75
     },
     business: {
-        metadata: {
-            mainfont: 'Arial',
-            CJKmainfont: 'Microsoft YaHei',
-            fontsize: '11pt',
-            linestretch: '1.5'
-        },
         body: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
         bodySizePt: 11,
         heading1: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
@@ -518,6 +520,7 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         heading2SizePt: 14,
         heading3: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
         heading3SizePt: 12,
+        color: '000000',
         lineSpacing: 1.5,
         marginTopMm: 25.4,
         marginBottomMm: 25.4,
@@ -525,13 +528,6 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         marginRightMm: 25.4
     },
     technical: {
-        metadata: {
-            mainfont: 'Arial',
-            CJKmainfont: 'Microsoft YaHei',
-            monofont: 'Consolas',
-            fontsize: '11pt',
-            linestretch: '1.35'
-        },
         body: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
         bodySizePt: 11,
         heading1: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
@@ -540,6 +536,9 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         heading2SizePt: 14,
         heading3: { ascii: 'Arial', eastAsia: 'Microsoft YaHei' },
         heading3SizePt: 12,
+        monoFont: 'Consolas',
+        color: '000000',
+        codeStyle: { font: 'Consolas', sizePt: 10, lineSpacing: 1.05, shadingFill: 'F3F4F6' },
         lineSpacing: 1.35,
         marginTopMm: 19,
         marginBottomMm: 19,
@@ -547,12 +546,6 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         marginRightMm: 19
     },
     official: {
-        metadata: {
-            mainfont: 'Times New Roman',
-            CJKmainfont: 'FangSong',
-            fontsize: '16pt',
-            linestretch: '1.75'
-        },
         body: { ascii: 'Times New Roman', eastAsia: 'FangSong' },
         bodySizePt: 16,
         heading1: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
@@ -561,7 +554,7 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         heading2SizePt: 16,
         heading3: { ascii: 'Times New Roman', eastAsia: 'FangSong' },
         heading3SizePt: 16,
-        lineSpacing: 1.75,
+        color: '000000',
         lineSpacingTwips: 580,
         lineSpacingRule: 'exact',
         marginTopMm: 37,
@@ -570,12 +563,6 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         marginRightMm: 26
     },
     thesis: {
-        metadata: {
-            mainfont: 'Times New Roman',
-            CJKmainfont: 'SimSun',
-            fontsize: '12pt',
-            linestretch: '1.5'
-        },
         body: { ascii: 'Times New Roman', eastAsia: 'SimSun' },
         bodySizePt: 12,
         heading1: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
@@ -584,6 +571,7 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
         heading2SizePt: 16,
         heading3: { ascii: 'Times New Roman', eastAsia: 'SimHei' },
         heading3SizePt: 14,
+        color: '000000',
         lineSpacing: 1.5,
         marginTopMm: 30,
         marginBottomMm: 30,
@@ -592,14 +580,8 @@ export const PROFILE_PRESETS: Record<StyleProfile, ProfilePreset> = {
     }
 };
 
-export const TEMPLATE_LAYOUT: Record<StyleProfile, ProfileLayout> = {
-    template: {
-        justification: 'both',
-        indentTwips: { chinese: 0, english: 0 },
-        headingAlign: ['left', 'left', 'left'],
-        headingBeforeTwips: [0, 0, 0],
-        headingAfterTwips: [0, 0, 0]
-    },
+/** Build-time layout parameters. Only the template generator consumes these. */
+export const TEMPLATE_LAYOUT: Partial<Record<StyleProfile, ProfileLayout>> = {
     academic: {
         justification: 'both',
         indentTwips: { chinese: 480, english: 0 },
@@ -638,9 +620,90 @@ export const TEMPLATE_LAYOUT: Record<StyleProfile, ProfileLayout> = {
 };
 
 export function normalizeStyleProfile(value: string | undefined): StyleProfile {
-    return STYLE_PROFILES.includes(value as StyleProfile) ? (value as StyleProfile) : 'template';
+    const normalized = value?.trim().toLowerCase();
+    return STYLE_PROFILES.includes(normalized as StyleProfile) ? (normalized as StyleProfile) : 'template';
+}
+
+/** Explicit user font wins and fills both slots; otherwise fall back to the preset pair. */
+export function resolveFontPair(explicitFont: string | undefined, presetPair?: FontPair): FontPair | undefined {
+    const explicit = explicitFont?.trim();
+    if (explicit) {
+        return { ascii: explicit, eastAsia: explicit };
+    }
+
+    return presetPair;
+}
+
+export function resolveLineSpacingTwips(
+    profile: StyleProfile,
+    userLineSpacing?: number
+): { twips: number; rule: 'auto' | 'exact' } | undefined {
+    if (userLineSpacing) {
+        return { twips: Math.round(userLineSpacing * 240), rule: 'auto' };
+    }
+
+    const preset = PROFILE_PRESETS[profile];
+    if (preset.lineSpacingTwips) {
+        return { twips: preset.lineSpacingTwips, rule: preset.lineSpacingRule ?? 'exact' };
+    }
+
+    if (preset.lineSpacing) {
+        return { twips: Math.round(preset.lineSpacing * 240), rule: 'auto' };
+    }
+
+    return undefined;
+}
+
+/** Pandoc metadata, derived from the typed preset fields — never stored twice. */
+export function buildPandocMetadata(options: {
+    profile: StyleProfile;
+    bodyFont?: string;
+    bodySizePt?: number;
+    lineSpacing?: number;
+}): Record<string, string> {
+    const preset = PROFILE_PRESETS[options.profile];
+    const metadata: Record<string, string> = {};
+
+    const bodyFont = resolveFontPair(options.bodyFont, preset.body);
+    if (bodyFont) {
+        metadata.mainfont = bodyFont.ascii;
+        metadata.CJKmainfont = bodyFont.eastAsia;
+    }
+
+    const bodySize = options.bodySizePt ?? preset.bodySizePt;
+    if (bodySize) {
+        metadata.fontsize = `${bodySize}pt`;
+    }
+
+    const lineSpacing = options.lineSpacing ?? preset.lineSpacing;
+    if (lineSpacing) {
+        metadata.linestretch = String(lineSpacing);
+    }
+
+    if (preset.monoFont) {
+        metadata.monofont = preset.monoFont;
+    }
+
+    return metadata;
+}
+
+export function resolveMarginsMm(
+    profile: StyleProfile,
+    overrides: { top?: number; bottom?: number; left?: number; right?: number }
+): { top?: number; bottom?: number; left?: number; right?: number } {
+    const preset = PROFILE_PRESETS[profile];
+    return {
+        top: overrides.top ?? preset.marginTopMm,
+        bottom: overrides.bottom ?? preset.marginBottomMm,
+        left: overrides.left ?? preset.marginLeftMm,
+        right: overrides.right ?? preset.marginRightMm
+    };
 }
 ```
+
+**注意**：`official` 预设**没有** `lineSpacing` 倍数 —— 它只有 `lineSpacingTwips: 580` + `lineSpacingRule: 'exact'`。GB/T 9704 要求固定值 29 磅行距，倍数（1.75）在 DOCX 层会被覆盖掉，留着只会造成「哪个值权威」的困惑。pandoc 层因此拿不到 `linestretch`，但 DOCX 层总会写 580，最终产物一致。
+
+`template` 预设是空对象 —— 它不施加任何覆盖是**结果**而不是特判。
 
 - [ ] **Step 4: 从 extension.ts 删掉旧的两张表并改为 import**
 
