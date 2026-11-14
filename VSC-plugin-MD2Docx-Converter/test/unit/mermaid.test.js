@@ -9,7 +9,8 @@ const {
     renderMermaidWithRetry,
     MERMAID_BLOCK_REGEX,
     MERMAID_MAX_ATTEMPTS,
-    MERMAID_RETRY_DELAYS_MS
+    MERMAID_RETRY_DELAYS_MS,
+    findMermaidBlockAtPosition
 } = require('../../out/mermaid.js');
 
 // The retry helper rejects anything that is not a PNG, so a successful render
@@ -184,4 +185,33 @@ test('renderMermaidWithRetry rejects a response that is not a PNG', async () => 
 test('the retry defaults match the Dify plugin', () => {
     assert.equal(MERMAID_MAX_ATTEMPTS, 3);
     assert.deepEqual(MERMAID_RETRY_DELAYS_MS, [1000, 2000]);
+});
+
+test('findMermaidBlockAtPosition locates the block under the cursor', () => {
+    const text = 'intro\n```mermaid\ngraph TD; A-->B\n```\ntail';
+    const start = text.indexOf('```mermaid');
+    const found = findMermaidBlockAtPosition(text, start + 3);
+    assert.ok(found);
+    assert.equal(found.code, 'graph TD; A-->B');
+});
+
+test('findMermaidBlockAtPosition returns undefined outside a block', () => {
+    assert.equal(findMermaidBlockAtPosition('# Title\n\ntext', 3), undefined);
+});
+
+test('findMermaidBlockAtPosition finds the block on every call', () => {
+    // MERMAID_BLOCK_REGEX carries the global flag, so a shared instance would
+    // continue from the previous lastIndex and miss the block the second time.
+    const text = 'intro\n```mermaid\ngraph TD\n```\ntail';
+    const start = text.indexOf('```mermaid');
+    assert.ok(findMermaidBlockAtPosition(text, start));
+    assert.ok(findMermaidBlockAtPosition(text, start));
+});
+
+test('findMermaidBlockAtPosition reports the block range', () => {
+    const text = 'intro\n```mermaid\ngraph TD\n```\ntail';
+    const start = text.indexOf('```mermaid');
+    const found = findMermaidBlockAtPosition(text, start);
+    assert.equal(found.start, start);
+    assert.equal(text.slice(found.start, found.end), '```mermaid\ngraph TD\n```');
 });

@@ -51,6 +51,9 @@ export interface MermaidBlock {
     end: number;
 }
 
+/** The shape {@link findMermaidBlockAtPosition} reports. */
+export type MermaidBlockRange = MermaidBlock;
+
 export interface MermaidRenderOptions {
     apiUrl: string;
     timeoutMs?: number;
@@ -77,6 +80,33 @@ export function parseMermaidBlocks(markdownText: string): MermaidBlock[] {
     }
 
     return blocks;
+}
+
+/**
+ * Find the Mermaid block that covers `offset`.
+ *
+ * The standalone render command uses it to pick up the block the cursor sits
+ * in. The fence rules are the ones {@link parseMermaidBlocks} uses — the two
+ * share MERMAID_BLOCK_REGEX, so the command palette and the export pipeline
+ * never disagree about what a Mermaid block is.
+ */
+export function findMermaidBlockAtPosition(markdownText: string, offset: number): MermaidBlockRange | undefined {
+    // MERMAID_BLOCK_REGEX carries the global flag and is therefore stateful:
+    // a fresh instance keeps the lastIndex from leaking into this call.
+    const regex = new RegExp(MERMAID_BLOCK_REGEX.source, MERMAID_BLOCK_REGEX.flags);
+
+    let match = regex.exec(markdownText);
+    while (match) {
+        const start = match.index;
+        const end = start + match[0].length;
+        if (offset >= start && offset <= end) {
+            // Group 1 is the fence, group 2 is the diagram body.
+            return { code: match[2], start, end };
+        }
+        match = regex.exec(markdownText);
+    }
+
+    return undefined;
 }
 
 /**

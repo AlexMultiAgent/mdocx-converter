@@ -19,7 +19,7 @@ import type { DocxStyleOverride } from './docxStyles';
 import { findDocxPart } from './docxParts';
 import { getBundledReferenceDocxCandidates } from './templates';
 import { resolveDocumentTitle } from './document';
-import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, parseMermaidBlocks, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
+import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, parseMermaidBlocks, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
@@ -27,6 +27,9 @@ const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
 const EXPORT_ACADEMIC_PAPER_COMMAND_ID = 'mdocxConverter.exportAcademicPaper';
 const EXPORT_TECHNICAL_DOCUMENT_COMMAND_ID = 'mdocxConverter.exportTechnicalDocument';
 const EXPORT_BUSINESS_REPORT_COMMAND_ID = 'mdocxConverter.exportBusinessReport';
+const EXPORT_OFFICIAL_DOCUMENT_COMMAND_ID = 'mdocxConverter.exportOfficialDocument';
+const EXPORT_THESIS_COMMAND_ID = 'mdocxConverter.exportThesis';
+const RENDER_MERMAID_COMMAND_ID = 'mdocxConverter.renderMermaidToImage';
 const CHECK_ENVIRONMENT_COMMAND_ID = 'mdocxConverter.checkEnvironment';
 const CONFIGURATION_SECTION = 'mdocxConverter';
 const LEGACY_CONFIGURATION_SECTION = 'paperifyMd';
@@ -117,12 +120,30 @@ export function activate(context: vscode.ExtensionContext): void {
     const checkEnvironmentDisposable = vscode.commands.registerCommand(CHECK_ENVIRONMENT_COMMAND_ID, async (uri?: vscode.Uri) => {
         await checkEnvironment(uri, outputChannel);
     });
+    const exportOfficialDocumentDisposable = vscode.commands.registerCommand(EXPORT_OFFICIAL_DOCUMENT_COMMAND_ID, async (uri?: vscode.Uri) => {
+        await runExport(uri, outputChannel, context.extensionPath, {
+            styleProfile: 'official',
+            referenceLanguage: 'auto'
+        });
+    });
+    const exportThesisDisposable = vscode.commands.registerCommand(EXPORT_THESIS_COMMAND_ID, async (uri?: vscode.Uri) => {
+        await runExport(uri, outputChannel, context.extensionPath, {
+            styleProfile: 'thesis',
+            referenceLanguage: 'auto'
+        });
+    });
+    const renderMermaidDisposable = vscode.commands.registerCommand(RENDER_MERMAID_COMMAND_ID, async () => {
+        await renderMermaidToImage(outputChannel);
+    });
 
     context.subscriptions.push(
         exportDisposable,
         exportAcademicPaperDisposable,
         exportTechnicalDocumentDisposable,
         exportBusinessReportDisposable,
+        exportOfficialDocumentDisposable,
+        exportThesisDisposable,
+        renderMermaidDisposable,
         checkEnvironmentDisposable
     );
 }
@@ -404,6 +425,138 @@ async function notifyMermaidApiFallback(host: string): Promise<void> {
             'mdocxConverter.mermaidRenderer'
         );
     }
+}
+
+/**
+ * Render the Mermaid diagram under the cursor and insert the image.
+ *
+ * The selection wins over the block under the cursor: a user who selected
+ * something means it. The image is written next to the Markdown file and
+ * referenced with a relative path, so the document stays portable.
+ */
+async function renderMermaidToImage(outputChannel: vscode.OutputChannel): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        void vscode.window.showErrorMessage('Open a Markdown file to render a Mermaid diagram.');
+        return;
+    }
+
+    const document = editor.document;
+    const selection = editor.selection;
+    let code: string;
+    let insertRange: vscode.Range;
+
+    if (!selection.isEmpty) {
+        code = document.getText(selection);
+        insertRange = new vscode.Range(selection.end, selection.end);
+    } else {
+        const block = findMermaidBlockAtPosition(document.getText(), document.offsetAt(selection.active));
+        if (!block) {
+            void vscode.window.showErrorMessage('Select a Mermaid code block or place the cursor inside one.');
+            return;
+        }
+        code = block.code;
+        insertRange = new vscode.Range(document.positionAt(block.end), document.positionAt(block.end));
+    }
+
+    try {
+        const settings = readSettings(document.uri);
+
+        // The renderer has to be settled before the file name: the Mermaid Ink
+        // API only ever returns PNG bytes, so an API render has to carry the
+        // `.png` extension even when the local renderer is configured for SVG.
+        let localMermaid: ResolvedExecutable | undefined;
+        if (settings.mermaidRenderer !== 'api') {
+            localMermaid = await resolveMermaidCli(settings.mermaidCliPath, document.uri.fsPath);
+            if (!localMermaid && settings.mermaidRenderer === 'local') {
+                throw new UserFacingError(
+                    'Mermaid CLI was not found. Install with "npm install -g @mermaid-js/mermaid-cli" or set mdocxConverter.mermaidCliPath.'
+                );
+            }
+        }
+
+        const extension = localMermaid ? settings.mermaidOutputFormat : 'png';
+        const outputDirectory = path.join(path.dirname(document.uri.fsPath), 'mermaid-images');
+        await fsp.mkdir(outputDirectory, { recursive: true });
+
+        const fileName = `mermaid-${formatTimestamp(new Date())}.${extension}`;
+        const outputPath = path.join(outputDirectory, fileName);
+
+        await renderDiagramToFile(code, outputPath, settings, outputChannel, localMermaid);
+
+        const relativePath = `mermaid-images/${fileName}`;
+        const insertText = `\n![Mermaid Diagram](${relativePath})\n`;
+        // The offset of the insertion point, taken before the edit: after it
+        // the text behind the insertion has moved.
+        const insertOffset = document.offsetAt(insertRange.start);
+        const applied = await editor.edit((builder) => {
+            builder.insert(insertRange.start, insertText);
+        });
+
+        if (!applied) {
+            throw new Error('The editor rejected the change.');
+        }
+
+        // The cursor belongs after the image, not in front of it.
+        const endPosition = editor.document.positionAt(insertOffset + insertText.length);
+        editor.selection = new vscode.Selection(endPosition, endPosition);
+
+        outputChannel.appendLine(`Mermaid diagram rendered: ${outputPath}`);
+        void vscode.window.showInformationMessage(`Mermaid diagram rendered: ${fileName}`);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : `Mermaid render failed: ${String(error)}`;
+        outputChannel.appendLine(`Mermaid render failed: ${message}`);
+        void vscode.window.showErrorMessage(message);
+    }
+}
+
+function formatTimestamp(date: Date): string {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
+        + `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+}
+
+/**
+ * Render one diagram into `outputPath`.
+ *
+ * The function either succeeds or throws — it never reports a failure by
+ * returning nothing, because the caller asked for an image.
+ */
+async function renderDiagramToFile(
+    code: string,
+    outputPath: string,
+    settings: ExportSettings,
+    outputChannel: vscode.OutputChannel,
+    localMermaid?: ResolvedExecutable
+): Promise<void> {
+    if (localMermaid) {
+        const inputPath = `${outputPath}.mmd`;
+        await fsp.writeFile(inputPath, code.trim(), 'utf8');
+        try {
+            await runExecutable(localMermaid.command, ['-i', inputPath, '-o', outputPath, '-b', 'transparent'], {
+                shell: localMermaid.useShell,
+                cwd: path.dirname(outputPath)
+            });
+        } finally {
+            await fsp.rm(inputPath, { force: true });
+        }
+
+        if (!(await exists(outputPath))) {
+            throw new Error(`Mermaid CLI did not write ${path.basename(outputPath)}`);
+        }
+        return;
+    }
+
+    if (settings.mermaidRenderer !== 'api') {
+        outputChannel.appendLine('Mermaid CLI unavailable, falling back to the Mermaid Ink API.');
+    }
+
+    // A malformed API URL is a configuration error, not a diagram error.
+    const apiUrl = validateMermaidApiUrl(settings.mermaidApiUrl);
+    const image = await renderMermaidWithRetry(code, { apiUrl });
+    await fsp.writeFile(outputPath, image);
+    outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${apiUrl}`);
+    await notifyMermaidApiFallback(apiUrl);
 }
 
 async function prepareMarkdown(

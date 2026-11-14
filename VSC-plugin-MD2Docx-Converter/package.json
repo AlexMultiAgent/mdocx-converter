@@ -30,6 +30,9 @@
     "onCommand:mdocxConverter.exportAcademicPaper",
     "onCommand:mdocxConverter.exportTechnicalDocument",
     "onCommand:mdocxConverter.exportBusinessReport",
+    "onCommand:mdocxConverter.exportOfficialDocument",
+    "onCommand:mdocxConverter.exportThesis",
+    "onCommand:mdocxConverter.renderMermaidToImage",
     "onCommand:mdocxConverter.checkEnvironment"
   ],
   "main": "./out/extension.js",
@@ -59,6 +62,24 @@
         "category": "MD2Docx Converter"
       },
       {
+        "command": "mdocxConverter.exportOfficialDocument",
+        "title": "Export as Official Document (MDocx)",
+        "shortTitle": "Official Document",
+        "category": "MD2Docx Converter"
+      },
+      {
+        "command": "mdocxConverter.exportThesis",
+        "title": "Export as Thesis (MDocx)",
+        "shortTitle": "Thesis",
+        "category": "MD2Docx Converter"
+      },
+      {
+        "command": "mdocxConverter.renderMermaidToImage",
+        "title": "Render Mermaid Diagram to Image (MDocx)",
+        "shortTitle": "Render Mermaid",
+        "category": "MD2Docx Converter"
+      },
+      {
         "command": "mdocxConverter.checkEnvironment",
         "title": "Check Export Environment",
         "category": "MD2Docx Converter"
@@ -84,6 +105,14 @@
         {
           "command": "mdocxConverter.exportBusinessReport",
           "group": "1_profiles@30"
+        },
+        {
+          "command": "mdocxConverter.exportOfficialDocument",
+          "group": "1_profiles@40"
+        },
+        {
+          "command": "mdocxConverter.exportThesis",
+          "group": "1_profiles@50"
         }
       ],
       "editor/title/context": [
@@ -98,6 +127,11 @@
           "submenu": "mdocxConverter.exportSubmenu",
           "when": "resourceExtname == '.md' || resourceFilename =~ /\\.md$/i || editorLangId == markdown",
           "group": "z_mdocx@95"
+        },
+        {
+          "command": "mdocxConverter.renderMermaidToImage",
+          "group": "z_mdocx@96",
+          "when": "editorLangId == markdown"
         }
       ],
       "commandPalette": [
@@ -112,6 +146,15 @@
         },
         {
           "command": "mdocxConverter.exportBusinessReport"
+        },
+        {
+          "command": "mdocxConverter.exportOfficialDocument"
+        },
+        {
+          "command": "mdocxConverter.exportThesis"
+        },
+        {
+          "command": "mdocxConverter.renderMermaidToImage"
         },
         {
           "command": "mdocxConverter.checkEnvironment"
@@ -212,13 +255,17 @@
             "template",
             "academic",
             "business",
-            "technical"
+            "technical",
+            "official",
+            "thesis"
           ],
           "enumDescriptions": [
             "Template only: use the selected reference DOCX without extra metadata overrides.",
             "Academic paper: 12 pt, 1.5 line spacing, Times New Roman/SimSun body with SimHei headings.",
             "Business report: 11 pt, 1.5 line spacing, Arial body with Microsoft YaHei headings.",
-            "Technical document: 11 pt, 1.35 line spacing, Arial body text, and Consolas-oriented code styles."
+            "Technical document: 11 pt, 1.35 line spacing, Arial body text, and Consolas-oriented code styles.",
+            "Official document (GB/T 9704): 16 pt Times New Roman/FangSong body, SimHei/KaiTi/FangSong headings, fixed 29 pt line spacing.",
+            "Thesis (GB/T 7713): 12 pt Times New Roman/SimSun body, SimHei headings from 22 pt down, 1.5 line spacing."
           ],
           "default": "template",
           "description": "Optional FlexMD-style document preset layered on top of the selected reference DOCX."
