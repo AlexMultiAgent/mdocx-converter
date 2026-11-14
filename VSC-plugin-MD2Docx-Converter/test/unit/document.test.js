@@ -38,3 +38,13 @@ test('sanitizeFileName replaces illegal characters', () => {
     assert.equal(sanitizeFileName('   '), 'document');
     assert.equal(sanitizeFileName('正常文件名'), '正常文件名');
 });
+
+test('extractDocumentTitle ignores headings inside fenced code blocks', () => {
+    assert.equal(extractDocumentTitle('```bash\n# Install the thing\nnpm i\n```'), undefined);
+    assert.equal(extractDocumentTitle('```\n# not a title\n```\n\n# Real Title'), 'Real Title');
+});
+
+test('resolveDocumentTitle handles Windows paths', () => {
+    assert.equal(resolveDocumentTitle('no heading', '', 'C:\\dir\\report.md'), 'report');
+    assert.equal(resolveDocumentTitle('no heading', '', 'C:/dir/report.md'), 'report');
+});

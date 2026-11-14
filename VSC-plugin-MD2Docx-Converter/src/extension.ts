@@ -6,9 +6,8 @@ import { promises as fsp } from 'fs';
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import AdmZip = require('adm-zip');
-import { normalizeReferenceLanguage, normalizeReferenceLanguageSetting, resolveReferenceLanguage } from './language';
+import { normalizeReferenceLanguageSetting, resolveReferenceLanguage } from './language';
 import type { ReferenceLanguage, ReferenceLanguageSetting } from './language';
-import { resolveDocumentTitle } from './document';
 
 const execFileAsync = promisify(execFile);
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';

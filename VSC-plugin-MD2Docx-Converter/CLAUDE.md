@@ -27,7 +27,9 @@ Unit tests live in `test/unit/*.test.js` and run on Node's built-in `node:test` 
 
 ## Architecture
 
-This is a **VS Code extension** that exports Markdown files to DOCX. The entire extension lives in a single file: `src/extension.ts` (~1230 lines). It compiles to `out/extension.js` via TypeScript.
+This is a **VS Code extension** that exports Markdown files to DOCX. The extension host entry point lives in `src/extension.ts` (~1200 lines); pure helper modules are being split out beside it — currently `src/document.ts` (document title and filename sanitising) and `src/language.ts` (reference-language detection and normalisation). Everything compiles to `out/` via TypeScript.
+
+**Only `src/extension.ts` may import `vscode`.** Every other module must stay pure so that `node --test` can load the compiled output directly outside the Extension Host.
 
 ### Conversion pipeline
 
@@ -137,7 +139,8 @@ The Dify plugin already avoids this by matching on the **display name** (`w:name
 - `openAfterExport` uses `explorer.exe /select,` on Windows instead of `vscode.env.openExternal` to avoid shell association errors
 - Error messages are pattern-matched from pandoc stderr/stdout to produce user-friendly guidance (permission denied, image not found, unknown syntax)
 - Temp files are cleaned up unless `keepIntermediateFiles` is set
-- The entire extension is a single file — no modules, no test infrastructure, no bundler
+- Logic is split into pure modules under `src/` (e.g. `src/document.ts`, `src/language.ts`) with `src/extension.ts` as the only module allowed to import `vscode` — this keeps the helpers unit-testable via `node --test`
+- No bundler: TypeScript compiles `src/` to CommonJS in `out/`, and the unit tests live in `test/unit/`
 
 ### VSIX packaging
 

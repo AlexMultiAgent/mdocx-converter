@@ -1,9 +1,9 @@
-const ATX_HEADING_REGEX = /^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
+const ATX_HEADING_REGEX = /^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/m;
+const FENCED_CODE_BLOCK_REGEX = /^```[^\n]*\n[\s\S]*?^```[ \t]*$/gm;
 const ILLEGAL_FILENAME_CHARS = /[<>:"/\\|?*\u0000-\u001f]/g;
 
 export function extractDocumentTitle(markdownText: string): string | undefined {
-    ATX_HEADING_REGEX.lastIndex = 0;
-    const match = ATX_HEADING_REGEX.exec(markdownText);
+    const match = ATX_HEADING_REGEX.exec(markdownText.replace(FENCED_CODE_BLOCK_REGEX, ''));
     if (!match) {
         return undefined;
     }

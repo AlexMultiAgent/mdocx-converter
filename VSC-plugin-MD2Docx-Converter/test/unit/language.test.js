@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { detectMarkdownLanguage, resolveReferenceLanguage } = require('../../out/language.js');
+const { detectMarkdownLanguage, resolveReferenceLanguage, normalizeReferenceLanguage, normalizeReferenceLanguageSetting } = require('../../out/language.js');
 
 test('detectMarkdownLanguage picks chinese for CJK-heavy text', () => {
     assert.equal(detectMarkdownLanguage('这是一段完全由中文构成的文本。'.repeat(20)), 'chinese');
@@ -30,4 +30,28 @@ test('resolveReferenceLanguage honours an explicit setting', () => {
     assert.equal(resolveReferenceLanguage('中文内容'.repeat(50), 'english'), 'english');
     assert.equal(resolveReferenceLanguage('plain english', 'chinese'), 'chinese');
     assert.equal(resolveReferenceLanguage('中文内容'.repeat(50), 'auto'), 'chinese');
+});
+
+test('normalizeReferenceLanguage narrows anything unknown to english', () => {
+    assert.equal(normalizeReferenceLanguage('chinese'), 'chinese');
+    assert.equal(normalizeReferenceLanguage('english'), 'english');
+    assert.equal(normalizeReferenceLanguage('auto'), 'english');
+    assert.equal(normalizeReferenceLanguage(undefined), 'english');
+});
+
+test('normalizeReferenceLanguageSetting preserves auto and narrows the rest', () => {
+    assert.equal(normalizeReferenceLanguageSetting('auto'), 'auto');
+    assert.equal(normalizeReferenceLanguageSetting('chinese'), 'chinese');
+    assert.equal(normalizeReferenceLanguageSetting('english'), 'english');
+    assert.equal(normalizeReferenceLanguageSetting(undefined), 'english');
+});
+
+test('detectMarkdownLanguage only samples the first 20000 characters', () => {
+    const lateCjk = 'a'.repeat(20000) + '中'.repeat(50);
+    assert.equal(detectMarkdownLanguage(lateCjk), 'english');
+});
+
+test('detectMarkdownLanguage applies the 15 percent ratio clause below the threshold', () => {
+    assert.equal(detectMarkdownLanguage('中'.repeat(10) + 'a'.repeat(50)), 'chinese');
+    assert.equal(detectMarkdownLanguage('中'.repeat(10) + 'a'.repeat(100)), 'english');
 });
