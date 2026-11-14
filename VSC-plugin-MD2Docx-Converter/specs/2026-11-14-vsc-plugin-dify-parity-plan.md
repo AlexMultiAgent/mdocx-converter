@@ -205,12 +205,12 @@ Expected: FAIL — `Cannot find module '../../out/document.js'`
 - [ ] **Step 3: 创建 `src/document.ts`**
 
 ```ts
-const ATX_HEADING_REGEX = /^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
+const ATX_HEADING_REGEX = /^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/m;
+const FENCED_CODE_BLOCK_REGEX = /^```[^\n]*\n[\s\S]*?^```[ \t]*$/gm;
 const ILLEGAL_FILENAME_CHARS = /[<>:"/\\|?*\u0000-\u001f]/g;
 
 export function extractDocumentTitle(markdownText: string): string | undefined {
-    ATX_HEADING_REGEX.lastIndex = 0;
-    const match = ATX_HEADING_REGEX.exec(markdownText);
+    const match = ATX_HEADING_REGEX.exec(markdownText.replace(FENCED_CODE_BLOCK_REGEX, ''));
     if (!match) {
         return undefined;
     }
@@ -657,6 +657,8 @@ import 段加入：
 import { PROFILE_PRESETS, normalizeStyleProfile } from './profiles';
 import type { FontPair, ProfilePreset, StyleProfile } from './profiles';
 ```
+
+注意 `tsconfig.json` 已启用 `noUnusedLocals: true` —— 有未使用的 import 会直接编译失败。如果某个 import 在本任务里用不上，就不要加它。
 
 - [ ] **Step 5: 运行测试确认通过**
 
@@ -2172,7 +2174,7 @@ git commit -m "feat: fall back to the Mermaid Ink API and keep failed diagrams a
         "mdocxConverter.documentTitle": {
           "type": "string",
           "default": "",
-          "description": "Document title written into the DOCX core properties. Leave empty to use the first level-1 heading, or the file name when the document has no heading."
+          "description": "Document title written into the DOCX core properties. Leave empty to use the first heading in the document, or the file name when the document has no heading."
         },
 ```
 
@@ -2186,7 +2188,7 @@ git commit -m "feat: fall back to the Mermaid Ink API and keep failed diagrams a
 
 - [ ] **Step 3: 写入 metadata**
 
-在 `runExport` 中，`prepareMarkdown` 调用之后、`runPandoc` 之前，解析标题：
+在 `src/extension.ts` 的 import 段加入 `import { resolveDocumentTitle } from './document';`（Task 2 为了启用 `noUnusedLocals` 已把它移除），然后在 `runExport` 中，`prepareMarkdown` 调用之后、`runPandoc` 之前，解析标题：
 
 ```ts
         const documentTitle = resolveDocumentTitle(markdownText, settings.documentTitle, markdownUri.fsPath);
@@ -2362,7 +2364,7 @@ async function renderDiagramToFile(
 }
 ```
 
-`findMermaidBlockAtPosition` 放进 `src/document.ts`（纯函数，便于测试）：
+`findMermaidBlockAtPosition` 放进 `src/mermaid.ts`（和 `parseMermaidBlocks` 是同一类职责 —— 代码块定位；`src/document.ts` 只管文档元数据）：
 
 ```ts
 export interface MermaidBlockRange {
@@ -2391,10 +2393,10 @@ export function findMermaidBlockAtPosition(markdownText: string, offset: number)
 
 - [ ] **Step 2b: 给 `findMermaidBlockAtPosition` 补测试**
 
-在 `test/unit/document.test.js` 末尾追加：
+在 `test/unit/mermaid.test.js` 末尾追加：
 
 ```js
-const { findMermaidBlockAtPosition } = require('../../out/document.js');
+const { findMermaidBlockAtPosition } = require('../../out/mermaid.js');
 
 test('findMermaidBlockAtPosition locates the block under the cursor', () => {
     const text = 'intro\n```mermaid\ngraph TD; A-->B\n```\ntail';
