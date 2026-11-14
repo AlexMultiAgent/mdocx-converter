@@ -6,8 +6,8 @@
 #   bash scripts/sync-templates.sh          # VSC → Dify (default)
 #   bash scripts/sync-templates.sh --check  # dry-run: report mismatches only
 #
-# Template files (8 total):
-#   reference_{english,chinese}_{academic,technical,business,official}.docx
+# Template files (10 total):
+#   reference_{english,chinese}_{academic,technical,business,official,thesis}.docx
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -32,10 +32,12 @@ TEMPLATES=(
     "reference_english_technical.docx"
     "reference_english_business.docx"
     "reference_english_official.docx"
+    "reference_english_thesis.docx"
     "reference_chinese_academic.docx"
     "reference_chinese_technical.docx"
     "reference_chinese_business.docx"
     "reference_chinese_official.docx"
+    "reference_chinese_thesis.docx"
 )
 
 MISMATCHES=0

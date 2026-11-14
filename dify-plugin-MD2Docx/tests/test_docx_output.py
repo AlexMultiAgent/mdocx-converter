@@ -20,7 +20,7 @@ from md2docx import (
     _ensure_pandoc,
     PROFILE_DEFAULTS,
     NORMAL_STYLE_NAMES,
-    HEADING_ALIASES,
+    HEADING_STYLE_NAMES,
     CODE_STYLE_NAMES,
     TEMPLATE_MAP,
 )
@@ -123,7 +123,7 @@ class TestFullConversion:
         apply_style_overrides(doc, "academic", {})
 
         # Check Heading 1 style has font set
-        for alias in HEADING_ALIASES["Heading 1"]:
+        for alias in HEADING_STYLE_NAMES["Heading 1"]:
             try:
                 style = doc.styles[alias]
                 rPr = style._element.find(
