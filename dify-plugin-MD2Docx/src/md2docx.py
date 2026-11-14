@@ -109,8 +109,8 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "line_spacing": 1.5,
         "margin_top_mm": 25.4,
         "margin_bottom_mm": 25.4,
-        "margin_left_mm": 25.4,
-        "margin_right_mm": 25.4,
+        "margin_left_mm": 31.75,
+        "margin_right_mm": 31.75,
     },
     "business": {
         "body_font": "Arial",
@@ -163,7 +163,11 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "heading3_font": "Times New Roman",
         "heading3_cjk_font": "FangSong",
         "heading3_size_pt": 16,
-        "line_spacing": 1.75,
+        # GB/T 9704 asks for a fixed 29pt line height, which a multiplier
+        # cannot express. The DOCX layer writes the twips; the pandoc layer
+        # therefore carries no `linestretch` for this profile.
+        "line_spacing_twips": 580,
+        "line_spacing_rule": "exact",
         "margin_top_mm": 37,
         "margin_bottom_mm": 35,
         "margin_left_mm": 28,
@@ -203,8 +207,11 @@ def _build_profile_metadata() -> dict[str, dict[str, str]]:
             "mainfont": defaults["body_font"],
             "CJKmainfont": defaults["body_cjk_font"],
             "fontsize": f"{defaults['body_size_pt']}pt",
-            "linestretch": str(defaults["line_spacing"]),
         }
+        # A profile that pins a fixed line height (`official`) has no
+        # multiplier to hand to pandoc — the DOCX layer writes the twips.
+        if defaults.get("line_spacing"):
+            metadata["linestretch"] = str(defaults["line_spacing"])
         if profile == "technical":
             metadata["monofont"] = "Consolas"
         metadata_by_profile[profile] = metadata
@@ -237,8 +244,8 @@ TEMPLATE_MAP: dict[str, dict[str, str]] = {
         "chinese": "reference_chinese_official.docx",
     },
     "thesis": {
-        "english": "reference_english_academic.docx",
-        "chinese": "reference_chinese_academic.docx",
+        "english": "reference_english_thesis.docx",
+        "chinese": "reference_chinese_thesis.docx",
     },
 }
 
@@ -920,13 +927,39 @@ def _set_font_size(run_or_style, size_pt: float) -> None:
     _get_or_add_ordered(rPr, "w:szCs", _RPR_SEQUENCE).set(qn("w:val"), half_pts)
 
 
-def _set_line_spacing(paragraph_format, spacing: float) -> None:
-    """Set line spacing on a paragraph format."""
-    line_value = int(round(spacing * 240))
+def _set_line_spacing(paragraph_format, twips: int, rule: str = "auto") -> None:
+    """Set line spacing on a paragraph format.
+
+    `twips` is the value of `w:line`; `rule` is `w:lineRule` — `auto` for a
+    multiple of the font size, `exact` for a fixed line height.
+    """
     pPr = paragraph_format._element.get_or_add_pPr()
     spacing_el = _get_or_add_ordered(pPr, "w:spacing", _PPR_SEQUENCE)
-    spacing_el.set(qn("w:line"), str(line_value))
-    spacing_el.set(qn("w:lineRule"), "auto")
+    spacing_el.set(qn("w:line"), str(int(twips)))
+    spacing_el.set(qn("w:lineRule"), rule)
+
+
+def _resolve_line_spacing(
+    profile: dict, user_spacing: Optional[float]
+) -> Optional[tuple[int, str]]:
+    """Return the effective (twips, lineRule) for a profile.
+
+    A user-supplied multiplier wins over the preset and is written back as a
+    multiple (`auto`); a preset that pins a fixed line height keeps it.
+    """
+    if user_spacing:
+        return (int(round(user_spacing * 240)), "auto")
+    if profile.get("line_spacing_twips"):
+        return (
+            int(profile["line_spacing_twips"]),
+            profile.get("line_spacing_rule", "exact"),
+        )
+    if profile.get("line_spacing"):
+        return (
+            int(round(profile["line_spacing"] * 240)),
+            profile.get("line_spacing_rule", "auto"),
+        )
+    return None
 
 
 def _set_shading(paragraph_format, fill_color: str) -> None:
@@ -949,6 +982,9 @@ def _apply_to_styles(doc: Document, names: tuple[str, ...], *, ids: tuple[str, .
                      color=None, line_spacing=None) -> bool:
     """Apply font/size/color/line_spacing to matching styles. Returns True
     if at least one style was found and modified.
+
+    `line_spacing` is the (twips, lineRule) pair resolved by
+    `_resolve_line_spacing`.
     """
     matched = False
     for style in _resolve_styles(doc, names, ids):
@@ -960,7 +996,7 @@ def _apply_to_styles(doc: Document, names: tuple[str, ...], *, ids: tuple[str, .
         if color:
             _set_font_color(style, color)
         if line_spacing and isinstance(style, ParagraphStyle):
-            _set_line_spacing(style.paragraph_format, line_spacing)
+            _set_line_spacing(style.paragraph_format, line_spacing[0], line_spacing[1])
         _normalize_style_properties(style)
     return matched
 
@@ -987,7 +1023,7 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> li
         params.get("body_font"), profile, "body_font", "body_cjk_font"
     )
     body_size = parse_pt(params.get("body_size_pt")) or profile.get("body_size_pt")
-    line_spacing = parse_spacing(params.get("line_spacing")) or profile.get("line_spacing")
+    line_spacing = _resolve_line_spacing(profile, parse_spacing(params.get("line_spacing")))
 
     h1_font, h1_cjk = _resolve_font_pair(
         params.get("heading1_font"), profile, "heading1_font", "heading1_cjk_font"

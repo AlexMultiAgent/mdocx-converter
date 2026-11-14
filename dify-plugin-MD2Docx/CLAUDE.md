@@ -29,7 +29,7 @@ markdown_content
   ├─ 1. Language detection: sample first 20K chars → count CJK vs Latin → auto/en/zh
   │
   ├─ 2. Template resolution:
-  │     custom_template (uploaded file) > built-in 8 ref.docx (profile × language)
+  │     custom_template (uploaded file) > built-in 10 ref.docx (profile × language)
   │
   ├─ 3. Mermaid preprocessing (if enabled):
   │     regex ```mermaid blocks → Mermaid Ink API (4 workers, 75s total budget)
@@ -63,7 +63,7 @@ dify-plugin-MD2Docx/
 ├── icon.svg                   # Referenced by manifest `icon:` — keep byte-identical to _assets/icon.svg
 ├── _assets/
 │   └── icon.svg               # Canonical icon location (the marketplace check resolves _assets/<icon>)
-├── multi-templates/           # 8 reference.docx (6 shared with VSC plugin + 2 official)
+├── multi-templates/           # 10 reference.docx (5 profiles x 2 languages) — copied from the VSC plugin by scripts/sync-templates.sh
 ├── provider/
 │   ├── md2docx.py             # Md2DocxProvider (ToolProvider)
 │   └── md2docx.yaml           # Tool Provider declaration
@@ -103,9 +103,9 @@ Blob metadata is read with the key **`filename`** (not `file_name`), which the b
 1. Custom uploaded `.docx` (if a `custom_template` value is passed — the parameter is not exposed in the schema)
 2. Built-in template from `multi-templates/` selected by `style_profile` × `reference_language`
 
-Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`, and `thesis` profiles share the same academic reference files. Technical, business, and official each have their own English/Chinese pair.
+Bundled template mapping lives in the `TEMPLATE_MAP` constant. Academic, technical, business, official and thesis each have their own English/Chinese pair; only the `template` profile reuses the academic reference files.
 
-> `reference_{english,chinese}_official.docx` are byte-identical copies of the academic files — the `official` profile differs purely through its style defaults (FangSong 16pt, 1.75x, GB/T 9704 margins). They are kept as separate files so both plugins hold the same eight names.
+> The ten templates are generated from one declarative style table by the VS Code side's `scripts/build-templates.js` and copied over by `scripts/sync-templates.sh`. The VS Code plugin is the source of truth — regenerate there and re-sync rather than hand-editing a .docx.
 
 ### Language auto-detection
 
@@ -113,9 +113,9 @@ Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`,
 
 ### Style system (three layers)
 
-**Layer 1 — Pandoc metadata** (`build_pandoc_metadata`): Sets `mainfont`, `CJKmainfont`, `fontsize`, `linestretch` via `--metadata`. `PROFILE_METADATA` is derived from `PROFILE_DEFAULTS`, eliminating a second hand-maintained preset table, then per-parameter overrides are applied. A `body_font` override replaces **both** `mainfont` and `CJKmainfont` — the user named that font explicitly, so it fills both slots.
+**Layer 1 — Pandoc metadata** (`build_pandoc_metadata`): Sets `mainfont`, `CJKmainfont`, `fontsize`, `linestretch` via `--metadata`. `PROFILE_METADATA` is derived from `PROFILE_DEFAULTS`, eliminating a second hand-maintained preset table, then per-parameter overrides are applied. A `body_font` override replaces **both** `mainfont` and `CJKmainfont` — the user named that font explicitly, so it fills both slots. A profile that pins a fixed line height (`official`) contributes no `linestretch`; the twips are written by Layer 2.
 
-> ⚠️ **Layer 1 never reaches the output.** Pandoc's docx writer ignores `mainfont` / `CJKmainfont` / `fontsize` / `linestretch` once a `--reference-doc` is supplied: with any of the 8 bundled templates, `word/document.xml` and `word/styles.xml` come out **byte-identical** with and without the metadata — only `docProps/custom.xml` records it. The reference template's own `docDefaults` set the base font, so **Layer 2 is what actually formats the document**. Change `PROFILE_DEFAULTS`; both layers now derive from that one table.
+> ⚠️ **Layer 1 never reaches the output.** Pandoc's docx writer ignores `mainfont` / `CJKmainfont` / `fontsize` / `linestretch` once a `--reference-doc` is supplied: with any of the 10 bundled templates, `word/document.xml` and `word/styles.xml` come out **byte-identical** with and without the metadata — only `docProps/custom.xml` records it. The reference template's own `docDefaults` set the base font, so **Layer 2 is what actually formats the document**. Change `PROFILE_DEFAULTS`; both layers now derive from that one table.
 
 **Layer 2 — DOCX XML overrides** (`apply_style_overrides`): After pandoc finishes, opens the .docx via `python-docx` and modifies styles using lxml for raw XML access:
 
@@ -126,21 +126,23 @@ Bundled template mapping lives in `TEMPLATE_MAP` constant. Academic, `template`,
 
 Rules the layer depends on:
 
-- **Style resolution is by display name.** Style ids are not portable — `a` is Normal in the English templates but List Number in the Chinese one — so body and heading styles are matched by name only. Matching by id would put the body font on list and table styles.
+- **Style resolution is by display name.** Style ids are not portable — Word mints them arbitrarily when a template is saved (`a` was Normal in one of the old English templates but List Number in the Chinese one) — so body and heading styles are matched by name only. Matching by id would put the body font on list and table styles.
 - **Latin, East Asian, and complex-script slots are separate.** `w:rFonts/@w:ascii` and `w:hAnsi` get the profile's Latin font, `w:eastAsia` gets its CJK font, and `w:cs` gets the Latin face for complex scripts. A font the user named explicitly fills all slots — they asked for that font. `w:szCs` is written alongside `w:sz` so complex-script text keeps the same size.
 
-- **Theme fonts are removed when a font is set.** The Chinese reference templates define their headings with `w:asciiTheme="majorHAnsi"` and no explicit font; per ECMA-376 the theme attribute wins, so the override would be a silent no-op without dropping it.
+- **Theme fonts are removed when a font is set.** Some reference templates define their headings with `w:asciiTheme="majorHAnsi"` and no explicit font; per ECMA-376 the theme attribute wins, so the override would be a silent no-op without dropping it.
 - **Style properties are written in schema order.** `w:rPr` and `w:pPr` have a fixed child sequence and Word offers to repair a document whose properties are out of order. New elements are inserted at their schema position and the properties of the styles the plugin rewrites are normalised.
 - **Non-`template` profiles force body and heading text to black** (`000000`). The reference templates carry Word's blue accent heading colours; Chinese formal documents use black, so the override is intentional.
 
 **Layer 3 — Profile defaults** (`PROFILE_DEFAULTS`): Hardcoded per profile:
 
-- `academic`: Times New Roman / SimSun body 12pt, Times New Roman / SimHei headings 16/14/12pt, 1.5x, margins 25.4mm
+- `academic`: Times New Roman / SimSun body 12pt, Times New Roman / SimHei headings 16/14/12pt, 1.5x, margins 25.4/25.4/31.75/31.75mm
 - `thesis`: Times New Roman / SimSun body 12pt, Times New Roman / SimHei headings 22/16/14pt (GB/T 7713), 1.5x, margins 30mm
 - `business`: Arial / Microsoft YaHei body 11pt, Arial / Microsoft YaHei headings 18/14/12pt, 1.5x, margins 25.4mm
 - `technical`: Arial / Microsoft YaHei body 11pt, Arial / Microsoft YaHei headings 16/14/12pt, 1.35x, Consolas code, margins 19mm
-- `official`: Times New Roman / FangSong body 16pt, Times New Roman / SimHei, KaiTi, FangSong headings 16pt, 1.75x, margins 37/35/28/26mm (GB/T 9704)
+- `official`: Times New Roman / FangSong body 16pt, Times New Roman / SimHei, KaiTi, FangSong headings 16pt, fixed 29pt line height (`w:line="580"`, `w:lineRule="exact"`, GB/T 9704), margins 37/35/28/26mm
 - `template`: no defaults (rely on reference.docx entirely)
+
+> `official` pins its line height in twips instead of a multiplier — GB/T 9704 asks for a fixed 29pt, which `linestretch` cannot express. The pandoc layer therefore carries **no** `linestretch` for this profile; `_resolve_line_spacing()` returns `(580, "exact")` for the DOCX layer. A user-supplied `line_spacing` still wins and switches back to a multiple.
 
 ### Key design decisions
 

@@ -44,7 +44,7 @@ The Dify `.difypkg` cannot be built with the `dify-plugin` CLI — it is not on 
 ```
 Markdown text
   ├─ 1. Language detection (CJK vs Latin, first 20K chars)
-  ├─ 2. Template resolution (built-in profile x language → 8 ref.docx)
+  ├─ 2. Template resolution (built-in profile x language → 10 ref.docx)
   ├─ 3. Mermaid preprocessing (Mermaid Ink API → PNG embedded as data: URIs; mmdc in VS Code)
   ├─ 4. Pandoc conversion (gfm+raw_html → docx via --reference-doc; the Dify plugin runs it with --sandbox)
   └─ 5. Style overrides (font, size, spacing, margins, code styles)
@@ -54,7 +54,7 @@ Markdown text
 
 ⚠️ **The Dify plugin sandboxes pandoc.** `--sandbox` blocks URL fetches and local-file reads, so images in the Markdown must be `data:` URIs — Mermaid output is inlined that way automatically, but a user's own `![](logo.png)` no longer resolves. The VS Code extension is not sandboxed and still resolves local files via `--resource-path`.
 
-Templates are at `multi-templates/` under each subdirectory. The Dify plugin ships **8** files (academic/technical/business/official x Chinese/English; `thesis` and `template` reuse the academic pair), the VS Code extension ships **6** (no `official` yet). The `official` files are byte-identical copies of the academic ones — the `official` preset differs only through its style defaults.
+Templates are at `multi-templates/` under each subdirectory. **Both plugins ship the same 10 files** — academic/technical/business/official/thesis × Chinese/English — generated from one declarative style table by the VS Code side's `scripts/build-templates.js`. The `template` profile reuses the academic pair; the other five have a template of their own.
 
 ⚠️ **Template sync note:** the VS Code extension is the primary source for templates. When adding new templates, update both subdirectories and keep the file names identical so `scripts/sync-templates.sh --check` stays green.
 

@@ -18,9 +18,11 @@ from md2docx import (
     apply_style_overrides,
     build_pandoc_metadata,
     _ensure_pandoc,
+    _resolve_line_spacing,
     PROFILE_DEFAULTS,
+    PROFILE_METADATA,
     NORMAL_STYLE_NAMES,
-    HEADING_STYLE_NAMES,
+    HEADING_ALIASES,
     CODE_STYLE_NAMES,
     TEMPLATE_MAP,
 )
@@ -123,7 +125,7 @@ class TestFullConversion:
         apply_style_overrides(doc, "academic", {})
 
         # Check Heading 1 style has font set
-        for alias in HEADING_STYLE_NAMES["Heading 1"]:
+        for alias in HEADING_ALIASES["Heading 1"]:
             try:
                 style = doc.styles[alias]
                 rPr = style._element.find(
@@ -536,7 +538,7 @@ class TestCjkFontHandling:
         doc = Document(docx_io)
         apply_style_overrides(doc, "technical", {})
 
-        normal = _find_style_by_id(doc, "a")
+        normal = _find_style_by_name(doc, "Normal")
         ascii_font, east_asia, _ = _style_fonts(normal)
         assert ascii_font == "Arial"
         assert east_asia == "Microsoft YaHei"
@@ -552,7 +554,7 @@ class TestCjkFontHandling:
         doc = Document(docx_io)
         apply_style_overrides(doc, "technical", {"body_font": "Arial"})
 
-        normal = _find_style_by_id(doc, "a")
+        normal = _find_style_by_name(doc, "Normal")
         ascii_font, east_asia, _ = _style_fonts(normal)
         assert ascii_font == "Arial"
         assert east_asia == "Arial"
@@ -569,7 +571,7 @@ class TestCjkFontHandling:
         doc = Document(docx_io)
         apply_style_overrides(doc, "academic", {})
 
-        heading1 = _find_style_by_id(doc, "1")
+        heading1 = _find_style_by_name(doc, "Heading 1")
         ascii_font, east_asia, _ = _style_fonts(heading1)
         assert ascii_font == "Times New Roman"
         assert east_asia == "SimHei"
@@ -587,7 +589,7 @@ class TestComplexScriptFontSize:
         doc = Document(docx_io)
         apply_style_overrides(doc, "academic", {})
 
-        normal = _find_style_by_id(doc, "a")
+        normal = _find_style_by_name(doc, "Normal")
         rPr = normal._element.find(f"{W_NS}rPr")
         sz = rPr.find(f"{W_NS}sz")
         szCs = rPr.find(f"{W_NS}szCs")
@@ -600,17 +602,13 @@ class TestStyleResolutionScope:
     """Style ids are not portable: 'a' is Normal in the English templates but
     List Number in the Chinese one. Overrides must reach the intended styles
     only.
+
+    The regenerated templates use the canonical pandoc ids, so the collision
+    is reproduced here on a document shaped like the *legacy* Word templates.
     """
 
-    def test_body_overrides_do_not_leak_into_list_styles(self, pandoc_available):
-        from docx import Document
-
-        ref = os.path.join(TEMPLATE_DIR, "reference_chinese_academic.docx")
-        docx_io = convert_via_pandoc(
-            "# Heading\n\nbody\n", ref, TEMPLATE_DIR, "",
-            build_pandoc_metadata("academic", None, None, None),
-        )
-        doc = Document(docx_io)
+    def test_body_overrides_do_not_leak_into_list_styles(self):
+        doc = _make_legacy_template_doc()
         apply_style_overrides(doc, "academic", {})
 
         list_number = _find_style_by_id(doc, "a")
@@ -618,21 +616,54 @@ class TestStyleResolutionScope:
         ascii_font, _, _ = _style_fonts(list_number)
         assert ascii_font != "SimSun", "List Number must not inherit the body font"
 
-    def test_body_style_still_receives_the_overrides(self, pandoc_available):
-        from docx import Document
-
-        ref = os.path.join(TEMPLATE_DIR, "reference_chinese_academic.docx")
-        docx_io = convert_via_pandoc(
-            "# Heading\n\nbody\n", ref, TEMPLATE_DIR, "",
-            build_pandoc_metadata("academic", None, None, None),
-        )
-        doc = Document(docx_io)
+    def test_body_style_still_receives_the_overrides(self):
+        doc = _make_legacy_template_doc()
         apply_style_overrides(doc, "academic", {})
 
         normal = _find_style_by_id(doc, "a1")
         ascii_font, _, size = _style_fonts(normal)
         assert ascii_font == "Times New Roman"
         assert size == "24"
+
+    def test_the_normal_table_style_is_left_alone(self):
+        """'a3' is Normal Table in the legacy templates, not a body style."""
+        doc = _make_legacy_template_doc()
+        apply_style_overrides(doc, "academic", {})
+
+        normal_table = _find_style_by_id(doc, "a3")
+        assert normal_table is not None
+        ascii_font, east_asia, _ = _style_fonts(normal_table)
+        assert ascii_font != "Times New Roman"
+        assert east_asia != "SimSun"
+
+    def test_the_shipped_templates_do_not_leak_into_list_or_table_styles(
+        self, pandoc_available
+    ):
+        """The same guard against the templates that actually ship."""
+        from docx import Document
+
+        for profile in ("academic", "business", "official", "technical", "thesis"):
+            for language in ("english", "chinese"):
+                ref = os.path.join(TEMPLATE_DIR, TEMPLATE_MAP[profile][language])
+                docx_io = convert_via_pandoc(
+                    "# Heading 1\n\nbody\n", ref, TEMPLATE_DIR, "",
+                    build_pandoc_metadata(profile, None, None, None),
+                )
+                doc = Document(docx_io)
+                apply_style_overrides(doc, profile, {})
+
+                for style in doc.styles:
+                    name = (style.name or "").lower()
+                    if "list" in name or "table" in name:
+                        ascii_font, east_asia, _ = _style_fonts(style)
+                        assert ascii_font != "SimSun", (
+                            f"{profile}/{language}: style {style.style_id!r} "
+                            f"({style.name!r}) must not inherit the body font"
+                        )
+                        assert east_asia != "SimSun", (
+                            f"{profile}/{language}: style {style.style_id!r} "
+                            f"({style.name!r}) must not inherit the body font"
+                        )
 
 
 class TestDocumentMetadata:
@@ -923,7 +954,7 @@ class TestProfileFontPairs:
         doc = Document(docx_io)
         apply_style_overrides(doc, "academic", {})
 
-        normal = _find_style_by_id(doc, "a")
+        normal = _find_style_by_name(doc, "Normal")
         rPr = normal._element.find(f"{W_NS}rPr")
         rFonts = rPr.find(f"{W_NS}rFonts")
         assert rFonts.get(f"{W_NS}ascii") == "Times New Roman"
@@ -977,6 +1008,67 @@ def _find_style_by_id(doc, style_id):
         if style.style_id == style_id:
             return style
     return None
+
+
+# Style ids of the legacy Chinese/English Word reference templates. The
+# regenerated templates use the canonical pandoc ids, so the id collision
+# (List Number owning 'a', Normal Table owning 'a1') can only be reproduced
+# on a document shaped like the old ones.
+LEGACY_STYLE_IDS = {
+    "Normal": "a1",
+    "Body Text": "af",
+    "List Number": "a",
+    "Normal Table": "a3",
+    "Heading 1": "1",
+    "Heading 2": "21",
+    "Heading 3": "31",
+}
+
+
+def _make_legacy_template_doc():
+    """A document shaped like the legacy reference templates."""
+    from docx import Document
+
+    doc = Document()
+    for display_name, style_id in LEGACY_STYLE_IDS.items():
+        style = _find_style_by_name(doc, display_name)
+        assert style is not None, f"python-docx must define {display_name!r}"
+        style.style_id = style_id
+    return doc
+
+
+def _find_style_by_name(doc, name):
+    """Return the style whose *display name* is `name`.
+
+    The regenerated templates use the canonical pandoc ids (`Normal`,
+    `Heading1`, ...), so the display name is the only stable handle.
+    """
+    for style in doc.styles:
+        if style.name == name:
+            return style
+    return None
+
+
+def _style_spacing(style):
+    """Return the (line, lineRule) of a style's paragraph spacing, or None."""
+    pPr = style._element.find(f"{W_NS}pPr")
+    if pPr is None:
+        return None
+    spacing = pPr.find(f"{W_NS}spacing")
+    if spacing is None:
+        return None
+    return (spacing.get(f"{W_NS}line"), spacing.get(f"{W_NS}lineRule"))
+
+
+def _style_justification(style):
+    """Return the `w:jc` value of a style, or None."""
+    pPr = style._element.find(f"{W_NS}pPr")
+    if pPr is None:
+        return None
+    jc = pPr.find(f"{W_NS}jc")
+    if jc is None:
+        return None
+    return jc.get(f"{W_NS}val")
 
 
 class TestCharacterStyleOverrides:
@@ -1092,7 +1184,7 @@ class TestThemeFontAttributes:
         doc = Document(docx_io)
         apply_style_overrides(doc, "academic", {})
 
-        heading1 = _find_style_by_id(doc, "1")
+        heading1 = _find_style_by_name(doc, "Heading 1")
         rPr = heading1._element.find(f"{W_NS}rPr")
         rFonts = rPr.find(f"{W_NS}rFonts")
         for attribute in ("asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme"):
@@ -1183,7 +1275,7 @@ class TestFontNameNormalization:
         doc = Document(docx_io)
         apply_style_overrides(doc, "academic", {"body_font": "  SimSun  "})
 
-        normal = _find_style_by_id(doc, "a")
+        normal = _find_style_by_name(doc, "Normal")
         ascii_font, _, _ = _style_fonts(normal)
         assert ascii_font == "SimSun"
 
@@ -1301,3 +1393,189 @@ class TestImageResolution:
         assert any("missing.png" in w for w in warnings), (
             f"expected a warning naming missing.png, got {warnings}"
         )
+
+
+class TestThesisTemplate:
+    """`thesis` has its own GB/T 7713 template instead of reusing academic."""
+
+    def test_thesis_points_at_its_own_templates(self):
+        assert TEMPLATE_MAP["thesis"]["english"] == "reference_english_thesis.docx"
+        assert TEMPLATE_MAP["thesis"]["chinese"] == "reference_chinese_thesis.docx"
+
+    def test_thesis_templates_are_shipped(self):
+        for filename in (
+            "reference_english_thesis.docx",
+            "reference_chinese_thesis.docx",
+        ):
+            assert os.path.exists(os.path.join(TEMPLATE_DIR, filename)), filename
+
+    @pytest.mark.parametrize("language", ["english", "chinese"])
+    def test_the_thesis_profile_uses_the_thesis_template(self, pandoc_available, language):
+        """The produced document must carry the thesis template's own layout.
+
+        The thesis template centres heading 1 (GB/T 7713) while the academic
+        one leaves it left-aligned, so the justification tells the two
+        reference documents apart.
+        """
+        from docx import Document
+
+        ref = os.path.join(TEMPLATE_DIR, TEMPLATE_MAP["thesis"][language])
+        docx_io = convert_via_pandoc(
+            "# Heading 1\n\nbody\n", ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("thesis", None, None, None),
+        )
+        doc = Document(docx_io)
+        apply_style_overrides(doc, "thesis", {})
+
+        heading1 = _find_style_by_name(doc, "Heading 1")
+        assert heading1 is not None
+        assert _style_justification(heading1) == "center"
+
+    @pytest.mark.parametrize("language", ["english", "chinese"])
+    def test_the_academic_profile_uses_the_academic_template(self, pandoc_available, language):
+        from docx import Document
+
+        ref = os.path.join(TEMPLATE_DIR, TEMPLATE_MAP["academic"][language])
+        docx_io = convert_via_pandoc(
+            "# Heading 1\n\nbody\n", ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("academic", None, None, None),
+        )
+        doc = Document(docx_io)
+        apply_style_overrides(doc, "academic", {})
+
+        heading1 = _find_style_by_name(doc, "Heading 1")
+        assert heading1 is not None
+        assert _style_justification(heading1) == "left"
+
+
+class TestOfficialLineSpacing:
+    """GB/T 9704 asks for a fixed 29pt line height, not a multiple."""
+
+    def test_the_official_defaults_declare_twips_not_a_multiplier(self):
+        official = PROFILE_DEFAULTS["official"]
+        assert official["line_spacing_twips"] == 580
+        assert official["line_spacing_rule"] == "exact"
+        assert "line_spacing" not in official
+
+    def test_resolve_line_spacing_prefers_the_preset_twips(self):
+        assert _resolve_line_spacing(PROFILE_DEFAULTS["official"], None) == (580, "exact")
+        assert _resolve_line_spacing(PROFILE_DEFAULTS["academic"], None) == (360, "auto")
+        assert _resolve_line_spacing(PROFILE_DEFAULTS["business"], None) == (360, "auto")
+        assert _resolve_line_spacing(PROFILE_DEFAULTS["technical"], None) == (324, "auto")
+        assert _resolve_line_spacing(PROFILE_DEFAULTS["thesis"], None) == (360, "auto")
+
+    def test_a_user_supplied_multiplier_wins_over_the_preset(self):
+        assert _resolve_line_spacing(PROFILE_DEFAULTS["official"], 2.0) == (480, "auto")
+        assert _resolve_line_spacing(PROFILE_DEFAULTS["academic"], 2.0) == (480, "auto")
+
+    def test_a_profile_without_line_spacing_resolves_to_none(self):
+        assert _resolve_line_spacing(PROFILE_DEFAULTS["template"], None) is None
+
+    def test_the_official_pandoc_metadata_carries_no_linestretch(self):
+        """A fixed line height cannot be expressed as a multiplier."""
+        metadata = PROFILE_METADATA["official"]
+        assert "linestretch" not in metadata
+        assert metadata["mainfont"] == "Times New Roman"
+        assert metadata["CJKmainfont"] == "FangSong"
+
+    def test_the_official_profile_writes_a_fixed_line_height(self):
+        from docx import Document
+
+        doc = Document()
+        apply_style_overrides(doc, "official", {})
+
+        normal = _find_style_by_name(doc, "Normal")
+        assert _style_spacing(normal) == ("580", "exact")
+
+    def test_a_user_multiplier_replaces_the_fixed_line_height(self):
+        from docx import Document
+
+        doc = Document()
+        apply_style_overrides(doc, "official", {"line_spacing": 2.0})
+
+        normal = _find_style_by_name(doc, "Normal")
+        assert _style_spacing(normal) == ("480", "auto")
+
+    def test_the_official_line_height_survives_a_full_conversion(self, pandoc_available):
+        from docx import Document
+
+        ref = os.path.join(TEMPLATE_DIR, "reference_english_official.docx")
+        docx_io = convert_via_pandoc(
+            "# Heading\n\nbody\n", ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("official", None, None, None),
+        )
+        doc = Document(docx_io)
+        apply_style_overrides(doc, "official", {})
+
+        normal = _find_style_by_name(doc, "Normal")
+        assert _style_spacing(normal) == ("580", "exact")
+
+
+class TestProfileMargins:
+    """The Dify margins must match the VS Code extension's presets."""
+
+    def test_the_academic_margins_match_the_vs_code_side(self):
+        academic = PROFILE_DEFAULTS["academic"]
+        assert academic["margin_top_mm"] == 25.4
+        assert academic["margin_bottom_mm"] == 25.4
+        assert academic["margin_left_mm"] == 31.75
+        assert academic["margin_right_mm"] == 31.75
+
+    def test_the_academic_margins_reach_the_section(self, pandoc_available):
+        from docx import Document
+
+        ref = os.path.join(TEMPLATE_DIR, "reference_english_academic.docx")
+        docx_io = convert_via_pandoc(
+            "# Heading\n\nbody\n", ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("academic", None, None, None),
+        )
+        doc = Document(docx_io)
+        apply_style_overrides(doc, "academic", {})
+
+        section = doc.sections[0]
+        assert section.top_margin.mm == pytest.approx(25.4)
+        assert section.bottom_margin.mm == pytest.approx(25.4)
+        assert section.left_margin.mm == pytest.approx(31.75)
+        assert section.right_margin.mm == pytest.approx(31.75)
+
+    def test_a_user_margin_wins_over_the_profile_default(self, pandoc_available):
+        from docx import Document
+
+        ref = os.path.join(TEMPLATE_DIR, "reference_english_academic.docx")
+        docx_io = convert_via_pandoc(
+            "# Heading\n\nbody\n", ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("academic", None, None, None),
+        )
+        doc = Document(docx_io)
+        apply_style_overrides(doc, "academic", {"margin_left_mm": 20})
+
+        section = doc.sections[0]
+        # Word stores margins in twips, so a millimetre value comes back
+        # rounded to the nearest twip.
+        assert section.left_margin.mm == pytest.approx(20, abs=0.01)
+        assert section.right_margin.mm == pytest.approx(31.75, abs=0.01)
+
+
+class TestHeadingLevels:
+    """All three heading levels must receive the profile's fonts and sizes."""
+
+    def test_all_three_heading_levels_are_matched(self, pandoc_available):
+        from docx import Document
+
+        ref = os.path.join(TEMPLATE_DIR, "reference_english_academic.docx")
+        docx_io = convert_via_pandoc(
+            "# Heading 1\n\n## Heading 2\n\n### Heading 3\n\nbody\n",
+            ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("academic", None, None, None),
+        )
+        doc = Document(docx_io)
+        warnings = apply_style_overrides(doc, "academic", {})
+        assert warnings == []
+
+        for name, size in (("Heading 1", "32"), ("Heading 2", "28"), ("Heading 3", "24")):
+            style = _find_style_by_name(doc, name)
+            assert style is not None, name
+            ascii_font, east_asia, font_size = _style_fonts(style)
+            assert ascii_font == "Times New Roman", name
+            assert east_asia == "SimHei", name
+            assert font_size == size, name

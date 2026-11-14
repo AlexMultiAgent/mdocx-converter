@@ -34,7 +34,7 @@ python scripts/package.py --output MD2Docx.difypkg
 
 ## 功能
 
-- **6 种样式预设**，内置 8 个中英文参考模板：`technical`（技术文档）、`business`（商业报告）、`official`（GB/T 9704 公文）、`academic`（学术论文）、`thesis`（GB/T 7713 学位论文）、`template`（完全自定义）。`thesis` 与 `template` 共用 academic 模板。
+- **6 种样式预设**，内置 10 个中英文参考模板：`technical`（技术文档）、`business`（商业报告）、`official`（GB/T 9704 公文）、`academic`（学术论文）、`thesis`（GB/T 7713 学位论文）、`template`（完全自定义）。除 `template` 外每个预设都有自己的中英文模板对，`template` 复用 academic 模板。
 - **Mermaid 渲染**：通过 Mermaid Ink API 将代码块转为 PNG。可在 DOCX 内嵌，也可通过独立 `Mermaid to Image` 工具单独渲染。
 - **13 项样式覆盖**：正文/标题字体、字号、行距、四边距均可逐项覆盖。
 - **中英文字体分槽**：西文使用 Times New Roman / Arial，中文使用 SimSun / SimHei / FangSong / KaiTi / Microsoft YaHei。
@@ -46,8 +46,8 @@ python scripts/package.py --output MD2Docx.difypkg
 |------|------------------------|------|--------------------------|------|-----------|---------|
 | `technical` | Arial / Microsoft YaHei | 11 pt | Arial / Microsoft YaHei 16/14/12 pt | 1.35 | 19 | 技术博客 / API 文档 |
 | `business` | Arial / Microsoft YaHei | 11 pt | Arial / Microsoft YaHei 18/14/12 pt | 1.5 | 25.4 | 商务报告 / 内部备忘录 |
-| `official` | Times New Roman / FangSong | 16 pt | Times / SimHei、KaiTi、FangSong 16 pt | 1.75 | 37/35/28/26 | GB/T 9704 |
-| `academic` | Times New Roman / SimSun | 12 pt | Times New Roman / SimHei 16/14/12 pt | 1.5 | 25.4 | CSSCI 期刊 / 学术写作 |
+| `official` | Times New Roman / FangSong | 16 pt | Times / SimHei、KaiTi、FangSong 16 pt | 固定 29 磅 | 37/35/28/26 | GB/T 9704 |
+| `academic` | Times New Roman / SimSun | 12 pt | Times New Roman / SimHei 16/14/12 pt | 1.5 | 25.4/25.4/31.75/31.75 | CSSCI 期刊 / 学术写作 |
 | `thesis` | Times New Roman / SimSun | 12 pt | Times New Roman / SimHei 22/16/14 pt | 1.5 | 30 | GB/T 7713 |
 | `template` | 参考文件决定 | — | — | — | — | 完全自定义 |
 

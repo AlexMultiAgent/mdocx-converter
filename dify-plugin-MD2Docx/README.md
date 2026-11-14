@@ -34,7 +34,7 @@ The package depends on `pypandoc-binary`, which bundles Pandoc inside the pip wh
 
 ## Features
 
-- **6 style profiles** backed by 8 built-in reference DOCX templates (Chinese + English): `technical`, `business`, `official` (GB/T 9704), `academic`, `thesis` (GB/T 7713), and `template`. `thesis` and `template` share the academic pair.
+- **6 style profiles** backed by 10 built-in reference DOCX templates (Chinese + English): `technical`, `business`, `official` (GB/T 9704), `academic`, `thesis` (GB/T 7713), and `template`. Every profile except `template` has its own pair; `template` reuses the academic one.
 - **Mermaid rendering** via Mermaid Ink API. Inline in DOCX or standalone via the `Mermaid to Image` tool.
 - **Fine-grained overrides**: 13 advanced parameters for body/heading fonts, sizes, line spacing, and margins.
 - **Bilingual typography**: Latin and East Asian font slots are configured separately, using Times New Roman / Arial for Latin text and SimSun / SimHei / FangSong / KaiTi / Microsoft YaHei for CJK text.
@@ -46,8 +46,8 @@ The package depends on `pypandoc-binary`, which bundles Pandoc inside the pip wh
 | ----------- | ----------------------- | --------- | ----------------------------------------- | ------------ | ------------ | ----------------------- |
 | `technical` | Arial / Microsoft YaHei | 11 pt     | Arial / Microsoft YaHei 16 / 14 / 12 pt   | 1.35         | 19           | Tech blogs, API docs    |
 | `business`  | Arial / Microsoft YaHei | 11 pt     | Arial / Microsoft YaHei 18 / 14 / 12 pt   | 1.5          | 25.4         | Business reports, memos |
-| `official`  | Times New Roman / FangSong | 16 pt  | Times / SimHei, KaiTi, FangSong 16 pt     | 1.75         | 37/35/28/26  | GB/T 9704               |
-| `academic`  | Times New Roman / SimSun | 12 pt    | Times New Roman / SimHei 16 / 14 / 12 pt  | 1.5          | 25.4         | Academic writing, CSSCI |
+| `official`  | Times New Roman / FangSong | 16 pt  | Times / SimHei, KaiTi, FangSong 16 pt     | fixed 29 pt  | 37/35/28/26  | GB/T 9704               |
+| `academic`  | Times New Roman / SimSun | 12 pt    | Times New Roman / SimHei 16 / 14 / 12 pt  | 1.5          | 25.4/25.4/31.75/31.75 | Academic writing, CSSCI |
 | `thesis`    | Times New Roman / SimSun | 12 pt    | Times New Roman / SimHei 22 / 16 / 14 pt  | 1.5          | 30           | GB/T 7713               |
 | `template`  | (from reference)        | —         | —                                         | —            | —            | Fully custom            |
 
