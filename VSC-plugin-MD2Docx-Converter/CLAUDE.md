@@ -27,7 +27,20 @@ Unit tests live in `test/unit/*.test.js` and run on Node's built-in `node:test` 
 
 ## Architecture
 
-This is a **VS Code extension** that exports Markdown files to DOCX. The extension host entry point lives in `src/extension.ts` (~1200 lines); pure helper modules are being split out beside it — currently `src/document.ts` (document title and filename sanitising), `src/language.ts` (reference-language detection and normalisation), `src/profiles.ts` (style presets and the pure resolution helpers) and `src/templates.ts` (bundled reference DOCX paths). Everything compiles to `out/` via TypeScript.
+This is a **VS Code extension** that exports Markdown files to DOCX. Everything compiles to `out/` via TypeScript.
+
+### Source layout
+
+| Module | Contents |
+|---|---|
+| `src/extension.ts` | Command wiring, settings, pandoc invocation, adm-zip style overrides, progress UI |
+| `src/profiles.ts` | `PROFILE_PRESETS` — the single source of truth for every style profile; `TEMPLATE_LAYOUT` for the template generator |
+| `src/language.ts` | CJK/Latin language detection |
+| `src/templates.ts` | Bundled template map and candidate paths |
+| `src/mermaid.ts` | Mermaid block parsing, pako encoding, Mermaid Ink API client |
+| `src/document.ts` | Document title extraction, filename sanitising |
+| `src/docxStyles.ts` | DOCX style lookup by display name, OOXML child order, the style override layer |
+| `src/docxParts.ts` | ZIP part lookup that tolerates backslash-separated entry names |
 
 **Only `src/extension.ts` may import `vscode`.** Every other module must stay pure so that `node --test` can load the compiled output directly outside the Extension Host.
 
