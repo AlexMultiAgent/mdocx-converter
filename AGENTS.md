@@ -56,7 +56,7 @@ bash scripts/sync-templates.sh                # copy 10 files (skips VSC-only)
 bash scripts/sync-templates.sh --check        # CI-friendly: exits 1 on mismatch
 ```
 
-The script copies 10 files by name (`reference_{en,zh}_{academic,technical,business,official,thesis}.docx`). VSC-only files (if any) emit a `WARN` and are skipped.
+The script copies 10 files by name (`reference_{english,chinese}_{academic,technical,business,official,thesis}.docx`). VSC-only files (if any) emit a `WARN` and are skipped.
 
 ## Build & verify
 
