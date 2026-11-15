@@ -30,6 +30,7 @@ These are not in the README/manifest but are critical:
 - **Pandoc runs with `--sandbox`.** It blocks URL fetches and local-file reads from the user's Markdown, so **images must be `data:` URIs**. Mermaid output is inlined that way automatically; a user's own `![](logo.png)` no longer resolves. The VS Code extension is *not* sandboxed and still resolves local files via `--resource-path`.
 - **`title` is the file name, and it is sanitised.** `sanitize_filename()` replaces the characters that are illegal in a file name (`<>:"/|?*` plus control characters) with `_`, trims, truncates to 120 characters, and falls back to `"Document"`. Both the JSON `file` field and the blob `filename` carry the sanitised name.
 - **`mermaid_enabled` arrives as a string.** Dify form inputs are strings, so `_coerce_bool()` treats `"false"`, `"0"`, `"no"`, `"off"`, `"disabled"`, `"n"` and `""` as False. A plain truthiness check would silently keep Mermaid **on** for `mermaid_enabled: "false"`.
+- **A workflow tool node sends a boolean form parameter as the string `"False"`** (Dify stringifies the value), not `"false"`. `_coerce_bool()` lowercases before matching `_FALSY_STRINGS`, so it is handled — but that `.lower()` is load-bearing: a plain truthiness check would keep Mermaid **on** for every `mermaid_enabled: false` set in a workflow node.
 - **Mermaid is capped at 50 diagrams and 32 MB of rendered PNG data per conversion**, on top of the 75s total budget.
 - **Icon must exist at BOTH `dify-plugin-MD2Docx/icon.svg` and `dify-plugin-MD2Docx/_assets/icon.svg`.** The manifest's `icon:` points at the root copy; `_assets/` is the canonical location the marketplace check resolves. Keep the two byte-identical.
 - **`pytest.ini` lives in `dify-plugin-MD2Docx/`, not the repo root.** Run `pytest` from inside the plugin directory or pass `cd dify-plugin-MD2Docx && pytest`.
@@ -112,6 +113,7 @@ CI builds the package for both the minimum and the current `dify_plugin` SDK and
 - `github.com` is unreachable over **HTTPS** (TCP connect times out); `api.github.com` and **SSH** work. Push over `git@github.com:...` and use `gh` for everything else.
 - The upstream marketplace repo is huge — `git fetch --depth=1 --filter=blob:none` over SSH works, a full fetch does not. Creating the fork branch through the GitHub API (`git/blobs` → `git/trees` → `git/commits` → `git/refs`) avoids cloning it entirely and gives an exact one-file diff against upstream main.
 - `gh` is authenticated as `AlexMultiAgent`; the GitHub MCP server is not usable for this flow (no `repo:org` / PR-creation scopes).
+- A local Dify checkout runs at `D:\dify` (docker compose). Docker Desktop is often not running when a session starts — launch it and the stack comes up by itself; `plugin_daemon` restart-loops for ~30 s while Postgres initialises, then recovers. From Git Bash, `docker exec`/`docker cp` rewrite `/tmp/...` into Windows paths — set `MSYS_NO_PATHCONV=1`.
 
 ## When in doubt
 

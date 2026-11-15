@@ -250,3 +250,23 @@ If you ever see a `FileNotFoundError` for `pandoc`, check that the wheel install
 ```bash
 python -c "import pypandoc; print(pypandoc.get_pandoc_version())"
 ```
+
+## Verifying against a live Dify instance
+
+`pytest` covers the pipeline, but the plugin only works for real inside a running Dify. These paths need no console login.
+
+**Install / upgrade** — plugin daemon at `http://plugin_daemon:5002`, header `X-Api-Key: $PLUGIN_DAEMON_KEY` (from the Dify install's `docker/.env`):
+- `POST /plugin/{tenant_id}/management/install/upload/package` (multipart field `dify_pkg`) → returns `plugin_unique_identifier`.
+- `POST /plugin/{tenant_id}/management/install/identifiers` returns `all_installed: true` when the plugin is already installed and **changes nothing** — use `.../management/install/upgrade` (`original_plugin_unique_identifier` / `new_plugin_unique_identifier`) to move to a new version.
+- `POST /plugin/{tenant_id}/dispatch/tool/invoke` invokes a tool: `X-Plugin-ID: <author>/<name>`, `data.provider`, `data.tool`, `data.credential_type: unauthorized` (this plugin has no credentials).
+
+**Blob chunks are base64-encoded individually.** Decode each chunk on its own and concatenate the bytes in `sequence` order; joining the base64 strings and decoding once yields garbage. `total_length` on the first chunk is the expected size.
+
+**Console API** (`/console/api`, needs the workspace owner's account): the password goes over the wire base64-encoded, auth is cookie-based (not `Authorization: Bearer` — that is the service API's scheme), and every request needs the `csrf_token` cookie **plus** an `X-CSRF-Token` header; without it even GETs return 401.
+
+**Workflow tool node** — a plugin tool inside a workflow needs three things the tool schema does not describe:
+- `data.tool_node_version: "2"`. Without it the node takes the legacy path and hands the tool the raw `{value, type}` envelope — `tool parameter <name> value {...} not in options [...]`.
+- `data.tool_parameters` holds the tool's `llm` inputs (e.g. `markdown_content`); `data.tool_configurations` holds its `form` parameters (e.g. `style_profile`). The runtime merges the two, `tool_parameters` winning on name collisions.
+- an **end node** whose `outputs` point at the tool node (`value_selector: ["<node id>", "files"]`). Without it `POST /v1/workflows/run` returns `data.outputs: {}` even though the tool succeeded.
+
+A boolean `form` parameter reaches the plugin as the **string** `"False"` (Dify stringifies the value), so `_coerce_bool` must keep lowercasing before matching `_FALSY_STRINGS`.
