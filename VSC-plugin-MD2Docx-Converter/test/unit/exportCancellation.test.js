@@ -306,3 +306,41 @@ test('a real failure is not masked by a cancelled export', async (t) => {
         `the real diagnostic must reach the user: ${JSON.stringify(stub.state.messages)}`
     );
 });
+
+test('cancelling the export stops the Mermaid Ink request', async (t) => {
+    const dir = makeTempDir('mdocx-abort-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const markdownPath = path.join(dir, 'doc.md');
+    fs.writeFileSync(markdownPath, '# Title\n\n```mermaid\ngraph TD;\nA-->B;\n```\n', 'utf8');
+
+    // The service takes its time; the export must not wait for it.
+    const server = await startFakeMermaidInkServer({ delayMs: 20000 });
+    t.after(() => server.close());
+
+    const stub = createVscodeStub({
+        config: {
+            mermaidRenderer: 'api',
+            mermaidApiUrl: server.url
+        }
+    });
+    const extension = loadExtension(stub);
+    extension.activate(createExtensionContext());
+
+    const handler = stub.state.commands.get(EXPORT_COMMAND_ID);
+    const startedAt = Date.now();
+    const exportPromise = handler(stub.Uri.file(markdownPath));
+
+    setTimeout(() => stub.state.progress.tokenSource.cancel(), 300);
+    await withTimeout(exportPromise, 8000, 'cancelled export');
+    const elapsed = Date.now() - startedAt;
+
+    assert.ok(
+        elapsed < 8000,
+        `the export must not wait for the service to answer: ${elapsed}ms`
+    );
+    assert.ok(
+        stub.state.outputLines.includes('Export cancelled.'),
+        `the export must report the cancellation: ${JSON.stringify(stub.state.outputLines)}`
+    );
+});

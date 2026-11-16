@@ -60,6 +60,8 @@ export interface MermaidRenderOptions {
     maxAttempts?: number;
     retryDelaysMs?: number[];
     totalBudgetMs?: number;
+    /** Stops the request when the export is cancelled. */
+    signal?: AbortSignal;
     /** Overrides the HTTP transport. Injected by the tests. */
     fetchImage?: (url: string, timeoutMs: number) => Promise<Buffer>;
 }
@@ -175,11 +177,11 @@ export function validateMermaidApiUrl(apiUrl: string): string {
     return candidate;
 }
 
-function httpGet(url: string, timeoutMs: number): Promise<Buffer> {
+function httpGet(url: string, timeoutMs: number, signal?: AbortSignal): Promise<Buffer> {
     const transport = url.startsWith('http://') ? http : https;
 
     return new Promise<Buffer>((resolve, reject) => {
-        const request = transport.get(url, { headers: { 'User-Agent': 'mdocx-converter' } }, (response) => {
+        const request = transport.get(url, { headers: { 'User-Agent': 'mdocx-converter' }, signal }, (response) => {
             const status = response.statusCode ?? 0;
 
             if (status >= 300 && status < 400 && response.headers.location) {
@@ -225,7 +227,7 @@ export function renderMermaidViaInk(diagram: string, options: MermaidRenderOptio
 
     return options.fetchImage
         ? options.fetchImage(url, timeoutMs)
-        : httpGet(url, timeoutMs);
+        : httpGet(url, timeoutMs, options.signal);
 }
 
 /**
@@ -252,6 +254,12 @@ export async function renderMermaidWithRetry(
             }
             return image;
         } catch (error) {
+            // A cancelled request is not a failed diagram: it must not be
+            // tried again.
+            if (options.signal?.aborted) {
+                throw error;
+            }
+
             lastError = error;
             if (attempt >= maxAttempts) {
                 break;
@@ -261,11 +269,24 @@ export async function renderMermaidWithRetry(
             if (Date.now() + delay >= deadline) {
                 break;
             }
-            await new Promise((resolve) => setTimeout(resolve, delay));
+            await waitBeforeRetry(delay, options.signal);
         }
     }
 
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+/**
+ * Wait before the next attempt, but not past a cancellation.
+ */
+function waitBeforeRetry(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, ms);
+        signal?.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new Error('The Mermaid rendering was cancelled.'));
+        }, { once: true });
+    });
 }
 
 export async function mapWithConcurrency<T, R>(

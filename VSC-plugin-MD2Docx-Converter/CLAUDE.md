@@ -171,6 +171,7 @@ The Dify plugin reaches the same result through python-docx, whose `doc.styles[n
 - Cancelling takes down the whole process tree (`taskkill /T /F` on Windows). A `.cmd` runs through `cmd.exe`, so killing the direct child would leave the grandchild alive with the stdout pipe open — the export would hang instead of stopping
 - The arguments of a `.cmd` are escaped by `src/process.ts`. Node's own shell mode concatenates them without escaping, so a metacharacter in a path would run a second command
 - The Mermaid Ink API is used only after the user has been told that the diagram source leaves the machine — the notice comes before the first request, not after it
+- The request to the Mermaid Ink service is aborted when the export is cancelled, so the diagram source does not keep travelling after the user gave up
 - The document title comes from `mdocxConverter.documentTitle`, else the first ATX heading (`src/document.ts`), else the sanitised file name
 
 ### VSIX packaging

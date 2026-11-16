@@ -15,6 +15,7 @@ import {
     resolveMarginsMm
 } from './profiles';
 import type { StyleProfile } from './profiles';
+import type { MermaidBlock } from './mermaid';
 import { buildDocxStyleOverrides, upsertStyleOverride, upsertXmlAttribute, normalizeDocxStyleOrder } from './docxStyles';
 import type { DocxStyleOverride } from './docxStyles';
 import { findDocxPart } from './docxParts';
@@ -272,6 +273,23 @@ async function runExport(
                 });
 
                 reportStage(progress, outputChannel, 'Applying styles');
+
+                const docxStyleOverrides = buildDocxStyleOverrides({
+                    styleProfile: settings.styleProfile,
+                    bodyFont: settings.bodyFont,
+                    bodySizePt: settings.bodySizePt,
+                    heading1Font: settings.heading1Font,
+                    heading1SizePt: settings.heading1SizePt,
+                    heading2Font: settings.heading2Font,
+                    heading2SizePt: settings.heading2SizePt,
+                    heading3Font: settings.heading3Font,
+                    heading3SizePt: settings.heading3SizePt,
+                    lineSpacing: settings.lineSpacing
+                });
+                if (docxStyleOverrides.length > 0 || hasMarginOverrides(settings)) {
+                    await applyDocxStyleOverrides(stagingPath, settings, docxStyleOverrides);
+                    outputChannel.appendLine('Applied DOCX style overrides.');
+                }
 
                 await publishOutput(stagingPath, outputPath);
                 stagingPath = undefined;
@@ -832,7 +850,13 @@ async function prepareMarkdown(
     let usedApiFallback = false;
     let completed = 0;
 
-    const rendered = await mapWithConcurrency(blocks, 4, async (block, index) => {
+    // The request to the Mermaid Ink service is aborted when the export is
+    // cancelled — the diagram source must not keep travelling.
+    const abortController = new AbortController();
+    const cancellation = token?.onCancellationRequested(() => abortController.abort());
+
+    let rendered: { fileName: string; succeeded: boolean; }[];
+    const worker = async (block: MermaidBlock, index: number) => {
         try {
             throwIfCancellationRequested(token);
 
@@ -876,13 +900,17 @@ async function prepareMarkdown(
                 try {
                     const image = await renderMermaidWithRetry(block.code, {
                         apiUrl,
-                        totalBudgetMs: remainingMs
+                        totalBudgetMs: remainingMs,
+                        signal: abortController.signal
                     });
                     await fsp.writeFile(outputPath, image);
                     usedApiFallback = true;
                     return { fileName: apiFileName, succeeded: true };
                 } catch (error) {
                     outputChannel.appendLine(`Mermaid Ink API failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
+                    // A request that was aborted belongs to the cancellation,
+                    // not to the diagram.
+                    throwIfCancellationRequested(token);
                 }
             }
 
@@ -894,7 +922,13 @@ async function prepareMarkdown(
             completed += 1;
             onProgress?.(completed, blocks.length);
         }
-    });
+    };
+
+    try {
+        rendered = await mapWithConcurrency(blocks, 4, worker);
+    } finally {
+        cancellation?.dispose();
+    }
 
     let processedMarkdown = '';
     let lastIndex = 0;
@@ -1173,22 +1207,6 @@ async function runPandoc(options: {
             outputChannel.appendLine(result.stderr.trim());
         }
 
-        const docxStyleOverrides = buildDocxStyleOverrides({
-            styleProfile: settings.styleProfile,
-            bodyFont: settings.bodyFont,
-            bodySizePt: settings.bodySizePt,
-            heading1Font: settings.heading1Font,
-            heading1SizePt: settings.heading1SizePt,
-            heading2Font: settings.heading2Font,
-            heading2SizePt: settings.heading2SizePt,
-            heading3Font: settings.heading3Font,
-            heading3SizePt: settings.heading3SizePt,
-            lineSpacing: settings.lineSpacing
-        });
-        if (docxStyleOverrides.length > 0 || hasMarginOverrides(settings)) {
-            await applyDocxStyleOverrides(outputPath, settings, docxStyleOverrides);
-            outputChannel.appendLine('Applied DOCX style overrides.');
-        }
     } catch (error) {
         if (error instanceof ProcessCancelledError) {
             throw new ExportCancelledError();
