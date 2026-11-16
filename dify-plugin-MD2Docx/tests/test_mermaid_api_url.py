@@ -31,6 +31,8 @@ class TestBlockedTargets:
             "http://[::]/",
             "http://169.254.169.254/latest/meta-data/",
             "http://100.100.100.200/latest/meta-data/",
+            "http://192.0.0.192/latest/meta-data/",
+            "http://[::127.0.0.1]/",
             "http://metadata.google.internal/",
             "http://metadata.goog/",
         ],

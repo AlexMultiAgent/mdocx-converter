@@ -158,6 +158,27 @@ test('an argument cannot run a second command', { skip: process.platform !== 'wi
     );
 });
 
+test('a line break in an argument cannot run a second command', { skip: process.platform !== 'win32' }, async (t) => {
+    const dir = makeTempDir('mdocx-newline-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const { cmd } = writeArgumentRecorder(dir);
+    const marker = path.join(dir, 'INJECTED.txt');
+
+    for (const payload of [
+        `x\nnode -e "require('fs').writeFileSync(${JSON.stringify(marker)}, 'x')"`,
+        `x\r\nnode -e "require('fs').writeFileSync(${JSON.stringify(marker)}, 'x')"`
+    ]) {
+        await execExecutable(cmd, ['--flag', payload], { shell: true }).catch(() => undefined);
+
+        assert.equal(
+            fs.existsSync(marker),
+            false,
+            'a line break in an argument must not run a second command'
+        );
+    }
+});
+
 test('a command whose path contains spaces still works', { skip: process.platform !== 'win32' }, async (t) => {
     const dir = makeTempDir('mdocx-space-');
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

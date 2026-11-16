@@ -281,11 +281,17 @@ export async function renderMermaidWithRetry(
  */
 function waitBeforeRetry(ms: number, signal?: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
-        const timer = setTimeout(resolve, ms);
-        signal?.addEventListener('abort', () => {
+        const onAbort = () => {
             clearTimeout(timer);
             reject(new Error('The Mermaid rendering was cancelled.'));
-        }, { once: true });
+        };
+        const timer = setTimeout(() => {
+            // The listener has to go, or every retry leaves one behind on the
+            // shared signal.
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        signal?.addEventListener('abort', onAbort, { once: true });
     });
 }
 
@@ -297,6 +303,8 @@ export async function mapWithConcurrency<T, R>(
     const results = new Array<R>(items.length);
     let nextIndex = 0;
     let failed = false;
+    let firstError: unknown;
+    let hasFirstError = false;
 
     const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
         while (!failed && nextIndex < items.length) {
@@ -307,6 +315,12 @@ export async function mapWithConcurrency<T, R>(
             } catch (error) {
                 // No further items are handed out once one worker failed.
                 failed = true;
+                // The failure that happened first is the one that counts —
+                // the runners do not fail in the order they are listed in.
+                if (!hasFirstError) {
+                    hasFirstError = true;
+                    firstError = error;
+                }
                 throw error;
             }
         }
@@ -315,11 +329,9 @@ export async function mapWithConcurrency<T, R>(
     // Every runner has to settle before the rejection surfaces: a worker that
     // is still running would keep rendering in the background after the
     // caller has already given up.
-    const settled = await Promise.allSettled(runners);
-    for (const entry of settled) {
-        if (entry.status === 'rejected') {
-            throw entry.reason;
-        }
+    await Promise.allSettled(runners);
+    if (hasFirstError) {
+        throw firstError;
     }
 
     return results;

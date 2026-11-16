@@ -228,3 +228,49 @@ test('the privacy notice appears before the diagram content is sent', async (t) 
         `the notice has to come before the content leaves the machine: notice ${notice.at}, request ${requests[0]}`
     );
 });
+
+test('the privacy notice appears when the local Mermaid CLI fails', async (t) => {
+    const dir = makeTempDir('mdocx-privacy-fallback-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const markdownPath = path.join(dir, 'doc.md');
+    fs.writeFileSync(markdownPath, '# Title\n\n```mermaid\ngraph TD;\nA-->B;\n```\n', 'utf8');
+
+    // A Mermaid CLI that answers --version but fails every render, so the
+    // export falls back to the Mermaid Ink API.
+    const fakeCli = path.join(dir, 'fake-mmdc.cmd');
+    fs.writeFileSync(
+        fakeCli,
+        '@echo off\r\n'
+        + 'if "%1"=="--version" (echo fake-mmdc 1.0 & exit /b 0)\r\n'
+        + 'exit /b 1\r\n',
+        'utf8'
+    );
+
+    const requests = [];
+    const server = await startFakeMermaidInkServer({
+        onRequest: () => requests.push(Date.now())
+    });
+    t.after(() => server.close());
+
+    const stub = createVscodeStub({
+        config: {
+            mermaidRenderer: 'auto',
+            mermaidCliPath: fakeCli,
+            mermaidApiUrl: server.url
+        }
+    });
+    const extension = loadExtension(stub);
+    extension.activate(createExtensionContext());
+
+    const handler = stub.state.commands.get(EXPORT_COMMAND_ID);
+    await withTimeout(handler(stub.Uri.file(markdownPath)), 30000, 'export');
+
+    const notice = stub.state.messages.find((entry) => /Mermaid Ink API/.test(entry.message));
+    assert.ok(notice, `the privacy notice must be shown: ${JSON.stringify(stub.state.messages)}`);
+    assert.ok(requests.length > 0, 'the diagram has to reach the service');
+    assert.ok(
+        notice.at <= requests[0],
+        `the notice has to come before the content leaves the machine: notice ${notice.at}, request ${requests[0]}`
+    );
+});

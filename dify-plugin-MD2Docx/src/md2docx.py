@@ -608,7 +608,12 @@ def _ensure_pandoc() -> None:
 # Ceiling on the time pandoc may take for one conversion. pypandoc has no
 # timeout of its own, so without this a document that keeps pandoc busy
 # would hold the plugin worker until the daemon gives up on it.
-PANDOC_TIMEOUT_SECONDS = 120
+#
+# The worst case the guards allow — 5 MB of Markdown plus 32 MB of rendered
+# PNG, inlined as data URIs — takes pandoc about 80 seconds on a fast
+# machine. The ceiling leaves room for a slower one and still sits well
+# below the daemon's own limit of 600 seconds.
+PANDOC_TIMEOUT_SECONDS = 300
 
 
 class PandocTimeoutError(RuntimeError):

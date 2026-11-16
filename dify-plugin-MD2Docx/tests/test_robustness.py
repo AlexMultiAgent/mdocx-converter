@@ -57,6 +57,43 @@ class TestTemporaryDirectoryCleanup:
 
 
 class TestPandocTimeout:
+    def test_pandoc_gets_the_arguments_the_plugin_needs(self, monkeypatch):
+        """The sandbox and the reference template have to reach the binary."""
+        import shutil
+
+        import md2docx
+
+        reference = os.path.join(TEMPLATE_DIR, "reference_english_academic.docx")
+        seen = {}
+
+        class Result:
+            returncode = 0
+            stderr = b""
+
+        def fake_run(args, **kwargs):
+            seen["args"] = list(args)
+            seen["kwargs"] = kwargs
+            output = next(a for a in args if a.startswith("--output=")).split("=", 1)[1]
+            shutil.copyfile(reference, output)
+            return Result()
+
+        monkeypatch.setattr("md2docx.subprocess.run", fake_run)
+
+        md2docx.convert_via_pandoc(
+            "# Doc", reference, os.path.dirname(reference), "",
+            {"title": "A Title"},
+        )
+
+        args = seen["args"]
+        assert "--sandbox" in args, f"the sandbox has to reach pandoc: {args}"
+        assert "--reference-doc" in args, f"the reference has to reach pandoc: {args}"
+        assert reference in args, f"the reference path has to reach pandoc: {args}"
+        assert any(a.startswith("--output=") for a in args), f"the output has to reach pandoc: {args}"
+        assert "--metadata" in args, f"the metadata has to reach pandoc: {args}"
+        assert "title=A Title" in args, f"the metadata value has to reach pandoc: {args}"
+        assert seen["kwargs"]["timeout"] == md2docx.PANDOC_TIMEOUT_SECONDS
+        assert seen["kwargs"]["input"] == "# Doc".encode("utf-8")
+
     def test_a_hanging_pandoc_is_stopped(self, monkeypatch):
         """Pandoc must not hold the plugin worker for the whole daemon timeout."""
         from md2docx import convert_via_pandoc

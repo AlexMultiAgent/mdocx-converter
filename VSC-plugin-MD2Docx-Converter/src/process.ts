@@ -57,11 +57,17 @@ export function shouldRunThroughShell(command: string): boolean {
     return process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
 }
 
-/** The characters `cmd.exe` reads as syntax rather than as text. */
-const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
+/**
+ * The characters `cmd.exe` reads as syntax rather than as text.
+ *
+ * The whitespace controls belong here as well: a line break or a tab ends
+ * the argument for the command processor, so the argument would arrive in
+ * pieces.
+ */
+const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?\t\r\n])/g;
 
 /** The same list, without the global flag — `test` must not be stateful. */
-const CMD_META_CHAR = /[()\][%!^"`<>&|;, *?]/;
+const CMD_META_CHAR = /[()\][%!^"`<>&|;, *?\t\r\n]/;
 
 /**
  * Escape one argument for `cmd.exe`.

@@ -629,9 +629,21 @@ async function resolveReferenceDocx(
  * The flag lives in `globalState` so it survives a reload.
  *
  * The notice comes before the first request: the content has to be on its way
- * only after the user has been told where it goes.
+ * only after the user has been told where it goes. The promise is kept, so
+ * that diagrams rendered in parallel show the notice once and not once per
+ * diagram.
  */
-async function notifyMermaidApiFallback(host: string): Promise<void> {
+let mermaidApiNotice: Promise<void> | undefined;
+
+function notifyMermaidApiFallback(host: string): Promise<void> {
+    if (!mermaidApiNotice) {
+        mermaidApiNotice = showMermaidApiNotice(host);
+    }
+
+    return mermaidApiNotice;
+}
+
+async function showMermaidApiNotice(host: string): Promise<void> {
     const state = extensionContext?.globalState;
     if (!state || state.get<boolean>(MERMAID_API_NOTICE_SHOWN_KEY)) {
         return;
@@ -784,7 +796,6 @@ async function renderDiagramToFile(
     const image = await renderMermaidWithRetry(code, { apiUrl });
     await fsp.writeFile(outputPath, image);
     outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${apiUrl}`);
-    await notifyMermaidApiFallback(apiUrl);
 }
 
 async function prepareMarkdown(
@@ -842,11 +853,7 @@ async function prepareMarkdown(
         : validateMermaidApiUrl(settings.mermaidApiUrl);
 
     // Without the local CLI the diagram source goes to the Mermaid Ink API.
-    // The user has to be told before it leaves the machine, not after.
-    if (!localMermaid && apiUrl) {
-        await notifyMermaidApiFallback(apiUrl);
-    }
-
+    // The user is told about it right before the first request.
     let usedApiFallback = false;
     let completed = 0;
 
@@ -898,6 +905,10 @@ async function prepareMarkdown(
                 const apiFileName = `diagram-${index + 1}.png`;
                 const outputPath = path.join(assetsDir, apiFileName);
                 try {
+                    // The diagram source is about to leave the machine — say
+                    // so first. The local CLI can still fail for a single
+                    // diagram, and then the API takes over.
+                    await notifyMermaidApiFallback(apiUrl);
                     const image = await renderMermaidWithRetry(block.code, {
                         apiUrl,
                         totalBudgetMs: remainingMs,

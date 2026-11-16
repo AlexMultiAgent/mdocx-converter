@@ -226,3 +226,24 @@ test('every mapped bundled template file exists', () => {
         }
     }
 });
+
+test('resolveFontPair ignores a font name with a control character', () => {
+    // A control character would make the XML writer refuse the whole
+    // document, so the preset takes over.
+    assert.deepEqual(
+        resolveFontPair('Arial\u0000', { ascii: 'Times New Roman', eastAsia: 'SimSun' }),
+        { ascii: 'Times New Roman', eastAsia: 'SimSun' }
+    );
+});
+
+test('the pandoc metadata ignores a font name with a control character', () => {
+    const metadata = buildPandocMetadata({
+        profile: 'academic',
+        bodyFont: 'Arial\u0000',
+        bodySizePt: undefined,
+        lineSpacing: undefined
+    });
+
+    assert.equal(metadata.mainfont, 'Times New Roman');
+    assert.equal(metadata.CJKmainfont, 'SimSun');
+});

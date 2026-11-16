@@ -50,10 +50,12 @@ _BLOCKED_HOSTNAMES = frozenset({
     "metadata.goog",
 })
 
-# The metadata endpoints of the common cloud providers. The Alibaba Cloud one
-# lives outside the link-local range, so it needs its own entry.
+# The metadata endpoints of the common cloud providers. The Alibaba Cloud and
+# the Oracle Cloud ones live outside the link-local range, so they need their
+# own entries.
 _BLOCKED_ADDRESSES = frozenset({
     ipaddress.ip_address("100.100.100.200"),   # Alibaba Cloud
+    ipaddress.ip_address("192.0.0.192"),       # Oracle Cloud
     ipaddress.ip_address("169.254.169.254"),   # AWS / Azure / Google Cloud
     ipaddress.ip_address("fd00:ec2::254"),     # AWS, IPv6
 })
@@ -71,6 +73,13 @@ def _blocked_reason(address) -> str | None:
         mapped = address.ipv4_mapped
         if mapped is not None:
             address = mapped
+        elif address != ipaddress.ip_address("::1") and address in ipaddress.ip_network("::/96"):
+            # The IPv4-compatible form (::127.0.0.1) is not reported as a
+            # mapped address, but it reaches the same host. ::1 is the IPv6
+            # loopback and stays as it is.
+            embedded = ipaddress.ip_address(int(address) & 0xFFFFFFFF)
+            if embedded.version == 4:
+                address = embedded
     if address.is_link_local:
         return "a link-local address"
     if address.is_loopback:
