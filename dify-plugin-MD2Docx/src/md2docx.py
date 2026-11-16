@@ -12,6 +12,8 @@ import io
 import base64
 import time
 import shutil
+import subprocess
+import sys
 import tempfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -114,6 +116,11 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "margin_bottom_mm": 25.4,
         "margin_left_mm": 31.75,
         "margin_right_mm": 31.75,
+        "code_style": {
+            "font": "Consolas",
+            "size_pt": 10,
+            "line_spacing": 1.15,
+        },
     },
     "business": {
         "body_font": "Arial",
@@ -133,6 +140,11 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "margin_bottom_mm": 25.4,
         "margin_left_mm": 25.4,
         "margin_right_mm": 25.4,
+        "code_style": {
+            "font": "Consolas",
+            "size_pt": 10,
+            "line_spacing": 1.15,
+        },
     },
     "technical": {
         "body_font": "Arial",
@@ -152,6 +164,12 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "margin_bottom_mm": 19,
         "margin_left_mm": 19,
         "margin_right_mm": 19,
+        "code_style": {
+            "font": "Consolas",
+            "size_pt": 10,
+            "line_spacing": 1.05,
+            "shading_fill": "F3F4F6",
+        },
     },
     "official": {
         "body_font": "Times New Roman",
@@ -175,6 +193,11 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "margin_bottom_mm": 35,
         "margin_left_mm": 28,
         "margin_right_mm": 26,
+        "code_style": {
+            "font": "Consolas",
+            "size_pt": 10,
+            "line_spacing": 1.15,
+        },
     },
     "thesis": {
         "body_font": "Times New Roman",
@@ -194,6 +217,12 @@ PROFILE_DEFAULTS: dict[str, dict[str, Any]] = {
         "margin_bottom_mm": 30,
         "margin_left_mm": 30,
         "margin_right_mm": 30,
+        "code_style": {
+            "font": "Consolas",
+            "size_pt": 10,
+            "line_spacing": 1.15,
+            "shading_fill": "F3F4F6",
+        },
     },
     "template": {},
 }
@@ -460,27 +489,9 @@ def _render_one_with_retry(index: int, diagram: str, temp_dir: str,
     return index, png_path, None
 
 
-def preprocess_mermaid(markdown_text: str, enabled: bool = True,
-                       api_url: str | None = None) -> tuple[str, int, str, list[str]]:
-    """Extract ```mermaid blocks, render to PNGs via API, replace with image refs.
-
-    Returns (processed_markdown, mermaid_count, temp_dir, errors).
-    Caller must clean up temp_dir via shutil.rmtree after pandoc conversion.
-
-    Diagrams are rendered in parallel (MERMAID_MAX_WORKERS at a time) and the
-    whole step is bounded by MERMAID_TOTAL_BUDGET_SECONDS: once the budget is
-    exhausted no further attempt is started and the pending diagrams are
-    reported as failed. A diagram that cannot be rendered is kept as its
-    original code block so the conversion still succeeds.
-    """
-    if not enabled:
-        return markdown_text, 0, "", []
-
-    matches = list(MERMAID_BLOCK_RE.finditer(markdown_text))
-    if not matches:
-        return markdown_text, 0, "", []
-
-    temp_dir = tempfile.mkdtemp(prefix="mermaid-")
+def _render_mermaid_blocks(markdown_text: str, matches, temp_dir: str,
+                           api_url: str | None) -> tuple[str, int, list[str]]:
+    """Render the mermaid blocks into `temp_dir` and rewrite the markdown."""
     errors: list[str] = []
     deadline = time.monotonic() + MERMAID_TOTAL_BUDGET_SECONDS
 
@@ -551,7 +562,40 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True,
         else:
             parts.append(markdown_text[start:end])
 
-    return "".join(parts), count, temp_dir, errors
+    return "".join(parts), count, errors
+
+
+def preprocess_mermaid(markdown_text: str, enabled: bool = True,
+                       api_url: str | None = None) -> tuple[str, int, str, list[str]]:
+    """Extract ```mermaid blocks, render to PNGs via API, replace with image refs.
+
+    Returns (processed_markdown, mermaid_count, temp_dir, errors).
+    Caller must clean up temp_dir via shutil.rmtree after pandoc conversion.
+
+    Diagrams are rendered in parallel (MERMAID_MAX_WORKERS at a time) and the
+    whole step is bounded by MERMAID_TOTAL_BUDGET_SECONDS: once the budget is
+    exhausted no further attempt is started and the pending diagrams are
+    reported as failed. A diagram that cannot be rendered is kept as its
+    original code block so the conversion still succeeds.
+    """
+    if not enabled:
+        return markdown_text, 0, "", []
+
+    matches = list(MERMAID_BLOCK_RE.finditer(markdown_text))
+    if not matches:
+        return markdown_text, 0, "", []
+
+    temp_dir = tempfile.mkdtemp(prefix="mermaid-")
+    try:
+        processed, count, errors = _render_mermaid_blocks(
+            markdown_text, matches, temp_dir, api_url
+        )
+    except Exception:
+        # The caller only cleans up a directory it was told about, so a
+        # failure here has to remove it.
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+    return processed, count, temp_dir, errors
 
 
 # ── Pandoc conversion ────────────────────────────────────────
@@ -559,6 +603,66 @@ def preprocess_mermaid(markdown_text: str, enabled: bool = True,
 def _ensure_pandoc() -> None:
     """Check for pandoc. With pypandoc-binary the binary is pre-installed."""
     pypandoc.get_pandoc_version()
+
+
+# Ceiling on the time pandoc may take for one conversion. pypandoc has no
+# timeout of its own, so without this a document that keeps pandoc busy
+# would hold the plugin worker until the daemon gives up on it.
+PANDOC_TIMEOUT_SECONDS = 120
+
+
+class PandocTimeoutError(RuntimeError):
+    """Pandoc took longer than the plugin allows."""
+
+
+def _run_pandoc(markdown_text: str, extra_args: list[str], out_path: str) -> None:
+    """Run pandoc with a ceiling on the time it may take.
+
+    pypandoc cannot be given a timeout, so pandoc is started directly here.
+    Its stderr is routed to the `pypandoc` logger exactly as pypandoc does
+    it, so the collected pandoc warnings keep working.
+    """
+    pandoc_path = pypandoc.get_pandoc_path()
+    args = [
+        pandoc_path,
+        "--from=gfm+raw_html",
+        "--to=docx",
+        f"--output={out_path}",
+        *extra_args,
+    ]
+
+    creation_flag = 0x08000000 if sys.platform == "win32" else 0
+    try:
+        completed = subprocess.run(
+            args,
+            input=markdown_text.encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=creation_flag,
+            timeout=PANDOC_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise PandocTimeoutError(
+            f"Pandoc did not finish within {PANDOC_TIMEOUT_SECONDS} seconds."
+        ) from e
+
+    stderr = completed.stderr.decode("utf-8", errors="replace")
+    if completed.returncode != 0:
+        raise RuntimeError(
+            f'Pandoc died with exitcode "{completed.returncode}" during '
+            f"conversion: {stderr}"
+        )
+    if stderr:
+        for level, message in _classify_pandoc_logging(stderr):
+            pypandoc.logger.log(level, message)
+
+
+def _classify_pandoc_logging(stderr: str) -> list[tuple[int, str]]:
+    """Split pandoc's stderr into the levels it should be logged at."""
+    classify = getattr(pypandoc, "_classify_pandoc_logging", None)
+    if classify is not None:
+        return classify(stderr)
+    return [(logging.WARNING, stderr)]
 
 
 # Note: pandoc warmup is intentionally skipped at import time.
@@ -577,8 +681,8 @@ def build_pandoc_metadata(
     """Build the pandoc --metadata dict, layering profile defaults + user overrides."""
     metadata = dict(PROFILE_METADATA.get(style_profile, {}))
 
-    if body_font and body_font.strip():
-        font = body_font.strip()
+    font = _clean_font(body_font)
+    if font:
         # The caller only passes a user-supplied font here, and an explicit
         # font name fills both slots.
         metadata["mainfont"] = font
@@ -609,7 +713,10 @@ def _map_pandoc_error(message: str) -> str:
         return "Pandoc encountered syntax it could not handle. Check for unsupported Markdown constructs or malformed Mermaid blocks."
     if any(kw in msg_lower for kw in ("not a valid docx", "reference docx", "could not read")):
         return "Pandoc could not read the reference template. The uploaded .docx may be corrupted or not in the expected format."
-    return f"Pandoc conversion failed: {message}"
+    # The raw message carries the paths of the server and pandoc's own call
+    # stack; it stays in the log, where the operator can read it.
+    logger.warning("Pandoc conversion failed: %s", message)
+    return "Pandoc conversion failed. Check the plugin log for the details."
 
 
 class _PandocWarningCollector(logging.Handler):
@@ -720,13 +827,10 @@ def convert_via_pandoc(
     try:
         try:
             with _collect_pandoc_warnings(warnings):
-                pypandoc.convert_text(
-                    markdown_text,
-                    "docx",
-                    format="gfm+raw_html",
-                    extra_args=extra_args,
-                    outputfile=out_path,
-                )
+                _run_pandoc(markdown_text, extra_args, out_path)
+        except PandocTimeoutError:
+            # Our own message — the caller has to hear it.
+            raise
         except Exception as e:
             raise RuntimeError(_map_pandoc_error(str(e))) from e
 
@@ -817,10 +921,19 @@ def _resolve_font_pair(
 
 
 def _clean_font(value) -> Optional[str]:
-    """Normalize a user-supplied font name: trimmed, empty means unset."""
+    """Normalize a user-supplied font name: trimmed, empty means unset.
+
+    A name that carries a control character is refused as well: it would
+    make the XML writer reject the whole document.
+    """
     if not isinstance(value, str):
         return None
-    return value.strip() or None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if any(ord(character) < 0x20 or ord(character) == 0x7F for character in cleaned):
+        return None
+    return cleaned
 
 
 def _resolve_styles(doc: Document, names: tuple[str, ...],
@@ -1078,21 +1191,27 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> li
                 f"Heading 3 style not found in reference template; heading 3 overrides were not applied."
             )
 
-    # Technical profile: code styles
-    if style_profile == "technical":
+    # Code styles: the font, the size and the colour of the code blocks, plus
+    # the shading and the line spacing where the profile declares them.
+    code_style = profile.get("code_style")
+    if code_style:
         code_styles = _resolve_styles(doc, CODE_STYLE_NAMES, CODE_STYLE_IDS)
+        code_line_spacing = int(round(code_style["line_spacing"] * 240))
         for cs in code_styles:
-            _set_font(cs, "Consolas")
-            _set_font_size(cs, 10)
+            _set_font(cs, code_style["font"])
+            _set_font_size(cs, code_style["size_pt"])
             _set_font_color(cs, "000000")
-            # Shading is a paragraph property; character styles (e.g.
-            # VerbatimChar) have no paragraph_format and would raise.
+            # Shading and line spacing are paragraph properties; character
+            # styles (e.g. VerbatimChar) have no paragraph_format and would
+            # raise.
             if isinstance(cs, ParagraphStyle):
-                _set_shading(cs.paragraph_format, "F3F4F6")
+                if code_style.get("shading_fill"):
+                    _set_shading(cs.paragraph_format, code_style["shading_fill"])
+                _set_line_spacing(cs.paragraph_format, code_line_spacing, "auto")
             _normalize_style_properties(cs)
         if not code_styles:
             warnings.append(
-                f"Technical profile: no code style ({CODE_STYLE_NAMES}) found in reference template."
+                f"{style_profile} profile: no code style ({CODE_STYLE_NAMES}) found in reference template."
             )
 
     # Page margins: user override > profile default > skip
@@ -1121,8 +1240,15 @@ def apply_style_overrides(doc: Document, style_profile: str, params: dict) -> li
 _FALSY_STRINGS = frozenset({"false", "0", "no", "off", "disabled", "n", ""})
 
 
-def _coerce_bool(value) -> bool:
-    """Coerce a value to bool, handling Dify string-form booleans."""
+def _coerce_bool(value, default: bool = False) -> bool:
+    """Coerce a value to bool, handling Dify string-form booleans.
+
+    A value that is not there at all (`None`) keeps the default: a workflow
+    that serialises the parameter to null must not silently switch the
+    feature off.
+    """
+    if value is None:
+        return default
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -1166,7 +1292,9 @@ class Md2DocxTool(Tool):
             title = sanitize_filename(parameters.get("title") or "Document")
             style_profile = normalize_profile(parameters.get("style_profile"))
             language_setting = parameters.get("reference_language", "auto")
-            mermaid_enabled = _coerce_bool(parameters.get("mermaid_enabled", True))
+            mermaid_enabled = _coerce_bool(
+                parameters.get("mermaid_enabled"), default=True
+            )
 
             # Resolve language
             stage = "language_detection"
@@ -1208,7 +1336,13 @@ class Md2DocxTool(Tool):
                         except OSError:
                             pass
                     custom_template_path = None
-                    warnings.append(f"custom_template: failed to write temp file ({e}); ignored.")
+                    # The message of the exception carries the path of the
+                    # temporary file on the server.
+                    logger.warning("custom_template: failed to write the temporary file: %s", e)
+                    warnings.append(
+                        "custom_template: the custom template could not be written "
+                        "and was ignored; the built-in template is used."
+                    )
 
             plugin_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             reference_docx = resolve_template(

@@ -724,13 +724,12 @@ class TestSandboxedPandoc:
 
         seen = {}
 
-        def fake_convert(source, to, format=None, extra_args=(), outputfile=None, **kw):
+        def fake_run(markdown_text, extra_args, out_path):
             seen["extra_args"] = list(extra_args)
-            with open(outputfile, "wb") as f:
+            with open(out_path, "wb") as f:
                 f.write(b"PK")
-            return ""
 
-        monkeypatch.setattr("md2docx.pypandoc.convert_text", fake_convert)
+        monkeypatch.setattr("md2docx._run_pandoc", fake_run)
         convert_via_pandoc(
             "# Doc", "reference.docx", "", "", {},
         )
@@ -1295,18 +1294,17 @@ class TestPandocWarningIsolation:
 
         barrier = threading.Barrier(2, timeout=15)
 
-        def fake_convert_text(source, to, format=None, extra_args=(), outputfile=None, **kw):
+        def fake_run(markdown_text, extra_args, out_path):
             # This is what pypandoc does with pandoc's stderr: forward it to
             # the "pypandoc" logger.
             logging.getLogger("pypandoc").warning(
-                f"Could not fetch resource {source}.png: replacing image with description"
+                f"Could not fetch resource {markdown_text}.png: replacing image with description"
             )
             barrier.wait()
-            with open(outputfile, "wb") as f:
+            with open(out_path, "wb") as f:
                 f.write(b"PK")
-            return ""
 
-        monkeypatch.setattr("md2docx.pypandoc.convert_text", fake_convert_text)
+        monkeypatch.setattr("md2docx._run_pandoc", fake_run)
 
         results = {}
 

@@ -63,6 +63,12 @@ MARGIN_MAP = {
     'marginLeftMm': 'margin_left_mm',
     'marginRightMm': 'margin_right_mm',
 }
+CODE_STYLE_MAP = {
+    'font': 'font',
+    'sizePt': 'size_pt',
+    'lineSpacing': 'line_spacing',
+    'shadingFill': 'shading_fill',
+}
 
 for profile in sorted(set(vsc_presets) | set(dify_presets)):
     v = vsc_presets.get(profile, {})
@@ -100,6 +106,20 @@ for profile in sorted(set(vsc_presets) | set(dify_presets)):
     elif v_mult is not None:
         if d_mult != v_mult:
             problems.append((profile, f'line_spacing: {d_mult!r} != {v_mult!r}'))
+
+    # The code style of the code blocks: the font, the size, the line spacing
+    # and the shading.
+    v_code = v.get('codeStyle')
+    d_code = d.get('code_style')
+    if (v_code is None) != (d_code is None):
+        problems.append((profile, f'code style: {d_code!r} != {v_code!r}'))
+    elif v_code is not None:
+        for vkey, dkey in CODE_STYLE_MAP.items():
+            if v_code.get(vkey) != d_code.get(dkey):
+                problems.append((
+                    profile,
+                    f'code style {dkey}: {d_code.get(dkey)!r} != {v_code.get(vkey)!r}'
+                ))
 
 # --- template map ---
 for profile in sorted(set(vsc_map) | set(dify_map)):
