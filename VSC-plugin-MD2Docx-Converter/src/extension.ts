@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import { promises as fsp } from 'fs';
 import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import AdmZip = require('adm-zip');
 import { normalizeReferenceLanguageSetting, resolveReferenceLanguage } from './language';
 import type { ReferenceLanguage, ReferenceLanguageSetting } from './language';
@@ -14,12 +15,14 @@ import {
     resolveMarginsMm
 } from './profiles';
 import type { StyleProfile } from './profiles';
+import type { MermaidBlock } from './mermaid';
 import { buildDocxStyleOverrides, upsertStyleOverride, upsertXmlAttribute, normalizeDocxStyleOrder } from './docxStyles';
 import type { DocxStyleOverride } from './docxStyles';
 import { findDocxPart } from './docxParts';
 import { getBundledReferenceDocxCandidates } from './templates';
 import { resolveDocumentTitle } from './document';
-import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, parseMermaidBlocks, renderMermaidViaInk, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
+import { execExecutable, shouldRunThroughShell, ProcessCancelledError, DEFAULT_MAX_BUFFER } from './process';
+import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, isPngImage, normalizeMermaidOutputFormat, parseMermaidBlocks, renderMermaidViaInk, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
 const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
@@ -195,7 +198,8 @@ async function runExport(
     outputChannel.appendLine(`Starting export for ${markdownUri.fsPath}`);
 
     let prepared: PreparedMarkdown | undefined;
-    let cancellationToken: vscode.CancellationToken | undefined;
+    let stagingPath: string | undefined;
+    let tempDir: string | undefined;
 
     try {
         await vscode.window.withProgress(
@@ -205,10 +209,13 @@ async function runExport(
                 cancellable: true
             },
             async (progress, token) => {
-                cancellationToken = token;
-
                 const settings = readSettings(markdownUri, exportOverrides);
                 const outputPath = await resolveOutputPath(markdownUri, settings.outputDirectory);
+                // Pandoc writes to a staging file next to the target and the
+                // finished document is moved into place at the very end. A
+                // cancelled or failed export therefore never leaves a partial
+                // document at the path the user chose.
+                stagingPath = buildStagingPath(outputPath);
                 const markdownText = await fsp.readFile(markdownUri.fsPath, 'utf8');
                 const resolvedLanguage = resolveReferenceLanguage(markdownText, settings.referenceLanguage);
                 const referenceDocx = await resolveReferenceDocx(markdownUri, settings.referenceDocx, resolvedLanguage, settings.styleProfile, extensionPath);
@@ -225,7 +232,10 @@ async function runExport(
                     (completed, total) => {
                         reportStage(progress, outputChannel, `Rendering Mermaid diagrams (${completed}/${total})`);
                     },
-                    token
+                    token,
+                    (created) => {
+                        tempDir = created;
+                    }
                 );
 
                 throwIfCancellationRequested(token);
@@ -253,7 +263,7 @@ async function runExport(
                     pandoc,
                     sourceMarkdownPath: prepared.markdownPath,
                     originalMarkdownPath: markdownUri.fsPath,
-                    outputPath,
+                    outputPath: stagingPath,
                     referenceDocx,
                     settings,
                     documentTitle,
@@ -263,6 +273,26 @@ async function runExport(
                 });
 
                 reportStage(progress, outputChannel, 'Applying styles');
+
+                const docxStyleOverrides = buildDocxStyleOverrides({
+                    styleProfile: settings.styleProfile,
+                    bodyFont: settings.bodyFont,
+                    bodySizePt: settings.bodySizePt,
+                    heading1Font: settings.heading1Font,
+                    heading1SizePt: settings.heading1SizePt,
+                    heading2Font: settings.heading2Font,
+                    heading2SizePt: settings.heading2SizePt,
+                    heading3Font: settings.heading3Font,
+                    heading3SizePt: settings.heading3SizePt,
+                    lineSpacing: settings.lineSpacing
+                });
+                if (docxStyleOverrides.length > 0 || hasMarginOverrides(settings)) {
+                    await applyDocxStyleOverrides(stagingPath, settings, docxStyleOverrides);
+                    outputChannel.appendLine('Applied DOCX style overrides.');
+                }
+
+                await publishOutput(stagingPath, outputPath);
+                stagingPath = undefined;
 
                 outputChannel.appendLine(`Export completed: ${outputPath}`);
                 void vscode.window.showInformationMessage(`DOCX exported successfully: ${path.basename(outputPath)}`);
@@ -274,7 +304,10 @@ async function runExport(
         );
     } catch (error) {
         const message = getErrorMessage(error);
-        if (error instanceof ExportCancelledError || cancellationToken?.isCancellationRequested) {
+        // Only the error says whether this was a cancellation. A real failure
+        // that happens while the token is cancelled still has to reach the
+        // user with its own diagnostic.
+        if (error instanceof ExportCancelledError) {
             outputChannel.appendLine(EXPORT_CANCELLED_MESSAGE);
             void vscode.window.showInformationMessage(EXPORT_CANCELLED_MESSAGE);
             return;
@@ -283,14 +316,62 @@ async function runExport(
         outputChannel.appendLine(`Export failed: ${message}`);
         void vscode.window.showErrorMessage(message);
     } finally {
-        if (prepared?.tempDir) {
+        if (stagingPath) {
+            await removeQuietly(stagingPath);
+        }
+
+        if (tempDir) {
             const settings = readSettings(markdownUri, exportOverrides);
             if (!settings.keepIntermediateFiles) {
-                await fsp.rm(prepared.tempDir, { recursive: true, force: true });
+                await removeQuietly(tempDir, true);
             } else {
-                outputChannel.appendLine(`Kept intermediate files in: ${prepared.tempDir}`);
+                outputChannel.appendLine(`Kept intermediate files in: ${tempDir}`);
             }
         }
+    }
+}
+
+/**
+ * The path pandoc writes to before the finished document is moved into place.
+ *
+ * The staging file lives next to the target so that moving it is a rename
+ * inside one directory — an atomic operation that never leaves a half-written
+ * document at the path the user chose.
+ */
+function buildStagingPath(outputPath: string): string {
+    const directory = path.dirname(outputPath);
+    const extension = path.extname(outputPath);
+    const stem = path.basename(outputPath, extension);
+    return path.join(directory, `.${stem}.mdocx-${randomUUID()}${extension}`);
+}
+
+/**
+ * Move the finished document to the path the user chose.
+ */
+async function publishOutput(stagingPath: string, outputPath: string): Promise<void> {
+    try {
+        await fsp.rename(stagingPath, outputPath);
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES') {
+            throw new UserFacingError('The DOCX file could not be written. Close the target DOCX in Word and try again.');
+        }
+
+        throw new UserFacingError(`The DOCX file could not be written to ${outputPath}: ${getErrorMessage(error)}`);
+    }
+}
+
+/**
+ * Delete a file or a directory without letting the failure escape.
+ *
+ * The cleanup runs after the export has already reported its outcome, so a
+ * locked file must not turn a successful export into a failed command.
+ */
+async function removeQuietly(target: string, recursive = false): Promise<void> {
+    try {
+        await fsp.rm(target, { recursive, force: true, maxRetries: 3, retryDelay: 100 });
+    } catch {
+        // The file is locked or already gone — neither is worth an error.
     }
 }
 
@@ -345,9 +426,10 @@ async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vsco
 
     // The API is only a fallback when the renderer allows it — the 'local'
     // renderer never talks to the network.
+    let apiReachable: boolean | undefined;
     if (settings.mermaidRenderer !== 'local') {
-        const reachable = await checkMermaidApiReachable(settings.mermaidApiUrl);
-        outputChannel.appendLine(reachable
+        apiReachable = await checkMermaidApiReachable(settings.mermaidApiUrl);
+        outputChannel.appendLine(apiReachable
             ? `OK Mermaid Ink API: ${settings.mermaidApiUrl}`
             : `UNREACHABLE Mermaid Ink API: ${settings.mermaidApiUrl}`);
     }
@@ -355,28 +437,56 @@ async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vsco
     outputChannel.appendLine(`Bundled templates: ${countBundledTemplates(extensionPath)}`);
     outputChannel.appendLine(`Active style profile: ${settings.styleProfile}`);
 
-    if (pandoc && (mermaid || settings.mermaidRenderer !== 'local')) {
-        void vscode.window.showInformationMessage('mdocx-converter export environment looks ready.');
-    } else if (pandoc) {
-        // Only the 'local' renderer gets here: with 'auto' or 'api' the
-        // Mermaid Ink API covers for the missing CLI.
-        void vscode.window.showWarningMessage('Pandoc is ready. The Mermaid CLI is missing and the renderer is set to "local", so Mermaid diagrams will not export until mmdc is installed.');
-    } else {
+    if (!pandoc) {
         void vscode.window.showWarningMessage('Pandoc is missing. Install Pandoc before exporting DOCX files.');
     }
+
+    // Which Mermaid path has to work depends on the renderer.
+    const mermaidUsable = settings.mermaidRenderer === 'local'
+        ? Boolean(mermaid)
+        : settings.mermaidRenderer === 'api'
+            ? apiReachable === true
+            : Boolean(mermaid) || apiReachable === true;
+
+    if (mermaidUsable) {
+        if (pandoc) {
+            void vscode.window.showInformationMessage('mdocx-converter export environment looks ready.');
+        }
+        return;
+    }
+
+    // Everything that is wrong is reported at once — the user should not have
+    // to run the check again to learn about the second problem.
+    const problems: string[] = [];
+    if (!pandoc) {
+        problems.push('Pandoc is missing. Install Pandoc before exporting DOCX files.');
+    }
+
+    if (settings.mermaidRenderer === 'local') {
+        problems.push('The Mermaid CLI is missing and the renderer is set to "local", so Mermaid diagrams will not export until mmdc is installed.');
+    } else if (settings.mermaidRenderer === 'api') {
+        problems.push(`The Mermaid Ink API is not reachable (${settings.mermaidApiUrl}), so Mermaid diagrams will not export.`);
+    } else {
+        problems.push(`Neither the Mermaid CLI nor the Mermaid Ink API (${settings.mermaidApiUrl}) is available, so Mermaid diagrams will not export.`);
+    }
+
+    void vscode.window.showWarningMessage(problems.join(' '));
 }
 
 /**
  * Probe the Mermaid Ink API with a trivial diagram.
  *
- * A broken URL, a host that does not resolve and a service that is down all
- * mean the same thing to the user: the API cannot be used right now.
+ * A broken URL, a host that does not resolve, a service that is down and a
+ * service that answers with something other than a diagram all mean the same
+ * thing to the user: the API cannot be used right now.
  */
 async function checkMermaidApiReachable(apiUrl: string): Promise<boolean> {
     try {
         const validatedUrl = validateMermaidApiUrl(apiUrl);
-        await renderMermaidViaInk('graph TD; A-->B', { apiUrl: validatedUrl, timeoutMs: 10000 });
-        return true;
+        const image = await renderMermaidViaInk('graph TD; A-->B', { apiUrl: validatedUrl, timeoutMs: 10000 });
+        // A service that answers with anything but a diagram would turn every
+        // diagram into a code block.
+        return isPngImage(image);
     } catch {
         return false;
     }
@@ -413,7 +523,7 @@ function readSettings(markdownUri: vscode.Uri, exportOverrides?: ExportOverrides
         referenceDocx: readConfigValue(config, legacyConfig, 'referenceDocx', '').trim(),
         referenceLanguage: exportOverrides?.referenceLanguage ?? normalizeReferenceLanguageSetting(readConfigValue(config, legacyConfig, 'referenceLanguage', 'auto')),
         outputDirectory: readConfigValue(config, legacyConfig, 'outputDirectory', '').trim(),
-        mermaidOutputFormat: readConfigValue<'png' | 'svg'>(config, legacyConfig, 'mermaidOutputFormat', 'png'),
+        mermaidOutputFormat: normalizeMermaidOutputFormat(readConfigValue(config, legacyConfig, 'mermaidOutputFormat', 'png')),
         mermaidRenderer: readConfigValue<MermaidRenderer>(config, legacyConfig, 'mermaidRenderer', 'auto'),
         mermaidApiUrl: readConfigValue(config, legacyConfig, 'mermaidApiUrl', 'https://mermaid.ink').trim() || 'https://mermaid.ink',
         documentTitle: readConfigValue(config, legacyConfig, 'documentTitle', '').trim(),
@@ -518,13 +628,28 @@ async function resolveReferenceDocx(
 }
 
 /**
- * Tell the user once that diagram content left the machine.
+ * Tell the user once that diagram content leaves the machine.
  *
  * The Mermaid Ink API fallback sends the diagram source to a remote service,
- * so the export asks for consent — once per installation, not once per
- * diagram. The flag lives in `globalState` so it survives a reload.
+ * so the export discloses it — once per installation, not once per diagram.
+ * The flag lives in `globalState` so it survives a reload.
+ *
+ * The notice comes before the first request: the content has to be on its way
+ * only after the user has been told where it goes. The promise is kept, so
+ * that diagrams rendered in parallel show the notice once and not once per
+ * diagram.
  */
-async function notifyMermaidApiFallback(host: string): Promise<void> {
+let mermaidApiNotice: Promise<void> | undefined;
+
+function notifyMermaidApiFallback(host: string): Promise<void> {
+    if (!mermaidApiNotice) {
+        mermaidApiNotice = showMermaidApiNotice(host);
+    }
+
+    return mermaidApiNotice;
+}
+
+async function showMermaidApiNotice(host: string): Promise<void> {
     const state = extensionContext?.globalState;
     if (!state || state.get<boolean>(MERMAID_API_NOTICE_SHOWN_KEY)) {
         return;
@@ -534,7 +659,7 @@ async function notifyMermaidApiFallback(host: string): Promise<void> {
 
     const openSettingsLabel = 'Open Settings';
     const choice = await vscode.window.showInformationMessage(
-        `Mermaid diagrams were rendered by the Mermaid Ink API. The diagram content was sent to ${host}.`,
+        `Mermaid diagrams will be rendered by the Mermaid Ink API. The diagram content is sent to ${host}.`,
         openSettingsLabel
     );
 
@@ -672,10 +797,11 @@ async function renderDiagramToFile(
 
     // A malformed API URL is a configuration error, not a diagram error.
     const apiUrl = validateMermaidApiUrl(settings.mermaidApiUrl);
+    // The diagram source is about to leave the machine — say so first.
+    await notifyMermaidApiFallback(apiUrl);
     const image = await renderMermaidWithRetry(code, { apiUrl });
     await fsp.writeFile(outputPath, image);
     outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${apiUrl}`);
-    await notifyMermaidApiFallback(apiUrl);
 }
 
 async function prepareMarkdown(
@@ -684,7 +810,8 @@ async function prepareMarkdown(
     settings: ExportSettings,
     outputChannel: vscode.OutputChannel,
     onProgress?: (completed: number, total: number) => void,
-    token?: CancellationToken
+    token?: CancellationToken,
+    onTempDirCreated?: (tempDir: string) => void
 ): Promise<PreparedMarkdown> {
     const blocks = parseMermaidBlocks(markdownText);
     if (blocks.length === 0) {
@@ -696,6 +823,10 @@ async function prepareMarkdown(
     }
 
     const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'mdocx-converter-'));
+    // The caller has to know about the directory right away: a cancelled
+    // export throws out of this function, and the directory would otherwise
+    // stay on disk with nobody left to clean it up.
+    onTempDirCreated?.(tempDir);
     const assetsDir = path.join(tempDir, 'mermaid-assets');
     await fsp.mkdir(assetsDir, { recursive: true });
 
@@ -727,10 +858,18 @@ async function prepareMarkdown(
         ? undefined
         : validateMermaidApiUrl(settings.mermaidApiUrl);
 
+    // Without the local CLI the diagram source goes to the Mermaid Ink API.
+    // The user is told about it right before the first request.
     let usedApiFallback = false;
     let completed = 0;
 
-    const rendered = await mapWithConcurrency(blocks, 4, async (block, index) => {
+    // The request to the Mermaid Ink service is aborted when the export is
+    // cancelled — the diagram source must not keep travelling.
+    const abortController = new AbortController();
+    const cancellation = token?.onCancellationRequested(() => abortController.abort());
+
+    let rendered: { fileName: string; succeeded: boolean; }[];
+    const worker = async (block: MermaidBlock, index: number) => {
         try {
             throwIfCancellationRequested(token);
 
@@ -752,8 +891,11 @@ async function prepareMarkdown(
                     return { fileName, succeeded: true };
                 } catch (error) {
                     outputChannel.appendLine(`Mermaid CLI failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
-                    // A killed CLI means the user cancelled — the diagram must
+                    // A CLI that was stopped because the user cancelled must
                     // not fall through to the API fallback.
+                    if (error instanceof ProcessCancelledError) {
+                        throw new ExportCancelledError();
+                    }
                     throwIfCancellationRequested(token);
                     if (settings.mermaidRenderer === 'local') {
                         throw error;
@@ -769,15 +911,23 @@ async function prepareMarkdown(
                 const apiFileName = `diagram-${index + 1}.png`;
                 const outputPath = path.join(assetsDir, apiFileName);
                 try {
+                    // The diagram source is about to leave the machine — say
+                    // so first. The local CLI can still fail for a single
+                    // diagram, and then the API takes over.
+                    await notifyMermaidApiFallback(apiUrl);
                     const image = await renderMermaidWithRetry(block.code, {
                         apiUrl,
-                        totalBudgetMs: remainingMs
+                        totalBudgetMs: remainingMs,
+                        signal: abortController.signal
                     });
                     await fsp.writeFile(outputPath, image);
                     usedApiFallback = true;
                     return { fileName: apiFileName, succeeded: true };
                 } catch (error) {
                     outputChannel.appendLine(`Mermaid Ink API failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
+                    // A request that was aborted belongs to the cancellation,
+                    // not to the diagram.
+                    throwIfCancellationRequested(token);
                 }
             }
 
@@ -789,7 +939,13 @@ async function prepareMarkdown(
             completed += 1;
             onProgress?.(completed, blocks.length);
         }
-    });
+    };
+
+    try {
+        rendered = await mapWithConcurrency(blocks, 4, worker);
+    } finally {
+        cancellation?.dispose();
+    }
 
     let processedMarkdown = '';
     let lastIndex = 0;
@@ -819,7 +975,6 @@ async function prepareMarkdown(
 
     if (usedApiFallback && apiUrl) {
         outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${apiUrl}`);
-        await notifyMermaidApiFallback(apiUrl);
     }
 
     return {
@@ -1069,24 +1224,8 @@ async function runPandoc(options: {
             outputChannel.appendLine(result.stderr.trim());
         }
 
-        const docxStyleOverrides = buildDocxStyleOverrides({
-            styleProfile: settings.styleProfile,
-            bodyFont: settings.bodyFont,
-            bodySizePt: settings.bodySizePt,
-            heading1Font: settings.heading1Font,
-            heading1SizePt: settings.heading1SizePt,
-            heading2Font: settings.heading2Font,
-            heading2SizePt: settings.heading2SizePt,
-            heading3Font: settings.heading3Font,
-            heading3SizePt: settings.heading3SizePt,
-            lineSpacing: settings.lineSpacing
-        });
-        if (docxStyleOverrides.length > 0 || hasMarginOverrides(settings)) {
-            await applyDocxStyleOverrides(outputPath, settings, docxStyleOverrides);
-            outputChannel.appendLine('Applied DOCX style overrides.');
-        }
     } catch (error) {
-        if (options.token?.isCancellationRequested) {
+        if (error instanceof ProcessCancelledError) {
             throw new ExportCancelledError();
         }
 
@@ -1190,96 +1329,9 @@ async function runExecutable(
         cwd: options.cwd,
         shell: options.shell,
         windowsHide: true,
-        maxBuffer: 16 * 1024 * 1024,
+        maxBuffer: DEFAULT_MAX_BUFFER,
         token: options.token
     });
-}
-
-/**
- * Run a child process and collect its output.
- *
- * `spawn` instead of `execFile`, because only `spawn` hands out the child
- * handle — that is what makes a cancelled export able to terminate the
- * process instead of waiting for it to finish.
- *
- * The rejected error carries `stdout` and `stderr`, because
- * {@link getProcessErrorMessage} pattern-matches pandoc's own diagnostics to
- * tell the user what went wrong.
- */
-async function execExecutable(
-    command: string,
-    args: string[],
-    options: {
-        cwd?: string;
-        shell?: boolean;
-        windowsHide?: boolean;
-        maxBuffer?: number;
-        token?: CancellationToken;
-    }
-): Promise<{ stdout: string; stderr: string; }> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(command, args, {
-            cwd: options.cwd,
-            shell: options.shell !== undefined ? options.shell : shouldRunThroughShell(command),
-            windowsHide: options.windowsHide ?? true
-        });
-
-        let stdout = '';
-        let stderr = '';
-        let settled = false;
-        const maxBuffer = options.maxBuffer ?? 16 * 1024 * 1024;
-
-        child.stdout?.on('data', (chunk: Buffer) => {
-            stdout += chunk.toString();
-            if (stdout.length > maxBuffer) {
-                child.kill();
-            }
-        });
-
-        child.stderr?.on('data', (chunk: Buffer) => {
-            stderr += chunk.toString();
-            if (stderr.length > maxBuffer) {
-                child.kill();
-            }
-        });
-
-        const cancellation = options.token?.onCancellationRequested(() => {
-            child.kill();
-        });
-
-        child.on('error', (error) => {
-            if (settled) {
-                return;
-            }
-
-            settled = true;
-            cancellation?.dispose();
-            reject(error);
-        });
-
-        child.on('close', (code) => {
-            if (settled) {
-                return;
-            }
-
-            settled = true;
-            cancellation?.dispose();
-
-            if (code === 0) {
-                resolve({ stdout, stderr });
-                return;
-            }
-
-            const error = new Error(`Process exited with code ${code}`) as Error & { stdout?: string; stderr?: string; };
-            error.stdout = stdout;
-            error.stderr = stderr;
-            reject(error);
-        });
-    });
-}
-
-function shouldRunThroughShell(command: string): boolean {
-    return process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
 }
 
 async function openExportedDocx(outputPath: string, outputChannel: vscode.OutputChannel): Promise<void> {

@@ -220,3 +220,34 @@ test('cancelling the export kills the pandoc process', async (t) => {
     assert.equal(isProcessAlive(pid), false, `the pandoc process ${pid} must be terminated`);
     assert.equal(fs.existsSync(path.join(dir, 'pandoc.done')), false, 'the fake pandoc must not have finished');
 });
+
+test('the styles stage is announced before the styles are applied', async (t) => {
+    const dir = makeTempDir('mdocx-stage-order-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const markdownPath = path.join(dir, 'doc.md');
+    fs.writeFileSync(markdownPath, '# Title\n\nBody text.\n', 'utf8');
+
+    const fakePandoc = writeFakePandoc(dir);
+    const stub = createVscodeStub({
+        config: {
+            pandocPath: fakePandoc,
+            styleProfile: 'academic'
+        }
+    });
+    const extension = loadExtension(stub);
+    extension.activate(createExtensionContext());
+
+    await withTimeout(runExport(stub, markdownPath), 30000, 'export');
+
+    const lines = stub.state.outputLines;
+    const announced = lines.indexOf('Applying styles');
+    const applied = lines.indexOf('Applied DOCX style overrides.');
+
+    assert.ok(announced >= 0, `the stage has to be announced: ${JSON.stringify(lines)}`);
+    assert.ok(applied >= 0, `the overrides have to be applied: ${JSON.stringify(lines)}`);
+    assert.ok(
+        announced < applied,
+        `the stage has to come before the work: ${JSON.stringify(lines)}`
+    );
+});

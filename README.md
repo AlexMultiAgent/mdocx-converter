@@ -18,7 +18,7 @@ Both expose the same `markdown → pandoc → DOCX → style overrides` pipeline
 ```
 Markdown text
   ├─ 1. Language detection (CJK vs Latin, first 20K chars)
-  ├─ 2. Template resolution (custom > built-in, profile × language → 8 ref.docx)
+  ├─ 2. Template resolution (custom > built-in, profile × language → 10 ref.docx)
   ├─ 3. Mermaid preprocessing (Mermaid Ink API → PNG, or mmdc in VS Code)
   ├─ 4. Pandoc conversion (gfm+raw_html → docx via --reference-doc)
   └─ 5. Style overrides (font, size, spacing, margins, code styles)
@@ -28,7 +28,7 @@ Markdown text
 
 ## Built-in templates
 
-The Dify plugin ships **8** reference DOCX files in `dify-plugin-MD2Docx/multi-templates/` (6 style profiles × 2 languages; `thesis` and `template` reuse the academic pair). The VS Code extension ships 6 — it has no `official` templates yet. The VS Code extension is the source of truth; new templates are added there first and mirrored to the Dify plugin in the same PR.
+Both plugins ship the same **10** reference DOCX files — academic, technical, business, official and thesis, each in an English and a Chinese variant — in their own `multi-templates/` directory. The `template` profile reuses the academic pair. The VS Code extension is the source of truth; new templates are added there first and mirrored to the Dify plugin in the same PR.
 
 ## Repository layout
 

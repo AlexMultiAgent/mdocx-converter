@@ -212,11 +212,18 @@ export function normalizeStyleProfile(value: string | undefined): StyleProfile {
 /** Explicit user font wins and fills both slots; otherwise fall back to the preset pair. */
 export function resolveFontPair(explicitFont: string | undefined, presetPair?: FontPair): FontPair | undefined {
     const explicit = explicitFont?.trim();
-    if (explicit) {
+    // A control character would make the XML writer refuse the whole
+    // document, so the preset takes over.
+    if (explicit && !hasControlCharacter(explicit)) {
         return { ascii: explicit, eastAsia: explicit };
     }
 
     return presetPair;
+}
+
+/** True when the value carries a character that has no place in XML text. */
+function hasControlCharacter(value: string): boolean {
+    return /[\u0000-\u001F\u007F]/.test(value);
 }
 
 export function resolveLineSpacingTwips(

@@ -37,7 +37,7 @@ bash scripts/sync-templates.sh              # copy the VSC templates into the Di
 bash scripts/sync-templates.sh --check      # CI gate: fail when they drift
 ```
 
-`CI` runs on every push and pull request: the Dify plugin's pytest suite (against both the minimum and the current `dify_plugin` SDK), the package build, the VS Code plugin's `node:test` suite, `scripts/sync-templates.sh --check`, and `scripts/check-preset-parity.py` (see `.github/workflows/ci.yml`).
+`CI` runs on every push and pull request: the Dify plugin's pytest suite (against the declared minimum `dify_plugin` SDK 0.9.0, 0.9.1 and the current 0.11.0), the package build, the VS Code plugin's `node:test` suite, `scripts/sync-templates.sh --check`, and `scripts/check-preset-parity.py` (see `.github/workflows/ci.yml`).
 
 The Dify `.difypkg` cannot be built with the `dify-plugin` CLI — it is not on PyPI. `scripts/package.py` builds it instead; see "Publishing to the Dify Marketplace" in `dify-plugin-MD2Docx/CLAUDE.md` for the packaging contract and for the CI gates a marketplace PR has to pass.
 

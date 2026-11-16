@@ -60,6 +60,8 @@ export interface MermaidRenderOptions {
     maxAttempts?: number;
     retryDelaysMs?: number[];
     totalBudgetMs?: number;
+    /** Stops the request when the export is cancelled. */
+    signal?: AbortSignal;
     /** Overrides the HTTP transport. Injected by the tests. */
     fetchImage?: (url: string, timeoutMs: number) => Promise<Buffer>;
 }
@@ -132,6 +134,17 @@ export function isPngImage(data: Buffer): boolean {
 }
 
 /**
+ * The image format the Mermaid CLI writes.
+ *
+ * The value comes from the settings, where nothing enforces the list, and it
+ * ends up in a file name and in a command line — so only the two known
+ * formats are accepted and everything else falls back to the default.
+ */
+export function normalizeMermaidOutputFormat(value: unknown): 'png' | 'svg' {
+    return value === 'svg' ? 'svg' : 'png';
+}
+
+/**
  * Validate the configured Mermaid Ink base URL.
  *
  * The Dify plugin additionally refuses link-local targets and hostnames that
@@ -164,11 +177,11 @@ export function validateMermaidApiUrl(apiUrl: string): string {
     return candidate;
 }
 
-function httpGet(url: string, timeoutMs: number): Promise<Buffer> {
+function httpGet(url: string, timeoutMs: number, signal?: AbortSignal): Promise<Buffer> {
     const transport = url.startsWith('http://') ? http : https;
 
     return new Promise<Buffer>((resolve, reject) => {
-        const request = transport.get(url, { headers: { 'User-Agent': 'mdocx-converter' } }, (response) => {
+        const request = transport.get(url, { headers: { 'User-Agent': 'mdocx-converter' }, signal }, (response) => {
             const status = response.statusCode ?? 0;
 
             if (status >= 300 && status < 400 && response.headers.location) {
@@ -214,7 +227,7 @@ export function renderMermaidViaInk(diagram: string, options: MermaidRenderOptio
 
     return options.fetchImage
         ? options.fetchImage(url, timeoutMs)
-        : httpGet(url, timeoutMs);
+        : httpGet(url, timeoutMs, options.signal);
 }
 
 /**
@@ -241,6 +254,12 @@ export async function renderMermaidWithRetry(
             }
             return image;
         } catch (error) {
+            // A cancelled request is not a failed diagram: it must not be
+            // tried again.
+            if (options.signal?.aborted) {
+                throw error;
+            }
+
             lastError = error;
             if (attempt >= maxAttempts) {
                 break;
@@ -250,11 +269,30 @@ export async function renderMermaidWithRetry(
             if (Date.now() + delay >= deadline) {
                 break;
             }
-            await new Promise((resolve) => setTimeout(resolve, delay));
+            await waitBeforeRetry(delay, options.signal);
         }
     }
 
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+/**
+ * Wait before the next attempt, but not past a cancellation.
+ */
+function waitBeforeRetry(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+        const onAbort = () => {
+            clearTimeout(timer);
+            reject(new Error('The Mermaid rendering was cancelled.'));
+        };
+        const timer = setTimeout(() => {
+            // The listener has to go, or every retry leaves one behind on the
+            // shared signal.
+            signal?.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
 }
 
 export async function mapWithConcurrency<T, R>(
@@ -264,15 +302,37 @@ export async function mapWithConcurrency<T, R>(
 ): Promise<R[]> {
     const results = new Array<R>(items.length);
     let nextIndex = 0;
+    let failed = false;
+    let firstError: unknown;
+    let hasFirstError = false;
 
     const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-        while (nextIndex < items.length) {
+        while (!failed && nextIndex < items.length) {
             const index = nextIndex;
             nextIndex += 1;
-            results[index] = await worker(items[index], index);
+            try {
+                results[index] = await worker(items[index], index);
+            } catch (error) {
+                // No further items are handed out once one worker failed.
+                failed = true;
+                // The failure that happened first is the one that counts —
+                // the runners do not fail in the order they are listed in.
+                if (!hasFirstError) {
+                    hasFirstError = true;
+                    firstError = error;
+                }
+                throw error;
+            }
         }
     });
 
-    await Promise.all(runners);
+    // Every runner has to settle before the rejection surfaces: a worker that
+    // is still running would keep rendering in the background after the
+    // caller has already given up.
+    await Promise.allSettled(runners);
+    if (hasFirstError) {
+        throw firstError;
+    }
+
     return results;
 }

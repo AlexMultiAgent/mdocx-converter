@@ -3,20 +3,20 @@
 [![VS Code](https://img.shields.io/badge/VS%20Code-Marketplace-007ACC?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=alexmultiagent.mdocx-converter)
 [![Dify](https://img.shields.io/badge/Dify-Plugin-1c64f2?logo=dify)](https://marketplace.dify.ai/plugin/alexmultiagent/md2docx)
 
-![MD2Docx Converter banner](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/assets/banner.png)
+![MD2Docx Converter banner](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/VSC-plugin-MD2Docx-Converter/assets/banner.png)
 
 Export Markdown files to DOCX from VS Code with:
 
 - Pandoc-based DOCX generation
 - Mermaid code fence rendering
-- Built-in English and Chinese reference DOCX files for academic, technical, and business exports
+- Built-in English and Chinese reference DOCX files for academic, technical, business, official (GB/T 9704) and thesis (GB/T 7713) exports
 - Optional custom `reference.docx` template support
 - Helpful diagnostics in the output panel
 
 ## Features
 
 - Right-click any `.md` file and export it to `.docx`
-- Choose an export submenu type: academic paper, technical document, or business report
+- Choose an export submenu type: academic paper, technical document, business report, official document, or thesis
 - Render fenced mermaid diagrams such as:
 
 ```mermaid
@@ -26,7 +26,7 @@ graph TD
     C --> D[Word Export]
 ```
 
-![Mermaid flow preview](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/assets/mermaid-example.png)
+![Mermaid flow preview](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/VSC-plugin-MD2Docx-Converter/assets/mermaid-example.png)
 
 - Use bundled English and Chinese reference DOCX files matched to document type
 - Technical and business templates are standards-derived / guidance-derived reference files, not official template attachments
@@ -61,7 +61,7 @@ Install:
 npm install -g @mermaid-js/mermaid-cli
 ```
 
-If Mermaid CLI is not found and the Markdown file contains ` ```mermaid ` code fences, the export will fail with a message asking you to install it or set `mdocxConverter.mermaidCliPath`.
+If Mermaid CLI is not found and the Markdown file contains ` ```mermaid ` code fences, the default `auto` renderer falls back to the Mermaid Ink API. **The diagram source is then sent to that service** — the extension says so once per installation before the first request. Set `mdocxConverter.mermaidRenderer` to `local` to keep every diagram on your machine, or to `api` to always use the service. A diagram that fails both ways is kept as a code block instead of failing the export.
 
 ## Settings
 

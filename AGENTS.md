@@ -48,7 +48,7 @@ These are not in the README/manifest but are critical:
 - **`.vscodeignore` whitelists `node_modules/adm-zip`** (runtime dep) and `multi-templates/*.docx` and `assets/icon.png`. Keep these in sync if you add new runtime assets.
 - **The VS Code plugin has a unit suite** (`VSC-plugin-MD2Docx-Converter/test/unit/`, Node's built-in `node:test`, no framework dependency). `npm test` compiles `src/` to `out/` and runs it; CI runs the same command. The per-profile export check (`npm run test:e2e`, `test/e2e/run.js`) drives the real `pandoc` against every bundled template and **is not wired into CI** — it needs pandoc on the runner.
 - **Pandoc and mmdc are discovered at runtime**, not bundled. The `checkEnvironment` command reports the binary versions, the active Mermaid renderer, the Mermaid Ink API reachability, the bundled template count and the active profile — the fastest way to debug "binary not found" issues.
-- **Mermaid is local-first, API as the fallback.** With `mermaidRenderer=auto` the extension renders through `mmdc`; when the CLI is missing it falls back to the Mermaid Ink API (one notice per workspace), and a diagram that fails both ways stays a code block instead of failing the export. `mermaidRenderer=local` disables the fallback, `=api` skips `mmdc` entirely.
+- **Mermaid is local-first, API as the fallback.** With `mermaidRenderer=auto` the extension renders through `mmdc`; when the CLI is missing it falls back to the Mermaid Ink API (one notice per installation, shown before the first request), and a diagram that fails both ways stays a code block instead of failing the export. `mermaidRenderer=local` disables the fallback, `=api` skips `mmdc` entirely.
 - **8 commands** are registered (see `package.json` `contributes.commands`): one generic export, 5 submenu exports (academic / technical / business / official / thesis), a Mermaid-to-image command and `checkEnvironment`. The 5 submenu commands override `styleProfile` and `referenceLanguage` regardless of user settings.
 - **`paperifyMd.*` settings are legacy aliases** for `mdocxConverter.*`; `readConfigValue()` checks both. Don't remove the legacy fallback without a deprecation cycle.
 
@@ -56,11 +56,11 @@ These are not in the README/manifest but are critical:
 
 ```bash
 # from repo root
-bash scripts/sync-templates.sh                # copy 10 files (skips VSC-only)
+bash scripts/sync-templates.sh                # copy the 10 known templates
 bash scripts/sync-templates.sh --check        # CI-friendly: exits 1 on mismatch
 ```
 
-The script copies 10 files by name (`reference_{english,chinese}_{academic,technical,business,official,thesis}.docx`). VSC-only files (if any) emit a `WARN` and are skipped.
+The script copies 10 files by name (`reference_{english,chinese}_{academic,technical,business,official,thesis}.docx`) — the list is hardcoded, so a new template has to be added there as well. A template that is missing on the VSC side but present on the Dify side emits a `WARN` and is skipped; a template that only exists on the VSC side is not noticed at all.
 
 ## Build & verify
 
@@ -106,7 +106,7 @@ python scripts/package.py --output MD2Docx.difypkg
 
 It applies `.difyignore` (keeping `.difyignore` itself in the package), sorts the entries by ASCII path, writes them with `ZIP_DEFLATED` and no directory entries, and refuses to build unless every required entry is present (`REQUIRED_ENTRIES` — manifest, `main.py`, both icons, the three tool YAMLs, the three `src/` modules). The entry **order and contents** are reproducible, but each zip entry embeds the source file's mtime, so two builds of the same tree are **not** byte-identical. Verify by unzipping the artifact and re-running the checks against the *extracted* tree (manifest fields, `_assets/<icon>`, each tool YAML's `extra.python.source`, and the SDK's `load_single_subclass_from_source`).
 
-CI builds the package for both the minimum and the current `dify_plugin` SDK and uploads it as an artifact (`.github/workflows/ci.yml`).
+CI builds the package for three `dify_plugin` SDK versions — the declared minimum 0.9.0, 0.9.1 and the current 0.11.0 — and uploads it as an artifact (`.github/workflows/ci.yml`).
 
 ### Environment notes for this machine
 

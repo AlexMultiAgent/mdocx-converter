@@ -23,7 +23,7 @@ import requests
 MERMAID_INK_URL = os.environ.get("MERMAID_INK_URL", "https://mermaid.ink")
 
 PLUGIN_USER_AGENT = (
-    "md2docx-dify-plugin/0.0.3 "
+    "md2docx-dify-plugin/0.0.4 "
     "(+https://github.com/AlexMultiAgent/mdocx-converter)"
 )
 
@@ -50,6 +50,46 @@ _BLOCKED_HOSTNAMES = frozenset({
     "metadata.goog",
 })
 
+# The metadata endpoints of the common cloud providers. The Alibaba Cloud and
+# the Oracle Cloud ones live outside the link-local range, so they need their
+# own entries.
+_BLOCKED_ADDRESSES = frozenset({
+    ipaddress.ip_address("100.100.100.200"),   # Alibaba Cloud
+    ipaddress.ip_address("192.0.0.192"),       # Oracle Cloud
+    ipaddress.ip_address("169.254.169.254"),   # AWS / Azure / Google Cloud
+    ipaddress.ip_address("fd00:ec2::254"),     # AWS, IPv6
+})
+
+
+def _blocked_reason(address) -> str | None:
+    """Why the address must never be reached through a user URL, or None.
+
+    The loopback and the unspecified address point at the host the plugin
+    runs on, and the link-local range covers the metadata endpoint of the
+    common cloud providers. A private address stays allowed: a self-hosted
+    Mermaid Ink commonly lives on an internal network.
+    """
+    if isinstance(address, ipaddress.IPv6Address):
+        mapped = address.ipv4_mapped
+        if mapped is not None:
+            address = mapped
+        elif address != ipaddress.ip_address("::1") and address in ipaddress.ip_network("::/96"):
+            # The IPv4-compatible form (::127.0.0.1) is not reported as a
+            # mapped address, but it reaches the same host. ::1 is the IPv6
+            # loopback and stays as it is.
+            embedded = ipaddress.ip_address(int(address) & 0xFFFFFFFF)
+            if embedded.version == 4:
+                address = embedded
+    if address.is_link_local:
+        return "a link-local address"
+    if address.is_loopback:
+        return "the loopback address"
+    if address.is_unspecified:
+        return "the unspecified address"
+    if address in _BLOCKED_ADDRESSES:
+        return "a cloud metadata address"
+    return None
+
 
 class MermaidRenderError(Exception):
     """Raised when a diagram could not be rendered into a usable PNG."""
@@ -70,9 +110,9 @@ def _encode_mermaid_pako(diagram: str) -> str:
 def validate_api_url(api_url: str | None) -> str | None:
     """Validate a user-supplied Mermaid Ink base URL.
 
-    Only http(s) is accepted, and link-local targets (which cover the cloud
-    metadata endpoint) are refused. Private ranges stay allowed because a
-    self-hosted instance commonly lives on an internal network.
+    Only http(s) is accepted, and the host the plugin runs on as well as the
+    cloud metadata endpoints are refused. Private ranges stay allowed because
+    a self-hosted instance commonly lives on an internal network.
 
     Returns the URL to use, or None when the default should be used.
     """
@@ -101,24 +141,49 @@ def validate_api_url(api_url: str | None) -> str | None:
         address = ipaddress.ip_address(host)
     except ValueError:
         address = None
-    if address is not None and address.is_link_local:
-        raise ValueError(
-            f"mermaid_api_url must not point at the link-local address {host}."
-        )
+    if address is not None:
+        reason = _blocked_reason(address)
+        if reason:
+            raise ValueError(
+                f"mermaid_api_url must not point at {host}: it is {reason}."
+            )
     if address is None:
         try:
             addresses = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
         except OSError:
             addresses = []
         for info in addresses:
-            resolved = ipaddress.ip_address(info[4][0])
-            if resolved.is_link_local:
+            try:
+                resolved = ipaddress.ip_address(info[4][0])
+            except ValueError:
+                continue
+            reason = _blocked_reason(resolved)
+            if reason:
                 raise ValueError(
-                    f"mermaid_api_url host '{host}' resolves to the link-local "
-                    f"address {resolved}."
+                    f"mermaid_api_url host '{host}' resolves to {reason}."
                 )
 
     return candidate
+
+
+def describe_render_failure(error: Exception) -> str:
+    """Describe a render failure without repeating what the service answered.
+
+    The response of the service can hold internal data, so only the kind of
+    failure reaches the caller — the status code and the body stay in the
+    log, where the operator can read them.
+    """
+    if isinstance(error, requests.Timeout):
+        return "the rendering service did not answer in time"
+    if isinstance(error, requests.ConnectionError):
+        return "the rendering service could not be reached"
+    if isinstance(error, requests.HTTPError):
+        return "the rendering service rejected the request"
+    if isinstance(error, requests.RequestException):
+        return "the request to the rendering service failed"
+    if isinstance(error, (MermaidRenderError, ValueError)):
+        return str(error)
+    return f"the rendering failed ({type(error).__name__})"
 
 
 def is_png(data: bytes) -> bool:
@@ -138,6 +203,9 @@ def render_mermaid_via_api(
     Raises `requests.RequestException` on HTTP / network errors.
     """
     base_url = api_url or MERMAID_INK_URL
+    if api_url:
+        # The name may have been re-pointed since the parameter was checked.
+        validate_api_url(api_url)
     encoded = _encode_mermaid_pako(diagram)
     request_timeout = timeout or MERMAID_REQUEST_TIMEOUT_SECONDS
     request_deadline = time.monotonic() + request_timeout
@@ -180,6 +248,9 @@ def _is_retryable(error: Exception) -> bool:
     if isinstance(error, requests.RequestException):
         return False
     if isinstance(error, MermaidRenderError):
+        return False
+    if isinstance(error, ValueError):
+        # A rejected URL will be rejected again.
         return False
     return True
 
