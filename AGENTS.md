@@ -106,7 +106,7 @@ python scripts/package.py --output MD2Docx.difypkg
 
 It applies `.difyignore` (keeping `.difyignore` itself in the package), sorts the entries by ASCII path, writes them with `ZIP_DEFLATED` and no directory entries, and refuses to build unless every required entry is present (`REQUIRED_ENTRIES` — manifest, `main.py`, both icons, the three tool YAMLs, the three `src/` modules). The entry **order and contents** are reproducible, but each zip entry embeds the source file's mtime, so two builds of the same tree are **not** byte-identical. Verify by unzipping the artifact and re-running the checks against the *extracted* tree (manifest fields, `_assets/<icon>`, each tool YAML's `extra.python.source`, and the SDK's `load_single_subclass_from_source`).
 
-CI builds the package for both the minimum and the current `dify_plugin` SDK and uploads it as an artifact (`.github/workflows/ci.yml`).
+CI builds the package for three `dify_plugin` SDK versions — the declared minimum 0.9.0, 0.9.1 and the current 0.11.0 — and uploads it as an artifact (`.github/workflows/ci.yml`).
 
 ### Environment notes for this machine
 
