@@ -19,6 +19,7 @@ import type { DocxStyleOverride } from './docxStyles';
 import { findDocxPart } from './docxParts';
 import { getBundledReferenceDocxCandidates } from './templates';
 import { resolveDocumentTitle } from './document';
+import { execExecutable, shouldRunThroughShell, DEFAULT_MAX_BUFFER } from './process';
 import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, parseMermaidBlocks, renderMermaidViaInk, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
@@ -1190,96 +1191,9 @@ async function runExecutable(
         cwd: options.cwd,
         shell: options.shell,
         windowsHide: true,
-        maxBuffer: 16 * 1024 * 1024,
+        maxBuffer: DEFAULT_MAX_BUFFER,
         token: options.token
     });
-}
-
-/**
- * Run a child process and collect its output.
- *
- * `spawn` instead of `execFile`, because only `spawn` hands out the child
- * handle — that is what makes a cancelled export able to terminate the
- * process instead of waiting for it to finish.
- *
- * The rejected error carries `stdout` and `stderr`, because
- * {@link getProcessErrorMessage} pattern-matches pandoc's own diagnostics to
- * tell the user what went wrong.
- */
-async function execExecutable(
-    command: string,
-    args: string[],
-    options: {
-        cwd?: string;
-        shell?: boolean;
-        windowsHide?: boolean;
-        maxBuffer?: number;
-        token?: CancellationToken;
-    }
-): Promise<{ stdout: string; stderr: string; }> {
-    return new Promise((resolve, reject) => {
-        const child = spawn(command, args, {
-            cwd: options.cwd,
-            shell: options.shell !== undefined ? options.shell : shouldRunThroughShell(command),
-            windowsHide: options.windowsHide ?? true
-        });
-
-        let stdout = '';
-        let stderr = '';
-        let settled = false;
-        const maxBuffer = options.maxBuffer ?? 16 * 1024 * 1024;
-
-        child.stdout?.on('data', (chunk: Buffer) => {
-            stdout += chunk.toString();
-            if (stdout.length > maxBuffer) {
-                child.kill();
-            }
-        });
-
-        child.stderr?.on('data', (chunk: Buffer) => {
-            stderr += chunk.toString();
-            if (stderr.length > maxBuffer) {
-                child.kill();
-            }
-        });
-
-        const cancellation = options.token?.onCancellationRequested(() => {
-            child.kill();
-        });
-
-        child.on('error', (error) => {
-            if (settled) {
-                return;
-            }
-
-            settled = true;
-            cancellation?.dispose();
-            reject(error);
-        });
-
-        child.on('close', (code) => {
-            if (settled) {
-                return;
-            }
-
-            settled = true;
-            cancellation?.dispose();
-
-            if (code === 0) {
-                resolve({ stdout, stderr });
-                return;
-            }
-
-            const error = new Error(`Process exited with code ${code}`) as Error & { stdout?: string; stderr?: string; };
-            error.stdout = stdout;
-            error.stderr = stderr;
-            reject(error);
-        });
-    });
-}
-
-function shouldRunThroughShell(command: string): boolean {
-    return process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
 }
 
 async function openExportedDocx(outputPath: string, outputChannel: vscode.OutputChannel): Promise<void> {
