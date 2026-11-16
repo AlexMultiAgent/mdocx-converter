@@ -21,7 +21,7 @@ import { findDocxPart } from './docxParts';
 import { getBundledReferenceDocxCandidates } from './templates';
 import { resolveDocumentTitle } from './document';
 import { execExecutable, shouldRunThroughShell, ProcessCancelledError, DEFAULT_MAX_BUFFER } from './process';
-import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, normalizeMermaidOutputFormat, parseMermaidBlocks, renderMermaidViaInk, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
+import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, isPngImage, normalizeMermaidOutputFormat, parseMermaidBlocks, renderMermaidViaInk, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
 const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
@@ -408,9 +408,10 @@ async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vsco
 
     // The API is only a fallback when the renderer allows it — the 'local'
     // renderer never talks to the network.
+    let apiReachable: boolean | undefined;
     if (settings.mermaidRenderer !== 'local') {
-        const reachable = await checkMermaidApiReachable(settings.mermaidApiUrl);
-        outputChannel.appendLine(reachable
+        apiReachable = await checkMermaidApiReachable(settings.mermaidApiUrl);
+        outputChannel.appendLine(apiReachable
             ? `OK Mermaid Ink API: ${settings.mermaidApiUrl}`
             : `UNREACHABLE Mermaid Ink API: ${settings.mermaidApiUrl}`);
     }
@@ -418,28 +419,50 @@ async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vsco
     outputChannel.appendLine(`Bundled templates: ${countBundledTemplates(extensionPath)}`);
     outputChannel.appendLine(`Active style profile: ${settings.styleProfile}`);
 
-    if (pandoc && (mermaid || settings.mermaidRenderer !== 'local')) {
-        void vscode.window.showInformationMessage('mdocx-converter export environment looks ready.');
-    } else if (pandoc) {
-        // Only the 'local' renderer gets here: with 'auto' or 'api' the
-        // Mermaid Ink API covers for the missing CLI.
-        void vscode.window.showWarningMessage('Pandoc is ready. The Mermaid CLI is missing and the renderer is set to "local", so Mermaid diagrams will not export until mmdc is installed.');
-    } else {
+    if (!pandoc) {
         void vscode.window.showWarningMessage('Pandoc is missing. Install Pandoc before exporting DOCX files.');
+        return;
     }
+
+    // Which Mermaid path has to work depends on the renderer.
+    const mermaidUsable = settings.mermaidRenderer === 'local'
+        ? Boolean(mermaid)
+        : settings.mermaidRenderer === 'api'
+            ? apiReachable === true
+            : Boolean(mermaid) || apiReachable === true;
+
+    if (mermaidUsable) {
+        void vscode.window.showInformationMessage('mdocx-converter export environment looks ready.');
+        return;
+    }
+
+    if (settings.mermaidRenderer === 'local') {
+        void vscode.window.showWarningMessage('Pandoc is ready. The Mermaid CLI is missing and the renderer is set to "local", so Mermaid diagrams will not export until mmdc is installed.');
+        return;
+    }
+
+    if (settings.mermaidRenderer === 'api') {
+        void vscode.window.showWarningMessage(`Pandoc is ready, but the Mermaid Ink API is not reachable (${settings.mermaidApiUrl}), so Mermaid diagrams will not export.`);
+        return;
+    }
+
+    void vscode.window.showWarningMessage(`Pandoc is ready, but neither the Mermaid CLI nor the Mermaid Ink API (${settings.mermaidApiUrl}) is available, so Mermaid diagrams will not export.`);
 }
 
 /**
  * Probe the Mermaid Ink API with a trivial diagram.
  *
- * A broken URL, a host that does not resolve and a service that is down all
- * mean the same thing to the user: the API cannot be used right now.
+ * A broken URL, a host that does not resolve, a service that is down and a
+ * service that answers with something other than a diagram all mean the same
+ * thing to the user: the API cannot be used right now.
  */
 async function checkMermaidApiReachable(apiUrl: string): Promise<boolean> {
     try {
         const validatedUrl = validateMermaidApiUrl(apiUrl);
-        await renderMermaidViaInk('graph TD; A-->B', { apiUrl: validatedUrl, timeoutMs: 10000 });
-        return true;
+        const image = await renderMermaidViaInk('graph TD; A-->B', { apiUrl: validatedUrl, timeoutMs: 10000 });
+        // A service that answers with anything but a diagram would turn every
+        // diagram into a code block.
+        return isPngImage(image);
     } catch {
         return false;
     }
@@ -581,11 +604,14 @@ async function resolveReferenceDocx(
 }
 
 /**
- * Tell the user once that diagram content left the machine.
+ * Tell the user once that diagram content leaves the machine.
  *
  * The Mermaid Ink API fallback sends the diagram source to a remote service,
- * so the export asks for consent — once per installation, not once per
- * diagram. The flag lives in `globalState` so it survives a reload.
+ * so the export discloses it — once per installation, not once per diagram.
+ * The flag lives in `globalState` so it survives a reload.
+ *
+ * The notice comes before the first request: the content has to be on its way
+ * only after the user has been told where it goes.
  */
 async function notifyMermaidApiFallback(host: string): Promise<void> {
     const state = extensionContext?.globalState;
@@ -597,7 +623,7 @@ async function notifyMermaidApiFallback(host: string): Promise<void> {
 
     const openSettingsLabel = 'Open Settings';
     const choice = await vscode.window.showInformationMessage(
-        `Mermaid diagrams were rendered by the Mermaid Ink API. The diagram content was sent to ${host}.`,
+        `Mermaid diagrams will be rendered by the Mermaid Ink API. The diagram content is sent to ${host}.`,
         openSettingsLabel
     );
 
@@ -735,6 +761,8 @@ async function renderDiagramToFile(
 
     // A malformed API URL is a configuration error, not a diagram error.
     const apiUrl = validateMermaidApiUrl(settings.mermaidApiUrl);
+    // The diagram source is about to leave the machine — say so first.
+    await notifyMermaidApiFallback(apiUrl);
     const image = await renderMermaidWithRetry(code, { apiUrl });
     await fsp.writeFile(outputPath, image);
     outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${apiUrl}`);
@@ -794,6 +822,12 @@ async function prepareMarkdown(
     const apiUrl = settings.mermaidRenderer === 'local'
         ? undefined
         : validateMermaidApiUrl(settings.mermaidApiUrl);
+
+    // Without the local CLI the diagram source goes to the Mermaid Ink API.
+    // The user has to be told before it leaves the machine, not after.
+    if (!localMermaid && apiUrl) {
+        await notifyMermaidApiFallback(apiUrl);
+    }
 
     let usedApiFallback = false;
     let completed = 0;
@@ -890,7 +924,6 @@ async function prepareMarkdown(
 
     if (usedApiFallback && apiUrl) {
         outputChannel.appendLine(`Mermaid Ink API fallback used — diagram content was sent to ${apiUrl}`);
-        await notifyMermaidApiFallback(apiUrl);
     }
 
     return {

@@ -16,6 +16,7 @@ const {
 } = require('./support/vscode-stub.js');
 
 const CHECK_ENVIRONMENT_COMMAND_ID = 'mdocxConverter.checkEnvironment';
+const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
 
 function countBundledTemplates() {
     const templateDir = path.join(EXTENSION_ROOT, 'multi-templates');
@@ -132,5 +133,98 @@ test('checkEnvironment reports the renderer mode even without an API check', asy
     assert.ok(
         !lines.some((line) => line.includes('Mermaid Ink API')),
         `the local renderer must not probe the API: ${JSON.stringify(lines)}`
+    );
+});
+
+test('checkEnvironment does not call the environment ready when the API is unreachable', async (t) => {
+    const dir = makeTempDir('mdocx-check-unreachable-verdict-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const markdownPath = path.join(dir, 'doc.md');
+    fs.writeFileSync(markdownPath, '# Title\n', 'utf8');
+
+    const stub = createVscodeStub({
+        config: {
+            // With the 'api' renderer the service is the only Mermaid path.
+            mermaidRenderer: 'api',
+            mermaidApiUrl: 'http://127.0.0.1:1'
+        }
+    });
+
+    const extension = loadExtension(stub);
+    extension.activate(createExtensionContext());
+
+    await runCheck(stub, markdownPath);
+
+    assert.ok(
+        !stub.state.messages.some((entry) => /looks ready/.test(entry.message)),
+        `the environment must not be reported as ready: ${JSON.stringify(stub.state.messages)}`
+    );
+    assert.ok(
+        stub.state.messages.some((entry) => entry.level === 'warning' && /Mermaid Ink API/.test(entry.message)),
+        `the unreachable API has to be reported: ${JSON.stringify(stub.state.messages)}`
+    );
+});
+
+test('checkEnvironment does not call the API ready when it answers without a PNG', async (t) => {
+    const dir = makeTempDir('mdocx-check-not-a-png-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const markdownPath = path.join(dir, 'doc.md');
+    fs.writeFileSync(markdownPath, '# Title\n', 'utf8');
+
+    // A service that answers 200 with something that is not a diagram.
+    const server = await startFakeMermaidInkServer({ body: '<html>not a diagram</html>' });
+    t.after(() => server.close());
+
+    const stub = createVscodeStub({
+        config: {
+            mermaidRenderer: 'api',
+            mermaidApiUrl: server.url
+        }
+    });
+
+    const extension = loadExtension(stub);
+    extension.activate(createExtensionContext());
+
+    const lines = await runCheck(stub, markdownPath);
+
+    assert.ok(
+        !lines.includes(`OK Mermaid Ink API: ${server.url}`),
+        `a service that returns no diagram must not be reported as OK: ${JSON.stringify(lines)}`
+    );
+});
+
+test('the privacy notice appears before the diagram content is sent', async (t) => {
+    const dir = makeTempDir('mdocx-privacy-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const markdownPath = path.join(dir, 'doc.md');
+    fs.writeFileSync(markdownPath, '# Title\n\n```mermaid\ngraph TD;\nA-->B;\n```\n', 'utf8');
+
+    const requests = [];
+    const server = await startFakeMermaidInkServer({
+        onRequest: () => requests.push(Date.now())
+    });
+    t.after(() => server.close());
+
+    const stub = createVscodeStub({
+        config: {
+            mermaidRenderer: 'api',
+            mermaidApiUrl: server.url
+        }
+    });
+    const extension = loadExtension(stub);
+    extension.activate(createExtensionContext());
+
+    const handler = stub.state.commands.get(EXPORT_COMMAND_ID);
+    await handler(stub.Uri.file(markdownPath));
+
+    const notice = stub.state.messages.find((entry) => /Mermaid Ink API/.test(entry.message));
+    assert.ok(notice, `the privacy notice must be shown: ${JSON.stringify(stub.state.messages)}`);
+    assert.ok(requests.length > 0, 'the diagram has to reach the service');
+    assert.ok(
+        notice.at <= requests[0],
+        `the notice has to come before the content leaves the machine: notice ${notice.at}, request ${requests[0]}`
     );
 });

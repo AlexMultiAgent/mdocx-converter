@@ -123,7 +123,7 @@ function createVscodeStub(options = {}) {
     };
 
     const record = (level) => (message) => {
-        state.messages.push({ level, message: String(message) });
+        state.messages.push({ level, message: String(message), at: Date.now() });
         return Promise.resolve(undefined);
     };
 
@@ -335,7 +335,13 @@ function writeFakePandoc(dir, templatePath = BUNDLED_TEMPLATE) {
  */
 async function startFakeMermaidInkServer(options = {}) {
     const delayMs = options.delayMs ?? 0;
+    const onRequest = options.onRequest;
+    const body = options.body;
     const server = http.createServer((request, response) => {
+        if (onRequest) {
+            onRequest(request.url || '');
+        }
+
         const requestPath = (request.url || '').split('?')[0];
         const marker = requestPath.indexOf('/img/pako:');
         let diagram = '';
@@ -352,6 +358,12 @@ async function startFakeMermaidInkServer(options = {}) {
         }
 
         const respond = () => {
+            if (body !== undefined) {
+                response.writeHead(200, { 'Content-Type': 'text/html' });
+                response.end(body);
+                return;
+            }
+
             if (diagram.includes('FAIL')) {
                 response.writeHead(500, { 'Content-Type': 'text/plain' });
                 response.end('boom');
