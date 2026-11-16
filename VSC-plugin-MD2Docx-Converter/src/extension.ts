@@ -21,7 +21,7 @@ import { findDocxPart } from './docxParts';
 import { getBundledReferenceDocxCandidates } from './templates';
 import { resolveDocumentTitle } from './document';
 import { execExecutable, shouldRunThroughShell, ProcessCancelledError, DEFAULT_MAX_BUFFER } from './process';
-import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, parseMermaidBlocks, renderMermaidViaInk, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
+import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, normalizeMermaidOutputFormat, parseMermaidBlocks, renderMermaidViaInk, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
 const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
@@ -476,7 +476,7 @@ function readSettings(markdownUri: vscode.Uri, exportOverrides?: ExportOverrides
         referenceDocx: readConfigValue(config, legacyConfig, 'referenceDocx', '').trim(),
         referenceLanguage: exportOverrides?.referenceLanguage ?? normalizeReferenceLanguageSetting(readConfigValue(config, legacyConfig, 'referenceLanguage', 'auto')),
         outputDirectory: readConfigValue(config, legacyConfig, 'outputDirectory', '').trim(),
-        mermaidOutputFormat: readConfigValue<'png' | 'svg'>(config, legacyConfig, 'mermaidOutputFormat', 'png'),
+        mermaidOutputFormat: normalizeMermaidOutputFormat(readConfigValue(config, legacyConfig, 'mermaidOutputFormat', 'png')),
         mermaidRenderer: readConfigValue<MermaidRenderer>(config, legacyConfig, 'mermaidRenderer', 'auto'),
         mermaidApiUrl: readConfigValue(config, legacyConfig, 'mermaidApiUrl', 'https://mermaid.ink').trim() || 'https://mermaid.ink',
         documentTitle: readConfigValue(config, legacyConfig, 'documentTitle', '').trim(),

@@ -57,6 +57,87 @@ export function shouldRunThroughShell(command: string): boolean {
     return process.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
 }
 
+/** The characters `cmd.exe` reads as syntax rather than as text. */
+const CMD_META_CHARS = /([()\][%!^"`<>&|;, *?])/g;
+
+/** The same list, without the global flag — `test` must not be stateful. */
+const CMD_META_CHAR = /[()\][%!^"`<>&|;, *?]/;
+
+/**
+ * Escape one argument for `cmd.exe`.
+ *
+ * An argument that the command processor reads as plain text is passed on
+ * unchanged: quoting it would change what a batch file sees in `%1`. An
+ * argument that carries a metacharacter is wrapped in double quotes, so that
+ * the spaces and the operators inside it stay text, and every metacharacter
+ * gets a caret in front of it, so that nothing escapes the quotes. The
+ * quotes inside the argument are escaped for the C runtime of the program
+ * that receives them, and the backslashes in front of them are doubled.
+ */
+function escapeCmdArgument(argument: string): string {
+    if (argument.length > 0 && !CMD_META_CHAR.test(argument)) {
+        return argument;
+    }
+
+    const escaped = argument
+        .replace(/(\\*)"/g, '$1$1\\"')
+        .replace(/(\\*)$/, '$1$1');
+
+    return `"${escaped}"`.replace(CMD_META_CHARS, '^$1');
+}
+
+/** Escape one argument for a POSIX shell. */
+function escapePosixArgument(argument: string): string {
+    return `'${argument.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Build the command line for `cmd.exe`.
+ *
+ * The `/s` switch tells the command processor to strip the outermost quotes,
+ * so the whole line is wrapped in one more pair.
+ */
+function buildCmdCommandLine(command: string, args: string[]): string {
+    const parts = [escapeCmdArgument(command), ...args.map(escapeCmdArgument)];
+    return `"${parts.join(' ')}"`;
+}
+
+/**
+ * Start the child process.
+ *
+ * Node's own shell mode concatenates the arguments without escaping them, so
+ * a metacharacter in a path would run a second command. The command line is
+ * therefore built here, with every argument escaped for the shell that runs
+ * it.
+ */
+function spawnChild(
+    command: string,
+    args: string[],
+    options: ExecOptions,
+    useShell: boolean
+): ChildProcess {
+    if (!useShell) {
+        return spawn(command, args, {
+            cwd: options.cwd,
+            windowsHide: options.windowsHide ?? true
+        });
+    }
+
+    if (process.platform === 'win32') {
+        return spawn(process.env.comspec || 'cmd.exe', ['/d', '/s', '/c', buildCmdCommandLine(command, args)], {
+            cwd: options.cwd,
+            windowsHide: options.windowsHide ?? true,
+            windowsVerbatimArguments: true
+        });
+    }
+
+    const line = [command, ...args].map(escapePosixArgument).join(' ');
+    return spawn('/bin/sh', ['-c', line], {
+        cwd: options.cwd,
+        windowsHide: options.windowsHide ?? true
+    });
+}
+
 /**
  * Terminate a child process and everything it started.
  *
@@ -98,11 +179,8 @@ export function execExecutable(
     options: ExecOptions = {}
 ): Promise<ProcessResult> {
     return new Promise((resolve, reject) => {
-        const child = spawn(command, args, {
-            cwd: options.cwd,
-            shell: options.shell !== undefined ? options.shell : shouldRunThroughShell(command),
-            windowsHide: options.windowsHide ?? true
-        });
+        const useShell = options.shell !== undefined ? options.shell : shouldRunThroughShell(command);
+        const child = spawnChild(command, args, options, useShell);
 
         const maxBuffer = options.maxBuffer ?? DEFAULT_MAX_BUFFER;
 

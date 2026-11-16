@@ -132,6 +132,17 @@ export function isPngImage(data: Buffer): boolean {
 }
 
 /**
+ * The image format the Mermaid CLI writes.
+ *
+ * The value comes from the settings, where nothing enforces the list, and it
+ * ends up in a file name and in a command line — so only the two known
+ * formats are accepted and everything else falls back to the default.
+ */
+export function normalizeMermaidOutputFormat(value: unknown): 'png' | 'svg' {
+    return value === 'svg' ? 'svg' : 'png';
+}
+
+/**
  * Validate the configured Mermaid Ink base URL.
  *
  * The Dify plugin additionally refuses link-local targets and hostnames that

@@ -2,10 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
 const path = require('path');
 
 const { execExecutable } = require('../../out/process.js');
-const { CancellationTokenSource } = require('./support/vscode-stub.js');
+const { CancellationTokenSource, makeTempDir } = require('./support/vscode-stub.js');
 
 const NODE = process.execPath;
 
@@ -81,4 +82,98 @@ test('the working directory is honoured', async () => {
     });
 
     assert.match(stdout, /VSC-plugin-MD2Docx-Converter$/);
+});
+
+/** Arguments that a command processor would treat as syntax, not as text. */
+const NASTY_ARGUMENTS = [
+    'plain.txt',
+    'a & b.txt',
+    'a | b.txt',
+    'a > b.txt',
+    'a < b.txt',
+    'a ^ b.txt',
+    'a %PATH% b',
+    'a !PATH! b',
+    'a "quoted" b',
+    'a(b).txt',
+    'a;b.txt',
+    'a,b.txt',
+    'a`b`.txt',
+    'C:\\Users\\Test & Co\\file.txt',
+    '中文 文件.txt',
+    'trailing\\',
+    ''
+];
+
+/**
+ * A `.cmd` that forwards its arguments to a node script, which records them.
+ */
+function writeArgumentRecorder(dir) {
+    const recordFile = path.join(dir, 'argv.json');
+    const helper = path.join(dir, 'record.js');
+    fs.writeFileSync(
+        helper,
+        `const fs = require('fs');\nfs.writeFileSync(${JSON.stringify(recordFile)}, JSON.stringify(process.argv.slice(2)));\n`,
+        'utf8'
+    );
+
+    const cmd = path.join(dir, 'record.cmd');
+    fs.writeFileSync(cmd, `@echo off\r\nnode "${helper}" %*\r\n`, 'utf8');
+
+    return { cmd, recordFile };
+}
+
+test('shell arguments reach the program unchanged', { skip: process.platform !== 'win32' }, async (t) => {
+    const dir = makeTempDir('mdocx-escape-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const { cmd, recordFile } = writeArgumentRecorder(dir);
+
+    for (const argument of NASTY_ARGUMENTS) {
+        await execExecutable(cmd, ['--flag', argument], { shell: true });
+
+        const received = JSON.parse(fs.readFileSync(recordFile, 'utf8'));
+        assert.deepEqual(
+            received,
+            ['--flag', argument],
+            `the argument ${JSON.stringify(argument)} must arrive unchanged`
+        );
+    }
+});
+
+test('an argument cannot run a second command', { skip: process.platform !== 'win32' }, async (t) => {
+    const dir = makeTempDir('mdocx-inject-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const { cmd } = writeArgumentRecorder(dir);
+    const marker = path.join(dir, 'INJECTED.txt');
+    const payload = `x & node -e "require('fs').writeFileSync(${JSON.stringify(marker)}, 'x')"`;
+
+    await execExecutable(cmd, ['--flag', payload], { shell: true });
+
+    assert.equal(
+        fs.existsSync(marker),
+        false,
+        'a metacharacter in an argument must not run a second command'
+    );
+});
+
+test('a batch file still sees its argument unquoted', { skip: process.platform !== 'win32' }, async (t) => {
+    const dir = makeTempDir('mdocx-percent-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    // A batch file that compares `%1` against a literal only works when the
+    // argument arrives without the quotes the escaping added.
+    const cmd = path.join(dir, 'probe.cmd');
+    fs.writeFileSync(
+        cmd,
+        '@echo off\r\n'
+        + 'if "%1"=="--version" (echo VERSION-MATCH & exit /b 0)\r\n'
+        + 'echo NO-MATCH\r\n',
+        'utf8'
+    );
+
+    const { stdout } = await execExecutable(cmd, ['--version'], { shell: true });
+
+    assert.match(stdout, /VERSION-MATCH/, `the batch file must see the plain argument: ${stdout}`);
 });

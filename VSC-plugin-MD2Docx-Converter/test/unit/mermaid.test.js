@@ -11,7 +11,8 @@ const {
     MERMAID_MAX_ATTEMPTS,
     MERMAID_RETRY_DELAYS_MS,
     findMermaidBlockAtPosition,
-    mapWithConcurrency
+    mapWithConcurrency,
+    normalizeMermaidOutputFormat
 } = require('../../out/mermaid.js');
 
 // The retry helper rejects anything that is not a PNG, so a successful render
@@ -257,4 +258,17 @@ test('the rejection waits for the running workers', async () => {
         Date.now() - startedAt >= 200,
         'the rejection must wait for the workers that are still running'
     );
+});
+
+test('normalizeMermaidOutputFormat only accepts png and svg', () => {
+    assert.equal(normalizeMermaidOutputFormat('svg'), 'svg');
+    assert.equal(normalizeMermaidOutputFormat('png'), 'png');
+    // Anything else falls back to the safe default: the value ends up in a
+    // file name and in a command line.
+    assert.equal(normalizeMermaidOutputFormat('png & calc.exe'), 'png');
+    assert.equal(normalizeMermaidOutputFormat('../../escaped'), 'png');
+    assert.equal(normalizeMermaidOutputFormat(''), 'png');
+    assert.equal(normalizeMermaidOutputFormat(undefined), 'png');
+    assert.equal(normalizeMermaidOutputFormat(42), 'png');
+    assert.equal(normalizeMermaidOutputFormat(null), 'png');
 });
