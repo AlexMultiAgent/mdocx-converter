@@ -76,12 +76,20 @@ test('cancelling the token stops the child process', async () => {
 });
 
 test('the working directory is honoured', async () => {
+    const cwd = path.join(__dirname, '..', '..');
     const { stdout } = await execExecutable(NODE, ['-e', 'process.stdout.write(process.cwd())'], {
         shell: false,
-        cwd: path.join(__dirname, '..', '..')
+        cwd
     });
 
-    assert.match(stdout, /VSC-plugin-MD2Docx-Converter$/);
+    const actual = path.resolve(stdout.trim());
+    const expected = path.resolve(cwd);
+    // Windows reports the drive letter in the case it was given.
+    const same = process.platform === 'win32'
+        ? actual.toLowerCase() === expected.toLowerCase()
+        : actual === expected;
+
+    assert.ok(same, `the child has to run in ${expected}, not in ${actual}`);
 });
 
 /** Arguments that a command processor would treat as syntax, not as text. */

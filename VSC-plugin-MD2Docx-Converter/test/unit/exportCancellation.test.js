@@ -19,6 +19,18 @@ const {
 
 const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
 
+// The extension creates its temporary directory in os.tmpdir(). The test
+// runner runs the test files in parallel, and another file creates
+// directories there as well — so this file gets a directory of its own and
+// only ever sees what it created itself.
+const TEMP_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'mdocx-test-tmp-'));
+process.env.TMPDIR = TEMP_ROOT;
+process.env.TEMP = TEMP_ROOT;
+process.env.TMP = TEMP_ROOT;
+process.on('exit', () => {
+    fs.rmSync(TEMP_ROOT, { recursive: true, force: true });
+});
+
 /** The temporary directories the extension creates for the Mermaid assets. */
 function tempDirs() {
     return fs.readdirSync(os.tmpdir()).filter((name) => name.startsWith('mdocx-converter-'));

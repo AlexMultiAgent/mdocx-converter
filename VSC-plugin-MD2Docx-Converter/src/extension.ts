@@ -439,7 +439,6 @@ async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vsco
 
     if (!pandoc) {
         void vscode.window.showWarningMessage('Pandoc is missing. Install Pandoc before exporting DOCX files.');
-        return;
     }
 
     // Which Mermaid path has to work depends on the renderer.
@@ -450,21 +449,28 @@ async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vsco
             : Boolean(mermaid) || apiReachable === true;
 
     if (mermaidUsable) {
-        void vscode.window.showInformationMessage('mdocx-converter export environment looks ready.');
+        if (pandoc) {
+            void vscode.window.showInformationMessage('mdocx-converter export environment looks ready.');
+        }
         return;
+    }
+
+    // Everything that is wrong is reported at once — the user should not have
+    // to run the check again to learn about the second problem.
+    const problems: string[] = [];
+    if (!pandoc) {
+        problems.push('Pandoc is missing. Install Pandoc before exporting DOCX files.');
     }
 
     if (settings.mermaidRenderer === 'local') {
-        void vscode.window.showWarningMessage('Pandoc is ready. The Mermaid CLI is missing and the renderer is set to "local", so Mermaid diagrams will not export until mmdc is installed.');
-        return;
+        problems.push('The Mermaid CLI is missing and the renderer is set to "local", so Mermaid diagrams will not export until mmdc is installed.');
+    } else if (settings.mermaidRenderer === 'api') {
+        problems.push(`The Mermaid Ink API is not reachable (${settings.mermaidApiUrl}), so Mermaid diagrams will not export.`);
+    } else {
+        problems.push(`Neither the Mermaid CLI nor the Mermaid Ink API (${settings.mermaidApiUrl}) is available, so Mermaid diagrams will not export.`);
     }
 
-    if (settings.mermaidRenderer === 'api') {
-        void vscode.window.showWarningMessage(`Pandoc is ready, but the Mermaid Ink API is not reachable (${settings.mermaidApiUrl}), so Mermaid diagrams will not export.`);
-        return;
-    }
-
-    void vscode.window.showWarningMessage(`Pandoc is ready, but neither the Mermaid CLI nor the Mermaid Ink API (${settings.mermaidApiUrl}) is available, so Mermaid diagrams will not export.`);
+    void vscode.window.showWarningMessage(problems.join(' '));
 }
 
 /**

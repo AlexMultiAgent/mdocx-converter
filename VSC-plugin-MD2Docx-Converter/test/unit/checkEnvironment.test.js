@@ -238,14 +238,25 @@ test('the privacy notice appears when the local Mermaid CLI fails', async (t) =>
 
     // A Mermaid CLI that answers --version but fails every render, so the
     // export falls back to the Mermaid Ink API.
-    const fakeCli = path.join(dir, 'fake-mmdc.cmd');
-    fs.writeFileSync(
-        fakeCli,
-        '@echo off\r\n'
-        + 'if "%1"=="--version" (echo fake-mmdc 1.0 & exit /b 0)\r\n'
-        + 'exit /b 1\r\n',
-        'utf8'
-    );
+    const fakeCli = path.join(dir, process.platform === 'win32' ? 'fake-mmdc.cmd' : 'fake-mmdc.sh');
+    if (process.platform === 'win32') {
+        fs.writeFileSync(
+            fakeCli,
+            '@echo off\r\n'
+            + 'if "%1"=="--version" (echo fake-mmdc 1.0 & exit /b 0)\r\n'
+            + 'exit /b 1\r\n',
+            'utf8'
+        );
+    } else {
+        fs.writeFileSync(
+            fakeCli,
+            '#!/bin/sh\n'
+            + 'if [ "$1" = "--version" ]; then echo "fake-mmdc 1.0"; exit 0; fi\n'
+            + 'exit 1\n',
+            'utf8'
+        );
+        fs.chmodSync(fakeCli, 0o755);
+    }
 
     const requests = [];
     const server = await startFakeMermaidInkServer({

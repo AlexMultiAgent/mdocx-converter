@@ -122,10 +122,15 @@ function spawnChild(
     options: ExecOptions,
     useShell: boolean
 ): ChildProcess {
+    // On POSIX the child leads its own process group, so that a cancellation
+    // can take down the whole tree and not only the direct child.
+    const detached = process.platform !== 'win32';
+
     if (!useShell) {
         return spawn(command, args, {
             cwd: options.cwd,
-            windowsHide: options.windowsHide ?? true
+            windowsHide: options.windowsHide ?? true,
+            detached
         });
     }
 
@@ -140,7 +145,8 @@ function spawnChild(
     const line = [command, ...args].map(escapePosixArgument).join(' ');
     return spawn('/bin/sh', ['-c', line], {
         cwd: options.cwd,
-        windowsHide: options.windowsHide ?? true
+        windowsHide: options.windowsHide ?? true,
+        detached
     });
 }
 
@@ -152,6 +158,9 @@ function spawnChild(
  * grandchild that survives — and keeps the inherited stdout pipe open, so
  * the 'close' event never arrives and the export hangs. `taskkill /T` takes
  * the whole tree down.
+ *
+ * On POSIX the child leads its own process group, so the whole group is
+ * signalled at once.
  */
 export function killProcessTree(child: ChildProcess): void {
     if (process.platform === 'win32' && child.pid !== undefined) {
@@ -170,7 +179,35 @@ export function killProcessTree(child: ChildProcess): void {
         return;
     }
 
+    if (child.pid !== undefined) {
+        try {
+            process.kill(-child.pid, 'SIGTERM');
+            escalateToKill(child);
+            return;
+        } catch {
+            // The group is gone, or the child does not lead one.
+        }
+    }
+
     child.kill();
+}
+
+/**
+ * Make sure a process that ignores SIGTERM still goes away.
+ */
+function escalateToKill(child: ChildProcess): void {
+    const timer = setTimeout(() => {
+        try {
+            if (child.pid !== undefined) {
+                process.kill(-child.pid, 'SIGKILL');
+            }
+        } catch {
+            // The group is already gone.
+        }
+    }, 2000);
+
+    // The timer must not keep the extension host alive.
+    (timer as unknown as { unref?: () => void }).unref?.();
 }
 
 /**
