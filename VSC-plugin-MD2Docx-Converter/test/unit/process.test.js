@@ -158,6 +158,31 @@ test('an argument cannot run a second command', { skip: process.platform !== 'wi
     );
 });
 
+test('a command whose path contains spaces still works', { skip: process.platform !== 'win32' }, async (t) => {
+    const dir = makeTempDir('mdocx-space-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    // A directory with a space in its name — the command path itself has to
+    // survive the quoting.
+    const spaced = path.join(dir, 'a folder with spaces');
+    fs.mkdirSync(spaced);
+
+    const recordFile = path.join(spaced, 'argv.json');
+    const helper = path.join(spaced, 'record.js');
+    fs.writeFileSync(
+        helper,
+        `const fs = require('fs');\nfs.writeFileSync(${JSON.stringify(recordFile)}, JSON.stringify(process.argv.slice(2)));\n`,
+        'utf8'
+    );
+    const cmd = path.join(spaced, 'record.cmd');
+    fs.writeFileSync(cmd, `@echo off\r\nnode "${helper}" %*\r\n`, 'utf8');
+
+    await execExecutable(cmd, ['--flag', 'a b c', 'x & y'], { shell: true });
+
+    const received = JSON.parse(fs.readFileSync(recordFile, 'utf8'));
+    assert.deepEqual(received, ['--flag', 'a b c', 'x & y']);
+});
+
 test('a batch file still sees its argument unquoted', { skip: process.platform !== 'win32' }, async (t) => {
     const dir = makeTempDir('mdocx-percent-');
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
