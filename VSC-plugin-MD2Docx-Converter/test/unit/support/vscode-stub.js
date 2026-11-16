@@ -333,7 +333,8 @@ function writeFakePandoc(dir, templatePath = BUNDLED_TEMPLATE) {
  * contains `FAIL` is answered with HTTP 500 instead, so the fallback path of
  * the renderer can be exercised.
  */
-async function startFakeMermaidInkServer() {
+async function startFakeMermaidInkServer(options = {}) {
+    const delayMs = options.delayMs ?? 0;
     const server = http.createServer((request, response) => {
         const requestPath = (request.url || '').split('?')[0];
         const marker = requestPath.indexOf('/img/pako:');
@@ -350,14 +351,23 @@ async function startFakeMermaidInkServer() {
             }
         }
 
-        if (diagram.includes('FAIL')) {
-            response.writeHead(500, { 'Content-Type': 'text/plain' });
-            response.end('boom');
+        const respond = () => {
+            if (diagram.includes('FAIL')) {
+                response.writeHead(500, { 'Content-Type': 'text/plain' });
+                response.end('boom');
+                return;
+            }
+
+            response.writeHead(200, { 'Content-Type': 'image/png' });
+            response.end(PNG_1X1);
+        };
+
+        if (delayMs > 0) {
+            setTimeout(respond, delayMs);
             return;
         }
 
-        response.writeHead(200, { 'Content-Type': 'image/png' });
-        response.end(PNG_1X1);
+        respond();
     });
 
     await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));

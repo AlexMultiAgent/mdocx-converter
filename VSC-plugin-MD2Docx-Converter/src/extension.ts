@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as fs from 'fs';
 import { promises as fsp } from 'fs';
 import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import AdmZip = require('adm-zip');
 import { normalizeReferenceLanguageSetting, resolveReferenceLanguage } from './language';
 import type { ReferenceLanguage, ReferenceLanguageSetting } from './language';
@@ -197,6 +198,8 @@ async function runExport(
 
     let prepared: PreparedMarkdown | undefined;
     let cancellationToken: vscode.CancellationToken | undefined;
+    let stagingPath: string | undefined;
+    let tempDir: string | undefined;
 
     try {
         await vscode.window.withProgress(
@@ -210,6 +213,11 @@ async function runExport(
 
                 const settings = readSettings(markdownUri, exportOverrides);
                 const outputPath = await resolveOutputPath(markdownUri, settings.outputDirectory);
+                // Pandoc writes to a staging file next to the target and the
+                // finished document is moved into place at the very end. A
+                // cancelled or failed export therefore never leaves a partial
+                // document at the path the user chose.
+                stagingPath = buildStagingPath(outputPath);
                 const markdownText = await fsp.readFile(markdownUri.fsPath, 'utf8');
                 const resolvedLanguage = resolveReferenceLanguage(markdownText, settings.referenceLanguage);
                 const referenceDocx = await resolveReferenceDocx(markdownUri, settings.referenceDocx, resolvedLanguage, settings.styleProfile, extensionPath);
@@ -226,7 +234,10 @@ async function runExport(
                     (completed, total) => {
                         reportStage(progress, outputChannel, `Rendering Mermaid diagrams (${completed}/${total})`);
                     },
-                    token
+                    token,
+                    (created) => {
+                        tempDir = created;
+                    }
                 );
 
                 throwIfCancellationRequested(token);
@@ -254,7 +265,7 @@ async function runExport(
                     pandoc,
                     sourceMarkdownPath: prepared.markdownPath,
                     originalMarkdownPath: markdownUri.fsPath,
-                    outputPath,
+                    outputPath: stagingPath,
                     referenceDocx,
                     settings,
                     documentTitle,
@@ -264,6 +275,9 @@ async function runExport(
                 });
 
                 reportStage(progress, outputChannel, 'Applying styles');
+
+                await publishOutput(stagingPath, outputPath);
+                stagingPath = undefined;
 
                 outputChannel.appendLine(`Export completed: ${outputPath}`);
                 void vscode.window.showInformationMessage(`DOCX exported successfully: ${path.basename(outputPath)}`);
@@ -284,14 +298,62 @@ async function runExport(
         outputChannel.appendLine(`Export failed: ${message}`);
         void vscode.window.showErrorMessage(message);
     } finally {
-        if (prepared?.tempDir) {
+        if (stagingPath) {
+            await removeQuietly(stagingPath);
+        }
+
+        if (tempDir) {
             const settings = readSettings(markdownUri, exportOverrides);
             if (!settings.keepIntermediateFiles) {
-                await fsp.rm(prepared.tempDir, { recursive: true, force: true });
+                await removeQuietly(tempDir, true);
             } else {
-                outputChannel.appendLine(`Kept intermediate files in: ${prepared.tempDir}`);
+                outputChannel.appendLine(`Kept intermediate files in: ${tempDir}`);
             }
         }
+    }
+}
+
+/**
+ * The path pandoc writes to before the finished document is moved into place.
+ *
+ * The staging file lives next to the target so that moving it is a rename
+ * inside one directory — an atomic operation that never leaves a half-written
+ * document at the path the user chose.
+ */
+function buildStagingPath(outputPath: string): string {
+    const directory = path.dirname(outputPath);
+    const extension = path.extname(outputPath);
+    const stem = path.basename(outputPath, extension);
+    return path.join(directory, `.${stem}.mdocx-${randomUUID()}${extension}`);
+}
+
+/**
+ * Move the finished document to the path the user chose.
+ */
+async function publishOutput(stagingPath: string, outputPath: string): Promise<void> {
+    try {
+        await fsp.rename(stagingPath, outputPath);
+    } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EPERM' || code === 'EBUSY' || code === 'EACCES') {
+            throw new UserFacingError('The DOCX file could not be written. Close the target DOCX in Word and try again.');
+        }
+
+        throw new UserFacingError(`The DOCX file could not be written to ${outputPath}: ${getErrorMessage(error)}`);
+    }
+}
+
+/**
+ * Delete a file or a directory without letting the failure escape.
+ *
+ * The cleanup runs after the export has already reported its outcome, so a
+ * locked file must not turn a successful export into a failed command.
+ */
+async function removeQuietly(target: string, recursive = false): Promise<void> {
+    try {
+        await fsp.rm(target, { recursive, force: true, maxRetries: 3, retryDelay: 100 });
+    } catch {
+        // The file is locked or already gone — neither is worth an error.
     }
 }
 
@@ -685,7 +747,8 @@ async function prepareMarkdown(
     settings: ExportSettings,
     outputChannel: vscode.OutputChannel,
     onProgress?: (completed: number, total: number) => void,
-    token?: CancellationToken
+    token?: CancellationToken,
+    onTempDirCreated?: (tempDir: string) => void
 ): Promise<PreparedMarkdown> {
     const blocks = parseMermaidBlocks(markdownText);
     if (blocks.length === 0) {
@@ -697,6 +760,10 @@ async function prepareMarkdown(
     }
 
     const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'mdocx-converter-'));
+    // The caller has to know about the directory right away: a cancelled
+    // export throws out of this function, and the directory would otherwise
+    // stay on disk with nobody left to clean it up.
+    onTempDirCreated?.(tempDir);
     const assetsDir = path.join(tempDir, 'mermaid-assets');
     await fsp.mkdir(assetsDir, { recursive: true });
 
