@@ -268,3 +268,41 @@ test('a cancelled export removes its temporary directory', async (t) => {
         `a cancelled export must not leave its temporary directory behind: ${JSON.stringify(leaked)}`
     );
 });
+
+test('a real failure is not masked by a cancelled export', async (t) => {
+    const dir = makeTempDir('mdocx-mask-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const markdownPath = path.join(dir, 'doc.md');
+    fs.writeFileSync(markdownPath, '# Title\n\n```mermaid\ngraph TD;\nA-->B;\n```\n', 'utf8');
+
+    const stub = createVscodeStub({
+        config: {
+            mermaidRenderer: 'api',
+            // A malformed URL makes the preparation fail with a real error.
+            mermaidApiUrl: 'not a url'
+        },
+        // The user hits Cancel while the export is being prepared. The
+        // preparation then fails for its own reason, and that failure has to
+        // be reported as a failure.
+        onProgressReport: (value, tokenSource) => {
+            if (value.message === 'Preparing Markdown') {
+                tokenSource.cancel();
+            }
+        }
+    });
+    const extension = loadExtension(stub);
+    extension.activate(createExtensionContext());
+
+    const handler = stub.state.commands.get(EXPORT_COMMAND_ID);
+    await handler(stub.Uri.file(markdownPath));
+
+    assert.ok(
+        !stub.state.outputLines.includes('Export cancelled.'),
+        `a real failure must not be reported as a cancellation: ${JSON.stringify(stub.state.outputLines)}`
+    );
+    assert.ok(
+        stub.state.messages.some((entry) => entry.level === 'error' && /Mermaid Ink URL/.test(entry.message)),
+        `the real diagnostic must reach the user: ${JSON.stringify(stub.state.messages)}`
+    );
+});

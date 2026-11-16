@@ -20,7 +20,7 @@ import type { DocxStyleOverride } from './docxStyles';
 import { findDocxPart } from './docxParts';
 import { getBundledReferenceDocxCandidates } from './templates';
 import { resolveDocumentTitle } from './document';
-import { execExecutable, shouldRunThroughShell, DEFAULT_MAX_BUFFER } from './process';
+import { execExecutable, shouldRunThroughShell, ProcessCancelledError, DEFAULT_MAX_BUFFER } from './process';
 import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, parseMermaidBlocks, renderMermaidViaInk, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
@@ -197,7 +197,6 @@ async function runExport(
     outputChannel.appendLine(`Starting export for ${markdownUri.fsPath}`);
 
     let prepared: PreparedMarkdown | undefined;
-    let cancellationToken: vscode.CancellationToken | undefined;
     let stagingPath: string | undefined;
     let tempDir: string | undefined;
 
@@ -209,8 +208,6 @@ async function runExport(
                 cancellable: true
             },
             async (progress, token) => {
-                cancellationToken = token;
-
                 const settings = readSettings(markdownUri, exportOverrides);
                 const outputPath = await resolveOutputPath(markdownUri, settings.outputDirectory);
                 // Pandoc writes to a staging file next to the target and the
@@ -289,7 +286,10 @@ async function runExport(
         );
     } catch (error) {
         const message = getErrorMessage(error);
-        if (error instanceof ExportCancelledError || cancellationToken?.isCancellationRequested) {
+        // Only the error says whether this was a cancellation. A real failure
+        // that happens while the token is cancelled still has to reach the
+        // user with its own diagnostic.
+        if (error instanceof ExportCancelledError) {
             outputChannel.appendLine(EXPORT_CANCELLED_MESSAGE);
             void vscode.window.showInformationMessage(EXPORT_CANCELLED_MESSAGE);
             return;
@@ -820,8 +820,11 @@ async function prepareMarkdown(
                     return { fileName, succeeded: true };
                 } catch (error) {
                     outputChannel.appendLine(`Mermaid CLI failed for diagram ${index + 1}: ${getErrorMessage(error)}`);
-                    // A killed CLI means the user cancelled — the diagram must
+                    // A CLI that was stopped because the user cancelled must
                     // not fall through to the API fallback.
+                    if (error instanceof ProcessCancelledError) {
+                        throw new ExportCancelledError();
+                    }
                     throwIfCancellationRequested(token);
                     if (settings.mermaidRenderer === 'local') {
                         throw error;
@@ -1154,7 +1157,7 @@ async function runPandoc(options: {
             outputChannel.appendLine('Applied DOCX style overrides.');
         }
     } catch (error) {
-        if (options.token?.isCancellationRequested) {
+        if (error instanceof ProcessCancelledError) {
             throw new ExportCancelledError();
         }
 

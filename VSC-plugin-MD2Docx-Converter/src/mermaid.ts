@@ -264,15 +264,31 @@ export async function mapWithConcurrency<T, R>(
 ): Promise<R[]> {
     const results = new Array<R>(items.length);
     let nextIndex = 0;
+    let failed = false;
 
     const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-        while (nextIndex < items.length) {
+        while (!failed && nextIndex < items.length) {
             const index = nextIndex;
             nextIndex += 1;
-            results[index] = await worker(items[index], index);
+            try {
+                results[index] = await worker(items[index], index);
+            } catch (error) {
+                // No further items are handed out once one worker failed.
+                failed = true;
+                throw error;
+            }
         }
     });
 
-    await Promise.all(runners);
+    // Every runner has to settle before the rejection surfaces: a worker that
+    // is still running would keep rendering in the background after the
+    // caller has already given up.
+    const settled = await Promise.allSettled(runners);
+    for (const entry of settled) {
+        if (entry.status === 'rejected') {
+            throw entry.reason;
+        }
+    }
+
     return results;
 }

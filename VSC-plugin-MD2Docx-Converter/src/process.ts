@@ -10,6 +10,20 @@ export interface ProcessResult {
     stderr: string;
 }
 
+/**
+ * The process was stopped because the user cancelled the export.
+ *
+ * The error says the process was cancelled on purpose — a process that
+ * failed on its own keeps its own diagnostic, even when the token happens to
+ * be cancelled at the same moment.
+ */
+export class ProcessCancelledError extends Error {
+    constructor() {
+        super('The process was cancelled.');
+        this.name = 'ProcessCancelledError';
+    }
+}
+
 /** The part of `vscode.CancellationToken` the process layer needs. */
 export interface CancellableToken {
     readonly isCancellationRequested: boolean;
@@ -104,6 +118,7 @@ export function execExecutable(
         let stderrBytes = 0;
         let settled = false;
         let limitError: ProcessError | undefined;
+        let cancelled = false;
 
         const collect = (which: 'stdout' | 'stderr', chunk: Buffer): void => {
             if (limitError) {
@@ -134,6 +149,7 @@ export function execExecutable(
         child.stderr?.on('data', (chunk: Buffer) => collect('stderr', chunk));
 
         const cancellation = options.token?.onCancellationRequested(() => {
+            cancelled = true;
             killProcessTree(child);
         });
 
@@ -164,6 +180,14 @@ export function execExecutable(
                 limitError.stdout = stdout;
                 limitError.stderr = stderr;
                 reject(limitError);
+                return;
+            }
+
+            if (cancelled) {
+                const error = new ProcessCancelledError() as ProcessError;
+                error.stdout = stdout;
+                error.stderr = stderr;
+                reject(error);
                 return;
             }
 
