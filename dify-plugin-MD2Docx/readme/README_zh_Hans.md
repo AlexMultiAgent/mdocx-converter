@@ -107,7 +107,7 @@ mermaid_ink:
     - "3000:3000"
 ```
 
-然后在工具参数中设置 `mermaid_api_url` 为 `http://<服务器地址>:3000`（compose 内部用 `http://mermaid_ink:3000`）。请直接填写最终地址，插件不会跟随 HTTP 重定向。
+然后在工具参数中设置 `mermaid_api_url` 为 `http://<服务器地址>:3000`（compose 内部用 `http://mermaid_ink:3000`）。请直接填写最终地址，插件不会跟随 HTTP 重定向。插件运行所在主机的回环地址（`127.0.0.1`、`::1`）以及各云厂商的元数据端点会被拒绝，因此请填写实例的实际地址，而不是解析到这些地址的域名。
 
 如使用 Dify 的 `.env` 配置：
 
@@ -118,8 +118,8 @@ MERMAID_INK_URL=http://your-server:3000
 ## 网络与隐私
 
 - **Mermaid Ink**：Mermaid 源码文本会发送至渲染服务。不传输其他文档内容。可通过 `mermaid_enabled=false` 关闭或使用自部署实例。
-- **Pandoc**：随 `pypandoc-binary` 内置，并启用 `--sandbox`；Markdown 无法读取本地文件或触发外部图片请求。需要嵌入图片时使用 `data:` URI。
-- **临时文件**：每次转换后自动清理。
+- **Pandoc**：随 `pypandoc-binary` 内置，并启用 `--sandbox`；Markdown 无法读取本地文件或触发外部图片请求。需要嵌入图片时使用 `data:` URI。超过五分钟仍未完成的转换会被中止。
+- **临时文件**：每次转换后自动清理，转换失败时同样会清理。路径只写入插件日志，不会出现在返回给调用方的错误信息里。
 
 完整说明：[PRIVACY.md](./PRIVACY.md)
 

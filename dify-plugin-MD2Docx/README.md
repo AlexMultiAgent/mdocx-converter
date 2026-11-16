@@ -97,13 +97,13 @@ mermaid_ink:
     - "3000:3000"
 ```
 
-Then set `mermaid_api_url` to `http://<host>:3000` (use `http://mermaid_ink:3000` inside compose). Provide the final endpoint directly; HTTP redirects are not followed.
+Then set `mermaid_api_url` to `http://<host>:3000` (use `http://mermaid_ink:3000` inside compose). Provide the final endpoint directly; HTTP redirects are not followed. The address of the host the plugin runs on and the cloud metadata endpoints are refused, so point the parameter at the address of your instance rather than at a name that resolves to one of them.
 
 ## Network & Privacy
 
 - **Mermaid Ink** (`https://mermaid.ink`): Mermaid source code is sent for PNG rendering. No other data is transmitted. Disable via `mermaid_enabled=false` or use a self-hosted instance.
-- **Pandoc**: bundled in `pypandoc-binary`. It runs with `--sandbox`, so Markdown cannot read local files or trigger outbound image requests. Embed supplied images as `data:` URIs.
-- **Temp files**: cleaned up after each conversion. On Windows, paths may contain the OS username.
+- **Pandoc**: bundled in `pypandoc-binary`. It runs with `--sandbox`, so Markdown cannot read local files or trigger outbound image requests. Embed supplied images as `data:` URIs. A conversion that does not finish within five minutes is stopped.
+- **Temp files**: cleaned up after each conversion, including a failed one. The paths stay in the plugin log and are not part of the error the tool returns.
 
 Full policy: [PRIVACY.md](./PRIVACY.md).
 

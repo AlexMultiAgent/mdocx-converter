@@ -23,13 +23,17 @@ The `mermaid_api_url` parameter lets a workflow point the plugin at a
 self-hosted Mermaid Ink instance. When it is set, the diagram source is sent
 to **that host instead** — review where it points before using it.
 
-The endpoint must use `http` or `https`, and link-local addresses are refused
-because they cover the cloud instance metadata endpoint
-(`169.254.169.254`). Private address ranges remain reachable on purpose: a
-self-hosted instance commonly lives on an internal network. Hostnames are
-resolved before use and rejected when they resolve to a link-local address;
-HTTP redirects are not followed. Do not point the parameter at a name you do
-not control: DNS rebinding can still change the address after validation.
+The endpoint must use `http` or `https`. The address of the host the plugin
+runs on is refused — the loopback (`127.0.0.1`, `::1`) and the unspecified
+address — as is the metadata endpoint of the common cloud providers
+(`169.254.169.254`, `100.100.100.200`, `192.0.0.192`). Private address
+ranges remain reachable on purpose: a self-hosted instance commonly lives on
+an internal network. Hostnames are resolved before use and rejected when they
+resolve to one of those addresses; HTTP redirects are not followed.
+
+Do not point the parameter at a name you do not control. The name is resolved
+once for the check and again by the HTTP client, so a resolver that answers
+with a public address first and the loopback address second gets through.
 
 ## Local images
 
@@ -60,5 +64,5 @@ The plugin creates temporary files during conversion (Mermaid diagram PNGs,
 custom template copies). Temporary directories are created via Python's
 `tempfile.mkdtemp()`, which on Windows may include the OS username in the path
 (e.g., `C:\Users\<UserName>\AppData\Local\Temp\mermaid-xxxxxx\`). These
-directories are cleaned up after each conversion. Error messages may
-occasionally reference these paths — be mindful when sharing error output.
+directories are cleaned up after each conversion, including a failed one. The
+paths stay in the plugin log and are not part of the error the tool returns.
