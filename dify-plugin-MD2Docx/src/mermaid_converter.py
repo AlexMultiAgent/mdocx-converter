@@ -32,6 +32,7 @@ _spec.loader.exec_module(_mermaid_render)
 render_mermaid_via_api = _mermaid_render.render_mermaid_via_api
 render_mermaid_with_retry = _mermaid_render.render_mermaid_with_retry
 validate_api_url = _mermaid_render.validate_api_url
+describe_render_failure = _mermaid_render.describe_render_failure
 
 # Upper bound for the diagram source. The text is shipped verbatim to a
 # third-party rendering service, so an oversized payload is rejected outright.
@@ -72,7 +73,9 @@ class MermaidConverterTool(Tool):
                 code, api_url=api_url, renderer=render_mermaid_via_api
             )
         except Exception as e:
-            yield self.create_text_message(f"Mermaid rendering failed: {e}")
+            yield self.create_text_message(
+                f"Mermaid rendering failed: {describe_render_failure(e)}"
+            )
             return
 
         yield self.create_blob_message(

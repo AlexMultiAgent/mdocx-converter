@@ -366,7 +366,10 @@ class TestMermaidRetryLogic:
             idx, path, error = _render_one_with_retry(1, "graph TD", td, errors)
             assert path is None
             assert len(errors) == 1
-            assert "persistent failure" in errors[0]
+            # The message names the kind of failure; what the service said
+            # stays in the log.
+            assert "RuntimeError" in errors[0]
+            assert "persistent failure" not in errors[0]
 
 
 class TestMermaidBudget:

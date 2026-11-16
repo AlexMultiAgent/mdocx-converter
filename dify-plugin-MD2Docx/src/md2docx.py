@@ -5,6 +5,7 @@ Ported from mdocx-converter VS Code extension.
 """
 
 import importlib.util
+import logging
 import os
 import re
 import io
@@ -13,7 +14,6 @@ import time
 import shutil
 import tempfile
 import zipfile
-import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -48,7 +48,10 @@ _spec.loader.exec_module(_mermaid_render)
 render_mermaid_via_api = _mermaid_render.render_mermaid_via_api
 render_mermaid_with_retry = _mermaid_render.render_mermaid_with_retry
 validate_api_url = _mermaid_render.validate_api_url
+describe_render_failure = _mermaid_render.describe_render_failure
 MERMAID_INK_URL = _mermaid_render.MERMAID_INK_URL
+
+logger = logging.getLogger(__name__)
 
 # ── Tunables ────────────────────────────────────────────────
 
@@ -429,7 +432,10 @@ def _render_one_with_retry(index: int, diagram: str, temp_dir: str,
             renderer=render_mermaid_via_api,
         )
     except Exception as e:  # requests.RequestException, OSError, budget, ...
-        message = f"Diagram {index}: {e}"
+        # The full detail stays in the log: the message the caller sees must
+        # not repeat what the service answered.
+        logger.warning("Mermaid rendering failed for diagram %s: %s", index, e, exc_info=True)
+        message = f"Diagram {index}: {describe_render_failure(e)}"
         errors.append(message)
         return index, None, message
 
