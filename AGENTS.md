@@ -48,7 +48,7 @@ These are not in the README/manifest but are critical:
 - **`.vscodeignore` whitelists `node_modules/adm-zip`** (runtime dep) and `multi-templates/*.docx` and `assets/icon.png`. Keep these in sync if you add new runtime assets.
 - **The VS Code plugin has a unit suite** (`VSC-plugin-MD2Docx-Converter/test/unit/`, Node's built-in `node:test`, no framework dependency). `npm test` compiles `src/` to `out/` and runs it; CI runs the same command. The per-profile export check (`npm run test:e2e`, `test/e2e/run.js`) drives the real `pandoc` against every bundled template and **is not wired into CI** — it needs pandoc on the runner.
 - **Pandoc and mmdc are discovered at runtime**, not bundled. The `checkEnvironment` command reports the binary versions, the active Mermaid renderer, the Mermaid Ink API reachability, the bundled template count and the active profile — the fastest way to debug "binary not found" issues.
-- **Mermaid is local-first, API as the fallback.** With `mermaidRenderer=auto` the extension renders through `mmdc`; when the CLI is missing it falls back to the Mermaid Ink API (one notice per workspace), and a diagram that fails both ways stays a code block instead of failing the export. `mermaidRenderer=local` disables the fallback, `=api` skips `mmdc` entirely.
+- **Mermaid is local-first, API as the fallback.** With `mermaidRenderer=auto` the extension renders through `mmdc`; when the CLI is missing it falls back to the Mermaid Ink API (one notice per installation, shown before the first request), and a diagram that fails both ways stays a code block instead of failing the export. `mermaidRenderer=local` disables the fallback, `=api` skips `mmdc` entirely.
 - **8 commands** are registered (see `package.json` `contributes.commands`): one generic export, 5 submenu exports (academic / technical / business / official / thesis), a Mermaid-to-image command and `checkEnvironment`. The 5 submenu commands override `styleProfile` and `referenceLanguage` regardless of user settings.
 - **`paperifyMd.*` settings are legacy aliases** for `mdocxConverter.*`; `readConfigValue()` checks both. Don't remove the legacy fallback without a deprecation cycle.
 
@@ -56,11 +56,11 @@ These are not in the README/manifest but are critical:
 
 ```bash
 # from repo root
-bash scripts/sync-templates.sh                # copy 10 files (skips VSC-only)
+bash scripts/sync-templates.sh                # copy the 10 known templates
 bash scripts/sync-templates.sh --check        # CI-friendly: exits 1 on mismatch
 ```
 
-The script copies 10 files by name (`reference_{english,chinese}_{academic,technical,business,official,thesis}.docx`). VSC-only files (if any) emit a `WARN` and are skipped.
+The script copies 10 files by name (`reference_{english,chinese}_{academic,technical,business,official,thesis}.docx`) — the list is hardcoded, so a new template has to be added there as well. A template that is missing on the VSC side but present on the Dify side emits a `WARN` and is skipped; a template that only exists on the VSC side is not noticed at all.
 
 ## Build & verify
 

@@ -45,7 +45,8 @@ markdown_content
   │     python-docx opens generated .docx
   │     Write the title into the core properties (dc:title)
   │     Modify Normal, Heading1-3 styles (font, size, line spacing) via lxml
-  │     Technical profile: SourceCode + VerbatimChar (Consolas 10pt, color #000000, shading #F3F4F6)
+  │     Code styles: SourceCode + VerbatimChar (Consolas 10pt, color #000000; shading and
+  │     line spacing where the profile declares them)
   │     Page margins via section properties
   │
   └─ 6. Return: text_message + ONE json_message + blob_message(docx_bytes)
@@ -121,7 +122,7 @@ Bundled template mapping lives in the `TEMPLATE_MAP` constant. Academic, technic
 
 - `Normal` style — font, size, line spacing
 - `Heading1`/`Heading2`/`Heading3` — font, size
-- `SourceCode` (paragraph) + `VerbatimChar` (character) — Consolas 10pt, color #000000; shading #F3F4F6 on the paragraph style only
+- `SourceCode` (paragraph) + `VerbatimChar` (character) — Consolas 10pt, color #000000; the shading (#F3F4F6 for `technical` and `thesis`) and the line spacing (1.05 for `technical`, 1.15 for the others) on the paragraph style only. The values come from the `code_style` entry of `PROFILE_DEFAULTS`, which the parity gate compares with the VS Code preset table.
 - Page margins — via `section.top_margin` etc. in python-docx
 
 Rules the layer depends on:
@@ -154,13 +155,15 @@ Rules the layer depends on:
 - **Script style**: Avoiding `from __future__ import annotations` to maintain compatibility
 - **Safety guards**: `markdown_content` is capped at 5 MB; Mermaid is capped at 50 diagrams and 32 MB total rendered PNG data; `mermaid_code` is capped at 256 KB. Numeric overrides have runtime bounds in addition to YAML `min`/`max`.
 - **Mermaid resilience**: retry only transient failures (network, 408/425/429, 5xx), with 1s/2s bounded backoff, 4 diagrams in parallel, a 75s total budget, and a 30s per-attempt ceiling. A request cannot sleep past its deadline. A diagram that cannot be rendered is kept as its original code block.
-- **Mermaid endpoint validation**: `mermaid_api_url` must be http(s), contain no query/fragment, and must not resolve to a link-local address. HTTP redirects are not followed. Private ranges stay allowed because a self-hosted instance commonly lives on an internal network.
+- **Mermaid endpoint validation**: `mermaid_api_url` must be http(s), contain no query/fragment, and must not point at the host the plugin runs on — the loopback and the unspecified address, the link-local range and the cloud metadata endpoints are refused, both as a literal address and after the name is resolved. The URL is checked again right before the request, because the name may have been re-pointed in between. HTTP redirects are not followed. Private ranges stay allowed because a self-hosted instance commonly lives on an internal network.
 - **Pandoc is sandboxed**: `--sandbox` blocks URL fetches and arbitrary local-file reads from user Markdown. Mermaid PNGs are embedded as data URIs so they still work. User-supplied images must also use data URIs.
+- **Pandoc has a time limit**: pypandoc cannot be given a timeout, so pandoc is started directly with one (`PANDOC_TIMEOUT_SECONDS`, 120 s). Its stderr is routed to the `pypandoc` logger exactly as pypandoc does it, so the collected pandoc warnings keep working.
+- **The caller never sees a path of the server**: a pandoc failure is reported by its kind, and the raw message — the call stack of pandoc and the paths of the machine — stays in the log.
 - **Pandoc warnings are surfaced**: pypandoc forwards pandoc's stderr to the `pypandoc` logger; a handler installed once per process collects it so an image that could not be resolved is reported instead of being silently dropped from the DOCX. The destination lives in a `ContextVar`, because the daemon runs tool calls concurrently and a conversion must only see its own pandoc warnings.
 - **Pandoc output cleanup**: `_strip_dangling_image_rels` removes image/oleObject relationships inherited from reference templates whose target files are missing, so python-docx can always open the produced DOCX
 - **custom_template safety**: A `str` value for `custom_template` is rejected with a clear warning instead of being written as a corrupted binary
 - **Title sanitising**: `title` becomes the name of the produced file, so `sanitize_filename()` replaces the characters that are illegal in a file name (`<>:"/|?*` plus control characters) with `_`, trims, truncates to 120 characters (`MAX_TITLE_LENGTH`), and falls back to `"Document"`. The sanitised name is what the JSON `file` field and the blob `filename` carry.
-- **Boolean coercion**: Dify form parameters arrive as strings, so `mermaid_enabled` is read through `_coerce_bool()`, which treats `"false"`, `"0"`, `"no"`, `"off"`, `"disabled"`, `"n"` and `""` as False. A plain truthiness check would keep Mermaid **on** for `mermaid_enabled: "false"`.
+- **Boolean coercion**: Dify form parameters arrive as strings, so `mermaid_enabled` is read through `_coerce_bool()`, which treats `"false"`, `"0"`, `"no"`, `"off"`, `"disabled"`, `"n"` and `""` as False. A plain truthiness check would keep Mermaid **on** for `mermaid_enabled: "false"`. A parameter that is not there at all (`null`) keeps the default of the schema, so a workflow that serialises it to null does not silently switch the rendering off.
 
 ## Differences from VS Code extension
 

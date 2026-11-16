@@ -23,7 +23,7 @@ import requests
 MERMAID_INK_URL = os.environ.get("MERMAID_INK_URL", "https://mermaid.ink")
 
 PLUGIN_USER_AGENT = (
-    "md2docx-dify-plugin/0.0.3 "
+    "md2docx-dify-plugin/0.0.4 "
     "(+https://github.com/AlexMultiAgent/mdocx-converter)"
 )
 

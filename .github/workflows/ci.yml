@@ -14,6 +14,8 @@ jobs:
       fail-fast: false
       matrix:
         dify-plugin-version:
+          # 0.9.0 is the floor declared in requirements.txt.
+          - "0.9.0"
           - "0.9.1"
           - "0.11.0"
     defaults:

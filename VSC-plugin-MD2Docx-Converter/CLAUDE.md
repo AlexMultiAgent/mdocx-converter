@@ -18,14 +18,14 @@ Press `F5` in VS Code to launch an Extension Development Host for manual testing
 
 ## Testing
 
-Unit tests live in `test/unit/*.test.js` — 10 files — and run on Node's built-in `node:test` runner — no test framework dependency.
+Unit tests live in `test/unit/*.test.js` — 12 files — and run on Node's built-in `node:test` runner — no test framework dependency.
 
 - The test glob is `test/unit/**/*.test.js`, so **every test file must be named `*.test.js`** or it will be silently skipped.
 - `npm test` compiles `src/` to `out/` first, then the tests `require()` the compiled output (e.g. `require('../../out/document.js')`). `test/` is not part of the TypeScript build.
 - A glob that matches nothing exits 0, so a renamed test file looks like a passing run. If `npm test` reports zero tests, the naming convention was broken.
 - Node 18/20 lack `--test` glob support; use Node >= 22.
 
-`npm run test:e2e` (`test/e2e/run.js`) is a **manual end-to-end check** — it drives the real `pandoc` for each of the 5 profiles × 2 languages against the bundled templates, applies the extension's own override layer from `out/docxStyles.js`, then asserts the exported body font, body size, heading font, heading size, page size, the page-number footer and all four margins. It needs pandoc on the runner, so it is **not** wired into CI. The repo CI (`.github/workflows/ci.yml`) runs three jobs: the Dify plugin's pytest suite, this extension's `npm test`, and `scripts/sync-templates.sh --check`.
+`npm run test:e2e` (`test/e2e/run.js`) is a **manual end-to-end check** — it drives the real `pandoc` for each of the 5 profiles × 2 languages against the bundled templates, applies the extension's own override layer from `out/docxStyles.js`, then asserts the exported body font, body size, heading font, heading size, page size, the page-number footer and all four margins. It needs pandoc on the runner, so it is **not** wired into CI. The repo CI (`.github/workflows/ci.yml`) runs four jobs: the Dify plugin's pytest suite, this extension's `npm test`, `scripts/sync-templates.sh --check`, and `scripts/check-preset-parity.py`. The parity gate compares the preset table of this side with the one of the Dify plugin — it needs `npm run compile` first, because it reads `out/profiles.js` and `out/templates.js`.
 
 ## Architecture
 
@@ -43,6 +43,7 @@ This is a **VS Code extension** that exports Markdown files to DOCX. Everything 
 | `src/document.ts` | Document title extraction, filename sanitising |
 | `src/docxStyles.ts` | DOCX style lookup by display name, OOXML child order, the style override layer |
 | `src/docxParts.ts` | ZIP part lookup that tolerates backslash-separated entry names |
+| `src/process.ts` | Child processes: the shell escaping, the output limit and the cancellation |
 
 **Only `src/extension.ts` may import `vscode`.** Every other module must stay pure so that `node --test` can load the compiled output directly outside the Extension Host.
 
@@ -161,11 +162,15 @@ The Dify plugin reaches the same result through python-docx, whose `doc.styles[n
 - **Pandoc is not sandboxed here.** Unlike the Dify plugin, no `--sandbox` is passed, so local image paths and remote image URLs resolve normally and the Mermaid PNGs are found through `--resource-path`. The same Markdown therefore behaves differently in the two products: the Dify plugin requires `data:` URIs for every image.
 - `openAfterExport` uses `explorer.exe /select,` on Windows instead of `vscode.env.openExternal` to avoid shell association errors
 - Error messages are pattern-matched from pandoc stderr/stdout to produce user-friendly guidance (permission denied, image not found, unknown syntax)
-- Temp files are cleaned up unless `keepIntermediateFiles` is set
+- Temp files are cleaned up unless `keepIntermediateFiles` is set. A failure during the cleanup never turns a finished export into a failed command
+- Pandoc writes to a staging file next to the target, and the finished document is renamed into place. The path the user chose therefore only ever holds a complete document — a cancelled export leaves nothing behind
 - Logic is split into pure modules under `src/` (see the source layout above) with `src/extension.ts` as the only module allowed to import `vscode` — this keeps the helpers unit-testable via `node --test`
 - Style presets live in exactly one place (`PROFILE_PRESETS` in `src/profiles.ts`); both the pandoc layer and the DOCX layer read it, and pandoc metadata is derived from it rather than stored alongside it
 - No bundler: TypeScript compiles `src/` to CommonJS in `out/`, and the unit tests live in `test/unit/`
 - The export runs inside `vscode.window.withProgress` and is cancellable: the pandoc call uses `spawn` (not `execFile`) so the child process can be killed, and a cancelled export reports "Export cancelled." rather than a failure
+- Cancelling takes down the whole process tree (`taskkill /T /F` on Windows). A `.cmd` runs through `cmd.exe`, so killing the direct child would leave the grandchild alive with the stdout pipe open — the export would hang instead of stopping
+- The arguments of a `.cmd` are escaped by `src/process.ts`. Node's own shell mode concatenates them without escaping, so a metacharacter in a path would run a second command
+- The Mermaid Ink API is used only after the user has been told that the diagram source leaves the machine — the notice comes before the first request, not after it
 - The document title comes from `mdocxConverter.documentTitle`, else the first ATX heading (`src/document.ts`), else the sanitised file name
 
 ### VSIX packaging

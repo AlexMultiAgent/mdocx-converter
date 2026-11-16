@@ -47,7 +47,7 @@ plugins:
     - "provider/md2docx.yaml"
 
 meta:
-  version: "0.0.3"
+  version: "0.0.4"
   arch:
     - "amd64"
     - "arm64"
@@ -67,7 +67,7 @@ network:
     - "mermaid.ink"
 
 # ── Package & network notes ──────────────────────────────────────────────────
-# Approx .difypkg size: ~255 KB (uncompressed ~335 KB). The Pandoc binary is
+# Approx .difypkg size: ~140 KB (uncompressed ~220 KB). The Pandoc binary is
 # **bundled** inside the `pypandoc-binary` pip wheel and extracted into the
 # plugin venv at install time — there is NO runtime download from GitHub or any
 # other host. The daemon rejects packages whose uncompressed size exceeds
