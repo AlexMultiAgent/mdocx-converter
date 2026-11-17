@@ -12,6 +12,7 @@
 
 const fs = require('fs');
 const http = require('http');
+const { execFileSync } = require('child_process');
 const Module = require('module');
 const os = require('os');
 const path = require('path');
@@ -422,12 +423,42 @@ function withTimeout(promise, timeoutMs, label) {
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+/**
+ * True while the process is still running.
+ *
+ * A process that has terminated but has not been reaped yet is a zombie: it is
+ * gone, but signalling it still succeeds. Its parent usually dies with it, so
+ * whoever is init has to reap it — and in a container that can take a moment.
+ * The process table knows the difference, so ask it.
+ */
 function isProcessAlive(pid) {
     try {
         process.kill(pid, 0);
-        return true;
     } catch {
         return false;
+    }
+    if (process.platform === 'win32') {
+        return true;
+    }
+    return readProcessState(pid) !== 'Z';
+}
+
+/**
+ * The state letter of a process: `R` running, `S` sleeping, `Z` zombie.
+ * Read from /proc on Linux, asked of `ps` where there is no /proc.
+ */
+function readProcessState(pid) {
+    try {
+        const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+        // The command name may contain spaces and parentheses, so the fields
+        // are counted from the last one.
+        return stat.slice(stat.lastIndexOf(') ') + 2).split(' ')[0];
+    } catch {
+        try {
+            return execFileSync('ps', ['-o', 'state=', '-p', String(pid)], { encoding: 'utf8' }).trim().charAt(0);
+        } catch {
+            return '';
+        }
     }
 }
 
