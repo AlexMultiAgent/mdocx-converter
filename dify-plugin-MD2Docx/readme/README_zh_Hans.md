@@ -47,7 +47,7 @@ python scripts/package.py --output MD2Docx.difypkg
 | `technical` | Arial / Microsoft YaHei | 11 pt | Arial / Microsoft YaHei 16/14/12 pt | 1.35 | 19 | 技术博客 / API 文档 |
 | `business` | Arial / Microsoft YaHei | 11 pt | Arial / Microsoft YaHei 18/14/12 pt | 1.5 | 25.4 | 商务报告 / 内部备忘录 |
 | `official` | Times New Roman / FangSong | 16 pt | Times / SimHei、KaiTi、FangSong 16 pt | 固定 29 磅 | 37/35/28/26 | GB/T 9704 |
-| `academic` | Times New Roman / SimSun | 12 pt | Times New Roman / SimHei 16/14/12 pt | 1.5 | 25.4/25.4/31.75/31.75 | CSSCI 期刊 / 学术写作 |
+| `academic` | Times New Roman / SimSun | 12 pt | Times New Roman / SimHei 16/14/12 pt | 1.5 | 25.4/25.4/31.75/31.75 | 学术论文 / 期刊论文 |
 | `thesis` | Times New Roman / SimSun | 12 pt | Times New Roman / SimHei 22/16/14 pt | 1.5 | 30 | GB/T 7713 |
 | `template` | 参考文件决定 | — | — | — | — | 完全自定义 |
 
@@ -56,11 +56,11 @@ python scripts/package.py --output MD2Docx.difypkg
 ## 如何选择样式
 
 - **国内学位论文 (GB/T 7713)** → `thesis`
-- **CSSCI 期刊投稿** → `academic`
+- **学术论文 / 期刊论文** → `academic`
 - **政府公文 (GB/T 9704)** → `official`
 - **商务报告 / PPT 风格** → `business`
 - **技术博客 / API 文档** → `technical`
-- **IEEE/ACM/Springer 投稿** → 下载官方模板，用 `template` 样式
+- **IEEE/ACM/Springer 会议模板** → 下载官方模板，用 `template` 样式
 - **完全自定义** → `template`
 
 ## 参数说明
