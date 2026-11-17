@@ -87,7 +87,14 @@ def build_package(root: Path, output_path: Path) -> tuple[int, int]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as archive:
         for relative_path in files:
-            archive.write(root / relative_path, relative_path.as_posix())
+            entry = zipfile.ZipInfo(
+                relative_path.as_posix(),
+                date_time=(1980, 1, 1, 0, 0, 0),
+            )
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.create_system = 3
+            entry.external_attr = 0o100644 << 16
+            archive.writestr(entry, (root / relative_path).read_bytes())
 
     with zipfile.ZipFile(output_path) as archive:
         uncompressed_bytes = sum(item.file_size for item in archive.infolist())

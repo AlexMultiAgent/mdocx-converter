@@ -5,6 +5,15 @@ requirements-dev.txt
 scripts/
 tests/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+.tox/
+.coverage*
+htmlcov/
+node_modules/
+.idea/
+.vscode/
 __pycache__/
 *.pyc
 *.difypkg
