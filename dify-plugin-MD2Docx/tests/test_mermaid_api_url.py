@@ -107,6 +107,11 @@ class TestFailureDescription:
         assert "rejected" in describe_render_failure(requests.HTTPError("boom"))
 
 
+def test_non_string_api_url_is_rejected_as_value_error():
+    with pytest.raises(ValueError, match="string"):
+        validate_api_url([])
+
+
 def test_ipv4_mapped_loopback_is_recognised():
     """The IPv4 loopback in an IPv6 address is still the loopback."""
     assert ipaddress.ip_address("::ffff:127.0.0.1").ipv4_mapped is not None

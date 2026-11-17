@@ -116,10 +116,14 @@ def validate_api_url(api_url: str | None) -> str | None:
 
     Returns the URL to use, or None when the default should be used.
     """
-    if not api_url or not api_url.strip():
+    if api_url is None:
         return None
+    if not isinstance(api_url, str):
+        raise ValueError("mermaid_api_url must be a string.")
 
     candidate = api_url.strip()
+    if not candidate:
+        return None
     parsed = urlparse(candidate)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(

@@ -288,6 +288,7 @@ class TestPandocEndToEnd:
   <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/present.png"/>
   <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/missing.png"/>
   <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  <Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://example.com/external.png" TargetMode="External"/>
 </Relationships>""")
             zf.writestr("word/media/present.png", b"fake-png-bytes")
             zf.writestr("word/styles.xml", "<x/>")
@@ -299,6 +300,7 @@ class TestPandocEndToEnd:
         # The missing image rel is gone, the present one and styles survive
         assert "media/missing.png" not in rels
         assert "media/present.png" in rels
+        assert "https://example.com/external.png" in rels
         assert "styles.xml" in rels
 
     def test_strip_no_op_on_clean_docx(self):
@@ -1235,6 +1237,24 @@ class TestOoxmlChildOrder:
                 seen.append(tag)
         positions = [sequence.index(tag) for tag in seen]
         assert positions == sorted(positions), f"{label}: {seen} is out of order"
+
+    def test_comment_nodes_survive_order_normalisation(self):
+        from lxml import etree
+        from docx.oxml.ns import qn
+
+        from md2docx import _normalize_order, _PPR_SEQUENCE
+
+        parent = etree.Element(qn("w:pPr"))
+        parent.append(etree.Comment("keep me"))
+        parent.append(etree.Element(qn("w:jc")))
+        parent.append(etree.Element(qn("w:spacing")))
+
+        _normalize_order(parent, _PPR_SEQUENCE)
+
+        tags = [child.tag for child in parent]
+        assert any(not isinstance(tag, str) for tag in tags)
+        named = [tag.split("}")[-1] for tag in tags if isinstance(tag, str)]
+        assert named.index("spacing") < named.index("jc")
 
     def test_run_properties_are_in_schema_order(self, pandoc_available):
         """The styles the plugin rewrites must end up schema valid."""

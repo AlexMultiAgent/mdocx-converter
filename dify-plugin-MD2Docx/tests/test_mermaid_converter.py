@@ -64,6 +64,14 @@ class TestMermaidConverter:
         text = " ".join(m.data for m in messages if m.type == "text")
         assert "required" in text.lower()
 
+    def test_non_string_code_is_rejected_cleanly(self):
+        tool = _make_tool()
+        messages = list(tool._invoke({"mermaid_code": []}))
+
+        assert [m for m in messages if m.type == "blob"] == []
+        text = " ".join(m.data for m in messages if m.type == "text")
+        assert "string" in text.lower()
+
     def test_rejects_oversized_code(self):
         """A huge diagram would be shipped to a third-party API verbatim."""
         from mermaid_converter import MAX_MERMAID_CODE_BYTES

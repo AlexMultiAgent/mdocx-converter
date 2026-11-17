@@ -470,6 +470,43 @@ class TestMd2DocxToolInvokeEdgeCases:
         assert json_msgs[0].data["stage"] == "validation"
         assert "image" in json_msgs[0].data["message"].lower()
 
+    @pytest.mark.parametrize(
+        "parameters,field",
+        [
+            ({"markdown_content": 123}, "markdown_content"),
+            ({"markdown_content": "# Hi\n", "title": []}, "title"),
+            ({"markdown_content": "# Hi\n", "style_profile": []}, "style_profile"),
+            (
+                {"markdown_content": "# Hi\n", "reference_language": []},
+                "reference_language",
+            ),
+            (
+                {
+                    "markdown_content": "# Hi\n```mermaid\ngraph TD; A-->B\n```\n",
+                    "mermaid_api_url": [],
+                },
+                "mermaid_api_url",
+            ),
+        ],
+    )
+    def test_non_string_parameters_yield_structured_validation_errors(
+        self, parameters, field
+    ):
+        tool, _ = self._make_tool()
+        messages = list(tool._invoke(parameters))
+
+        json_msgs = [m for m in messages if m.type == "json"]
+        text_msgs = [m for m in messages if m.type == "text"]
+        blob_msgs = [m for m in messages if m.type == "blob"]
+        assert not blob_msgs
+        assert len(json_msgs) == 1
+        assert len(text_msgs) == 1
+        payload = json_msgs[0].data
+        assert payload["status"] == "error"
+        assert payload["stage"] == "validation"
+        assert field in payload["message"]
+        assert "string" in payload["message"].lower()
+
     def test_custom_template_str_rejected_with_warning(self):
         """custom_template=str must be rejected with a warning, not silently corrupted."""
         tool, _ = self._make_tool()

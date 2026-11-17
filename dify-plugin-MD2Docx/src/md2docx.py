@@ -363,7 +363,7 @@ def resolve_template(
 
 def normalize_profile(value: Optional[str]) -> str:
     """Normalize style profile to a valid value."""
-    if value in VALID_PROFILES:
+    if isinstance(value, str) and value in VALID_PROFILES:
         return value
     return "template"
 
@@ -987,6 +987,8 @@ def _strip_dangling_image_rels(docx_bytes):
                 rtype = rel.get("Type", "")
                 if not rtype.endswith("/image") and not rtype.endswith("/oleObject"):
                     continue
+                if rel.get("TargetMode") == "External":
+                    continue
                 target = rel.get("Target", "")
                 if not target:
                     continue
@@ -1098,7 +1100,8 @@ def _get_or_add_ordered(parent, tag: str, sequence: tuple[str, ...]):
     element = parent.makeelement(qn(tag), {})
     successors = set(sequence[sequence.index(tag.split(":")[-1]) + 1:])
     for child in parent:
-        if child.tag.split("}")[-1] in successors:
+        child_tag = child.tag
+        if isinstance(child_tag, str) and child_tag.split("}")[-1] in successors:
             child.addprevious(element)
             break
     else:
@@ -1117,7 +1120,8 @@ def _normalize_order(parent, sequence: tuple[str, ...]) -> None:
 
     def sort_key(item):
         index, child = item
-        tag = child.tag.split("}")[-1]
+        child_tag = child.tag
+        tag = child_tag.split("}")[-1] if isinstance(child_tag, str) else None
         position = sequence.index(tag) if tag in sequence else len(sequence)
         return (position, index)
 
@@ -1382,7 +1386,20 @@ class Md2DocxTool(Tool):
         warnings: list[str] = []
 
         try:
-            markdown_content = parameters.get("markdown_content") or ""
+            stage = "validation"
+            raw_markdown = parameters.get("markdown_content")
+            if raw_markdown is None:
+                markdown_content = ""
+            elif isinstance(raw_markdown, str):
+                markdown_content = raw_markdown
+            else:
+                msg = "markdown_content must be a string."
+                yield self.create_json_message(
+                    {"status": "error", "stage": "validation", "message": msg}
+                )
+                yield self.create_text_message(f"Error: {msg}")
+                return
+
             if not markdown_content.strip():
                 yield self.create_json_message({"status": "error", "stage": "validation", "message": "markdown_content is empty"})
                 yield self.create_text_message(
@@ -1415,7 +1432,21 @@ class Md2DocxTool(Tool):
                 yield self.create_text_message(f"Error: {msg}")
                 return
 
-            stage = "validation"
+            for field in (
+                "title",
+                "style_profile",
+                "reference_language",
+                "mermaid_api_url",
+            ):
+                value = parameters.get(field)
+                if value is not None and not isinstance(value, str):
+                    msg = f"{field} must be a string."
+                    yield self.create_json_message(
+                        {"status": "error", "stage": "validation", "message": msg}
+                    )
+                    yield self.create_text_message(f"Error: {msg}")
+                    return
+
             title = sanitize_filename(parameters.get("title") or "Document")
             style_profile = normalize_profile(parameters.get("style_profile"))
             language_setting = parameters.get("reference_language", "auto")

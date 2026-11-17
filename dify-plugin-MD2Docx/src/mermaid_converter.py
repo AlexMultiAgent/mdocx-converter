@@ -45,7 +45,14 @@ class MermaidConverterTool(Tool):
     """Dify Tool: render Mermaid diagram code to a PNG image."""
 
     def _invoke(self, parameters: dict) -> Generator[ToolInvokeMessage, None, None]:
-        code = (parameters.get("mermaid_code") or "").strip()
+        raw_code = parameters.get("mermaid_code")
+        if raw_code is None:
+            raw_code = ""
+        if not isinstance(raw_code, str):
+            yield self.create_text_message("Error: mermaid_code must be a string")
+            return
+
+        code = raw_code.strip()
         if not code:
             yield self.create_text_message("Error: mermaid_code is required")
             return
