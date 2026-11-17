@@ -7,6 +7,12 @@ const path = require('path');
 
 const { execExecutable } = require('../../out/process.js');
 const { CancellationTokenSource, makeTempDir } = require('./support/vscode-stub.js');
+const {
+    createExtensionContext,
+    createVscodeStub,
+    loadExtension,
+    withTimeout
+} = require('./support/vscode-stub.js');
 
 const NODE = process.execPath;
 
@@ -73,6 +79,50 @@ test('cancelling the token stops the child process', async () => {
         assert.notEqual(error.code, 0, 'a cancelled process must not report success');
         return true;
     });
+});
+
+test('a timed executable probe is killed instead of hanging', async () => {
+    const source = new CancellationTokenSource();
+    const script = 'setTimeout(() => {}, 30000);';
+    const running = execExecutable(NODE, ['-e', script], {
+        shell: false,
+        token: source.token,
+        timeoutMs: 200
+    });
+
+    try {
+        await assert.rejects(withTimeout(running, 2000, 'probe timeout'), (error) => {
+            assert.equal(error.code, 'ETIMEDOUT');
+            return true;
+        });
+    } finally {
+        source.cancel();
+        await running.catch(() => undefined);
+    }
+});
+
+test('cancelling an export stops an executable probe', async () => {
+    const source = new CancellationTokenSource();
+    const stub = createVscodeStub();
+    const extension = loadExtension(stub);
+    extension.activate(createExtensionContext());
+
+    const running = extension.resolveExecutable(
+        [NODE],
+        ['-e', 'setTimeout(() => {}, 2000);'],
+        source.token
+    );
+    setTimeout(() => source.cancel(), 100);
+
+    try {
+        await assert.rejects(withTimeout(running, 1000, 'probe cancellation'), (error) => {
+            assert.equal(error.name, 'ProcessCancelledError');
+            return true;
+        });
+    } finally {
+        source.cancel();
+        await running.catch(() => undefined);
+    }
 });
 
 test('the working directory is honoured', async () => {

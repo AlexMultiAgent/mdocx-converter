@@ -24,6 +24,16 @@ export class ProcessCancelledError extends Error {
     }
 }
 
+/** The process exceeded the caller's deadline and its tree was terminated. */
+export class ProcessTimedOutError extends Error {
+    readonly code = 'ETIMEDOUT';
+
+    constructor(timeoutMs: number) {
+        super(`The process did not finish within ${timeoutMs}ms.`);
+        this.name = 'ProcessTimedOutError';
+    }
+}
+
 /** The part of `vscode.CancellationToken` the process layer needs. */
 export interface CancellableToken {
     readonly isCancellationRequested: boolean;
@@ -35,6 +45,7 @@ export interface ExecOptions {
     shell?: boolean;
     windowsHide?: boolean;
     maxBuffer?: number;
+    timeoutMs?: number;
     token?: CancellableToken;
 }
 
@@ -240,6 +251,8 @@ export function execExecutable(
         let settled = false;
         let limitError: ProcessError | undefined;
         let cancelled = false;
+        let timedOut = false;
+        let timeoutHandle: NodeJS.Timeout | undefined;
 
         const collect = (which: 'stdout' | 'stderr', chunk: Buffer): void => {
             if (limitError) {
@@ -274,12 +287,28 @@ export function execExecutable(
             killProcessTree(child);
         });
 
+        if (options.timeoutMs !== undefined && options.timeoutMs > 0) {
+            timeoutHandle = setTimeout(() => {
+                timedOut = true;
+                killProcessTree(child);
+            }, options.timeoutMs);
+            timeoutHandle.unref();
+        }
+
+        const clearDeadline = (): void => {
+            if (timeoutHandle) {
+                clearTimeout(timeoutHandle);
+                timeoutHandle = undefined;
+            }
+        };
+
         child.on('error', (error) => {
             if (settled) {
                 return;
             }
 
             settled = true;
+            clearDeadline();
             cancellation?.dispose();
             reject(error);
         });
@@ -290,6 +319,7 @@ export function execExecutable(
             }
 
             settled = true;
+            clearDeadline();
             cancellation?.dispose();
 
             if (!limitError) {
@@ -301,6 +331,14 @@ export function execExecutable(
                 limitError.stdout = stdout;
                 limitError.stderr = stderr;
                 reject(limitError);
+                return;
+            }
+
+            if (timedOut) {
+                const error = new ProcessTimedOutError(options.timeoutMs ?? 0) as ProcessError;
+                error.stdout = stdout;
+                error.stderr = stderr;
+                reject(error);
                 return;
             }
 

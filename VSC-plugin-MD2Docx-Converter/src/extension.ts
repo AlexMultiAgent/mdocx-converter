@@ -38,6 +38,7 @@ const CONFIGURATION_SECTION = 'mdocxConverter';
 const LEGACY_CONFIGURATION_SECTION = 'paperifyMd';
 const MERMAID_API_NOTICE_SHOWN_KEY = 'mdocxConverter.mermaidApiNoticeShown';
 const EXPORT_CANCELLED_MESSAGE = 'Export cancelled.';
+const EXECUTABLE_PROBE_TIMEOUT_MS = 5000;
 
 type MermaidRenderer = 'auto' | 'local' | 'api';
 
@@ -256,7 +257,7 @@ async function runExport(
 
                 throwIfCancellationRequested(token);
 
-                const pandoc = await requirePandoc(settings.pandocPath);
+                const pandoc = await requirePandoc(settings.pandocPath, token);
                 outputChannel.appendLine(`Using Pandoc: ${pandoc.command}`);
                 outputChannel.appendLine(`Pandoc version: ${pandoc.versionLine}`);
 
@@ -323,7 +324,7 @@ async function runExport(
         // Only the error says whether this was a cancellation. A real failure
         // that happens while the token is cancelled still has to reach the
         // user with its own diagnostic.
-        if (error instanceof ExportCancelledError) {
+        if (error instanceof ExportCancelledError || error instanceof ProcessCancelledError) {
             outputChannel.appendLine(EXPORT_CANCELLED_MESSAGE);
             void vscode.window.showInformationMessage(EXPORT_CANCELLED_MESSAGE);
             return;
@@ -848,7 +849,7 @@ async function prepareMarkdown(
 
     let localMermaid: ResolvedExecutable | undefined;
     if (settings.mermaidRenderer !== 'api') {
-        localMermaid = await resolveMermaidCli(settings.mermaidCliPath, markdownPath);
+        localMermaid = await resolveMermaidCli(settings.mermaidCliPath, markdownPath, token);
         if (localMermaid) {
             outputChannel.appendLine(`Using Mermaid CLI: ${localMermaid.command}`);
             outputChannel.appendLine(`Mermaid CLI version: ${localMermaid.versionLine}`);
@@ -1012,8 +1013,11 @@ function ensureTrailingBlankLine(markdownText: string): string {
     return `${markdownText}\n\n`;
 }
 
-async function requirePandoc(configuredPath: string): Promise<ResolvedExecutable> {
-    const pandoc = await resolvePandoc(configuredPath);
+async function requirePandoc(
+    configuredPath: string,
+    token?: CancellationToken
+): Promise<ResolvedExecutable> {
+    const pandoc = await resolvePandoc(configuredPath, token);
     if (!pandoc) {
         throw new UserFacingError(`Pandoc was not found. ${getPandocInstallHelp()}`);
     }
@@ -1032,13 +1036,24 @@ function getPandocInstallHelp(): string {
     return 'Install from https://pandoc.org/installing.html or set mdocxConverter.pandocPath.';
 }
 
-async function resolvePandoc(configuredPath: string): Promise<ResolvedExecutable | undefined> {
-    const pandoc = await resolveExecutable(getPandocCandidates(configuredPath), ['--version']);
+async function resolvePandoc(
+    configuredPath: string,
+    token?: CancellationToken
+): Promise<ResolvedExecutable | undefined> {
+    const pandoc = await resolveExecutable(getPandocCandidates(configuredPath), ['--version'], token);
     return pandoc;
 }
 
-async function resolveMermaidCli(configuredPath: string, markdownPath: string): Promise<ResolvedExecutable | undefined> {
-    const mermaid = await resolveExecutable(getMermaidCandidates(configuredPath, markdownPath), ['--version']);
+async function resolveMermaidCli(
+    configuredPath: string,
+    markdownPath: string,
+    token?: CancellationToken
+): Promise<ResolvedExecutable | undefined> {
+    const mermaid = await resolveExecutable(
+        getMermaidCandidates(configuredPath, markdownPath),
+        ['--version'],
+        token
+    );
     return mermaid;
 }
 
@@ -1132,7 +1147,11 @@ function uniqueNonEmpty(candidates: string[]): string[] {
     return [...new Set(candidates.map((candidate) => candidate.trim()).filter(Boolean))];
 }
 
-async function resolveExecutable(candidates: string[], versionArgs: string[]): Promise<ResolvedExecutable | undefined> {
+export async function resolveExecutable(
+    candidates: string[],
+    versionArgs: string[],
+    token?: CancellationToken
+): Promise<ResolvedExecutable | undefined> {
     const seen = new Set<string>();
 
     for (const candidate of candidates) {
@@ -1144,10 +1163,13 @@ async function resolveExecutable(candidates: string[], versionArgs: string[]): P
         seen.add(normalized);
 
         try {
+            throwIfCancellationRequested(token);
             const useShell = shouldRunThroughShell(normalized);
             const { stdout, stderr } = await execExecutable(normalized, versionArgs, {
                 windowsHide: true,
-                shell: useShell
+                shell: useShell,
+                timeoutMs: EXECUTABLE_PROBE_TIMEOUT_MS,
+                token
             });
 
             const versionLine = [stdout, stderr]
@@ -1161,7 +1183,10 @@ async function resolveExecutable(candidates: string[], versionArgs: string[]): P
                 versionLine,
                 useShell
             };
-        } catch {
+        } catch (error) {
+            if (error instanceof ProcessCancelledError || token?.isCancellationRequested) {
+                throw new ProcessCancelledError();
+            }
             // Try the next candidate.
         }
     }
