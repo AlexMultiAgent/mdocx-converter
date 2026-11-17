@@ -66,3 +66,13 @@ custom template copies). Temporary directories are created via Python's
 (e.g., `C:\Users\<UserName>\AppData\Local\Temp\mermaid-xxxxxx\`). These
 directories are cleaned up after each conversion, including a failed one. The
 paths stay in the plugin log and are not part of the error the tool returns.
+
+Pandoc diagnostics are drained into a bounded buffer (1 MB). Filesystem and
+write failures are logged with their full exception and returned to the caller
+only as a generic temporary-file error, so server paths are not disclosed.
+
+## Resource Limits
+
+Markdown input is capped at 5 MB and 5,000 image references. Mermaid rendering
+is capped at 50 diagrams and 32 MB of rendered PNG data. A complete request is
+budgeted to 165 seconds inside the plugin's 180-second connection lifetime.

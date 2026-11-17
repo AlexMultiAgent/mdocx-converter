@@ -34,6 +34,7 @@ graph TD
 - Technical and business templates are standards-derived / guidance-derived reference files, not official template attachments
 - Override with a custom Word template via `reference.docx`
 - Keep temporary files when debugging conversion problems
+- Commands are disabled in untrusted workspaces because exports may run workspace-local Mermaid binaries
 
 ## Requirements
 
@@ -127,6 +128,8 @@ Bundled template mapping follows both language and document type:
 Specialized templates do not fall back to the paper templates. If a required bundled template file is missing, export fails with a clear error.
 
 The bundled academic templates are generic academic reference DOCX files written for this extension and are not redistributed journal or conference submission templates. The bundled technical templates are derived from current software and systems documentation guidance such as GB/T 8567-2006, GB/T 32424-2015, ISO/IEC/IEEE 26514:2022, ISO/IEC/IEEE 15289:2019, and ISO/IEC/IEEE 42010:2022. The bundled business templates are derived from current business-plan and project-case guidance such as the NDRC 2023 feasibility-study outline, U.S. SBA business-plan guidance, and HM Treasury Green Book / Five Case Model guidance. These files are practical reference DOCX templates; they are not official Word attachments published by those bodies.
+
+The `official` and `thesis` presets are typography approximations for body text, headings and margins. They are not complete GB/T submission packages with covers, document registers, tables of contents or signature blocks.
 
 ### Changes in 0.4.1
 

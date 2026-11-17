@@ -32,7 +32,7 @@ markdown_content
   │     custom_template (uploaded file) > built-in 10 ref.docx (profile × language)
   │
   ├─ 3. Mermaid preprocessing (if enabled):
-  │     regex ```mermaid blocks → Mermaid Ink API (4 workers, 75s total budget)
+  │     regex ```mermaid blocks → Mermaid Ink API (4 workers, 60s stage budget)
   │     Replace blocks with data:image/png URIs in markdown
   │     Falls back to preserving original code block if API fails
   │
@@ -160,17 +160,18 @@ Rules the layer depends on:
 - **User overrides > Profile defaults**: Every style parameter can be overridden individually; `0` or empty means "use profile default"
 - **Script style**: Avoiding `from __future__ import annotations` to maintain compatibility
 - **Safety guards**: `markdown_content` is capped at 5 MB; Mermaid is capped at 50 diagrams and 32 MB total rendered PNG data; `mermaid_code` is capped at 256 KB. Numeric overrides have runtime bounds in addition to YAML `min`/`max`.
-- **Mermaid resilience**: retry only transient failures (network, 408/425/429, 5xx), with 1s/2s bounded backoff, 4 diagrams in parallel, a 75s total budget, and a 30s per-attempt ceiling. A request cannot sleep past its deadline. A diagram that cannot be rendered is kept as its original code block.
+- **Mermaid resilience**: retry only transient failures (network, 408/425/429, 5xx), with 1s/2s bounded backoff, 4 diagrams in parallel, a 60s stage budget, and a 30s per-attempt ceiling. A request cannot sleep past its deadline. A diagram that cannot be rendered is kept as its original code block.
 - **Mermaid endpoint validation**: `mermaid_api_url` must be http(s), contain no query/fragment, and must not point at the host the plugin runs on — the loopback and the unspecified address (in the IPv4, the IPv4-mapped and the IPv4-compatible forms), the link-local range and the cloud metadata endpoints of AWS, Azure, Google, Alibaba and Oracle are refused, both as a literal address and after the name is resolved. The URL is checked again right before the request, because the name may have been re-pointed in between. HTTP redirects are not followed. Private ranges stay allowed because a self-hosted instance commonly lives on an internal network.
 
   > ⚠️ **A name that re-points between the check and the request is not covered.** The name is resolved once for the check and again by the HTTP client, so a resolver that answers with a public address first and the loopback address second gets through. Pinning the address would break a self-hosted instance behind HTTPS, where the certificate belongs to the name and not to the address. The loopback and the metadata ranges are therefore refused as a literal address as well — that is what closes the everyday case.
 - **Pandoc is sandboxed**: `--sandbox` blocks URL fetches and arbitrary local-file reads from user Markdown. Mermaid PNGs are embedded as data URIs so they still work. User-supplied images must also use data URIs.
-- **Pandoc has a time limit**: pypandoc cannot be given a timeout, so pandoc is started directly with one (`PANDOC_TIMEOUT_SECONDS`, 300 s). Its stderr is routed to the `pypandoc` logger exactly as pypandoc does it, so the collected pandoc warnings keep working. The worst case the guards allow — 5 MB of Markdown plus 32 MB of rendered PNG, inlined as data URIs — takes pandoc about 80 s, which is why the ceiling is 300 s.
+- **The stages share a 165-second request budget**: Mermaid may use 60 seconds, Pandoc may use 90 seconds, and 15 seconds are reserved for style post-processing and transport inside the 180-second plugin connection lifetime. Pandoc's stderr is drained concurrently and only the first 1 MB is retained. The `pypandoc` logger still receives the captured warnings.
+- **Image references are capped**: at most 5,000 Markdown/HTML image references are accepted. In sandbox mode every non-data image is both expensive to probe and produces a warning, so the count is validated before template resolution or Pandoc starts.
 - **The caller never sees a path of the server**: a pandoc failure is reported by its kind, and the raw message — the call stack of pandoc and the paths of the machine — stays in the log.
 - **Pandoc warnings are surfaced**: the stderr of pandoc is routed to the `pypandoc` logger, the same way pypandoc does it; a handler installed once per process collects it so an image that could not be resolved is reported instead of being silently dropped from the DOCX. The destination lives in a `ContextVar`, because the daemon runs tool calls concurrently and a conversion must only see its own pandoc warnings.
 - **Pandoc output cleanup**: `_strip_dangling_image_rels` removes image/oleObject relationships inherited from reference templates whose target files are missing, so python-docx can always open the produced DOCX
 - **custom_template safety**: A `str` value for `custom_template` is rejected with a clear warning instead of being written as a corrupted binary
-- **Title sanitising**: `title` becomes the name of the produced file, so `sanitize_filename()` replaces the characters that are illegal in a file name (`<>:"/|?*` plus control characters) with `_`, trims, truncates to 120 characters (`MAX_TITLE_LENGTH`), and falls back to `"Document"`. The sanitised name is what the JSON `file` field and the blob `filename` carry.
+- **Title sanitising**: `title` becomes the name of the produced file, so `sanitize_filename()` replaces illegal filename characters (`<>:"/|?*` plus control characters) with `_`, removes leading/trailing dots and spaces, prefixes Windows device names such as `CON`, truncates to 120 UTF-8 bytes (`MAX_TITLE_BYTES`) on a code-point boundary, and falls back to `"Document"`. The sanitised name is what the JSON `file` field and the blob `filename` carry.
 - **Boolean coercion**: Dify form parameters arrive as strings, so `mermaid_enabled` is read through `_coerce_bool()`, which treats `"false"`, `"0"`, `"no"`, `"off"`, `"disabled"`, `"n"` and `""` as False. A plain truthiness check would keep Mermaid **on** for `mermaid_enabled: "false"`. A parameter that is not there at all (`null`) keeps the default of the schema, so a workflow that serialises it to null does not silently switch the rendering off.
 
 ## Differences from VS Code extension
@@ -268,8 +269,10 @@ The plugin loads ~5 packages (`dify_plugin`, `pypandoc-binary`, `python-docx`, `
 
 ```ini
 PLUGIN_PYTHON_ENV_INIT_TIMEOUT=720   # default 120s
-PLUGIN_MAX_EXECUTION_TIMEOUT=1800    # default 600s
+PLUGIN_MAX_EXECUTION_TIMEOUT=1800    # container-level ceiling, default 600s
 ```
+
+These settings do not extend the conversion budget hardcoded in `src/md2docx.py` and `main.py`. The plugin deliberately finishes within 165 seconds so the 180-second SDK connection does not close first.
 
 ### Pandoc availability
 

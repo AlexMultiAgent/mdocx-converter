@@ -133,6 +133,8 @@ Bundled template mapping lives in the `BUNDLED_REFERENCE_DOCX` constant in `src/
 
 This extension ships the same **10** templates as the Dify plugin — academic, technical, business, official and thesis, each in an English and a Chinese variant. **The VS Code side is the source of truth for the template files**: they are **generated** by `npm run build:templates` from `src/profiles.ts` + `scripts/reference-base.docx`, `scripts/sync-templates.sh` copies them into `dify-plugin-MD2Docx/multi-templates/`, and `scripts/sync-templates.sh --check` (run by CI) fails when they drift. Never hand-edit a `.docx` under `multi-templates/` — the next build overwrites it.
 
+The `official` and `thesis` presets are typography approximations for body text, headings and margins. They do not generate complete GB/T submission packages such as covers, document registers, tables of contents or signature blocks.
+
 #### Template metadata
 
 `npm run build:templates` sanitizes every generated template as part of the build. `scripts/build-templates.js` rewrites `docProps/core.xml` to clear `dc:title`, `dc:creator`, `cp:lastModifiedBy`, `dc:subject` and `cp:keywords`, and resets `cp:revision` to 1. It rewrites `docProps/app.xml` to reset Word's document statistics and remove `ap:HLinks`. The base DOCX stays untouched; only the emitted templates are sanitized.
@@ -197,6 +199,8 @@ The Dify plugin reaches the same result through python-docx, whose `doc.styles[n
 ### Binary resolution
 
 `resolveExecutable()` tries candidates in order, runs each with `--version`, returns the first that succeeds. Pandoc candidates include winget package directories (searched recursively for `pandoc.exe`). Mermaid candidates include workspace `node_modules/.bin/mmdc.cmd` and `%APPDATA%/npm/mmdc.cmd` on Windows.
+
+Because a workspace-owned executable is a code-execution boundary, the extension is disabled in untrusted workspaces (`capabilities.untrustedWorkspaces.supported: false`) and every command re-checks `vscode.workspace.isTrusted` before resolving binaries.
 
 ### Legacy config fallback
 

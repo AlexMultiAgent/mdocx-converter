@@ -38,7 +38,7 @@ The package depends on `pypandoc-binary`, which bundles Pandoc inside the pip wh
 - **Mermaid rendering** via Mermaid Ink API. Inline in DOCX or standalone via the `Mermaid to Image` tool.
 - **Fine-grained overrides**: 13 advanced parameters for body/heading fonts, sizes, line spacing, and margins.
 - **Bilingual typography**: Latin and East Asian font slots are configured separately, using Times New Roman / Arial for Latin text and SimSun / SimHei / FangSong / KaiTi / Microsoft YaHei for CJK text.
-- **Self-contained**: `pypandoc-binary` bundles Pandoc; no runtime download.
+- **Pandoc self-contained**: `pypandoc-binary` bundles Pandoc, so conversion needs no runtime GitHub download. Mermaid Ink still requires network access unless Mermaid is disabled or a reachable self-hosted endpoint is configured.
 
 ## Style Profiles
 
@@ -53,13 +53,15 @@ The package depends on `pypandoc-binary`, which bundles Pandoc inside the pip wh
 
 > English `official` and `thesis` templates exist as compatibility companions; no specific English standard.
 
+The `official` and `thesis` presets cover body typography, headings and page margins. They are formatting approximations, not complete GB/T submission packages with covers, document registers, tables of contents or signature blocks.
+
 ## Parameters
 
 ### Markdown to DOCX (6)
 
 | #   | Parameter            | Type    | Required | Default      | Description                                                |
 | --- | -------------------- | ------- | -------- | ------------ | ---------------------------------------------------------- |
-| 1   | `markdown_content`   | string  | yes      | —            | The Markdown text (max 5 MB; GFM, tables, `data:` images, Mermaid) |
+| 1   | `markdown_content`   | string  | yes      | —            | The Markdown text (max 5 MB and 5,000 image references; GFM, tables, `data:` images, Mermaid) |
 | 2   | `title`              | string  | no       | `"Document"` | Output filename without `.docx`                            |
 | 3   | `style_profile`      | select  | no       | `academic`   | Style preset (see table above)                             |
 | 4   | `reference_language` | select  | no       | `auto`       | `auto` / `english` / `chinese`                             |
@@ -102,7 +104,7 @@ Then set `mermaid_api_url` to `http://<host>:3000` (use `http://mermaid_ink:3000
 ## Network & Privacy
 
 - **Mermaid Ink** (`https://mermaid.ink`): Mermaid source code is sent for PNG rendering. No other data is transmitted. Disable via `mermaid_enabled=false` or use a self-hosted instance.
-- **Pandoc**: bundled in `pypandoc-binary`. It runs with `--sandbox`, so Markdown cannot read local files or trigger outbound image requests. Embed supplied images as `data:` URIs. A conversion that does not finish within five minutes is stopped.
+- **Pandoc**: bundled in `pypandoc-binary`. It runs with `--sandbox`, so Markdown cannot read local files or trigger outbound image requests. Embed supplied images as `data:` URIs. The complete request is budgeted to 165 seconds inside the plugin's 180-second connection lifetime; Pandoc stderr is capped at 1 MB.
 - **Temp files**: cleaned up after each conversion, including a failed one. The paths stay in the plugin log and are not part of the error the tool returns.
 
 Full policy: [PRIVACY.md](./PRIVACY.md).
