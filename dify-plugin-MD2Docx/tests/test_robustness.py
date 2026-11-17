@@ -66,18 +66,16 @@ class TestPandocTimeout:
         reference = os.path.join(TEMPLATE_DIR, "reference_english_academic.docx")
         seen = {}
 
-        class Result:
-            returncode = 0
-            stderr = b""
-
-        def fake_run(args, **kwargs):
-            seen["args"] = list(args)
-            seen["kwargs"] = kwargs
-            output = next(a for a in args if a.startswith("--output=")).split("=", 1)[1]
+        def fake_run(command, input_bytes, timeout, max_stderr):
+            seen["args"] = list(command)
+            seen["input"] = input_bytes
+            seen["timeout"] = timeout
+            seen["max_stderr"] = max_stderr
+            output = next(a for a in command if a.startswith("--output=")).split("=", 1)[1]
             shutil.copyfile(reference, output)
-            return Result()
+            return 0, b"", False
 
-        monkeypatch.setattr("md2docx.subprocess.run", fake_run)
+        monkeypatch.setattr("md2docx._run_subprocess_capped", fake_run)
 
         md2docx.convert_via_pandoc(
             "# Doc", reference, os.path.dirname(reference), "",
@@ -91,19 +89,19 @@ class TestPandocTimeout:
         assert any(a.startswith("--output=") for a in args), f"the output has to reach pandoc: {args}"
         assert "--metadata" in args, f"the metadata has to reach pandoc: {args}"
         assert "title=A Title" in args, f"the metadata value has to reach pandoc: {args}"
-        assert seen["kwargs"]["timeout"] == md2docx.PANDOC_TIMEOUT_SECONDS
-        assert seen["kwargs"]["input"] == "# Doc".encode("utf-8")
+        assert seen["timeout"] == md2docx.PANDOC_TIMEOUT_SECONDS
+        assert seen["input"] == "# Doc".encode("utf-8")
 
     def test_a_hanging_pandoc_is_stopped(self, monkeypatch):
         """Pandoc must not hold the plugin worker for the whole daemon timeout."""
         from md2docx import convert_via_pandoc
 
-        def fake_run(args, **kwargs):
+        def fake_run(command, input_bytes, timeout, max_stderr):
             raise subprocess.TimeoutExpired(
-                cmd=args, timeout=kwargs.get("timeout")
+                cmd=command, timeout=timeout
             )
 
-        monkeypatch.setattr("md2docx.subprocess.run", fake_run)
+        monkeypatch.setattr("md2docx._run_subprocess_capped", fake_run)
 
         reference = os.path.join(TEMPLATE_DIR, "reference_english_academic.docx")
         with pytest.raises(RuntimeError) as excinfo:
@@ -118,11 +116,11 @@ class TestPandocTimeout:
 
         seen = {}
 
-        def fake_run(args, **kwargs):
-            seen["timeout"] = kwargs.get("timeout")
-            raise subprocess.TimeoutExpired(cmd=args, timeout=kwargs.get("timeout"))
+        def fake_run(command, input_bytes, timeout, max_stderr):
+            seen["timeout"] = timeout
+            raise subprocess.TimeoutExpired(cmd=command, timeout=timeout)
 
-        monkeypatch.setattr("md2docx.subprocess.run", fake_run)
+        monkeypatch.setattr("md2docx._run_subprocess_capped", fake_run)
 
         reference = os.path.join(TEMPLATE_DIR, "reference_english_academic.docx")
         with pytest.raises(RuntimeError):
@@ -131,6 +129,57 @@ class TestPandocTimeout:
             )
 
         assert seen["timeout"] == PANDOC_TIMEOUT_SECONDS
+
+
+class TestConversionBudget:
+    def test_all_stages_fit_inside_the_connection_timeout(self):
+        from md2docx import (
+            MERMAID_TOTAL_BUDGET_SECONDS,
+            PANDOC_TIMEOUT_SECONDS,
+            POSTPROCESS_RESERVE_SECONDS,
+            REQUEST_BUDGET_SECONDS,
+        )
+
+        assert (
+            MERMAID_TOTAL_BUDGET_SECONDS
+            + PANDOC_TIMEOUT_SECONDS
+            + POSTPROCESS_RESERVE_SECONDS
+            <= REQUEST_BUDGET_SECONDS
+        )
+        assert REQUEST_BUDGET_SECONDS < 180
+
+
+class TestPandocOutputLimit:
+    def test_stderr_is_capped_without_deadlocking(self):
+        import md2docx
+
+        code = "import sys; sys.stderr.write('x' * 200000)"
+        rc, stderr, truncated = md2docx._run_subprocess_capped(
+            [sys.executable, "-c", code],
+            b"",
+            timeout=10,
+            max_stderr=1024,
+        )
+
+        assert rc == 0
+        assert len(stderr) == 1024
+        assert truncated is True
+
+    def test_a_hanging_subprocess_is_stopped(self):
+        import time
+
+        import md2docx
+
+        started = time.monotonic()
+        with pytest.raises(subprocess.TimeoutExpired):
+            md2docx._run_subprocess_capped(
+                [sys.executable, "-c", "import time; time.sleep(10)"],
+                b"",
+                timeout=0.2,
+                max_stderr=1024,
+            )
+
+        assert time.monotonic() - started < 3
 
 
 class TestBooleanParameters:

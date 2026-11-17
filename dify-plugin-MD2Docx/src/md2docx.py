@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from threading import Lock
+from threading import Lock, Thread
 from typing import Optional, Any, Generator
 
 # ── Dify SDK (must import first — triggers gevent monkey-patch) ──
@@ -61,13 +61,21 @@ logger = logging.getLogger(__name__)
 # with a structured error to prevent OOM in the Dify plugin sandbox.
 MAX_MARKDOWN_BYTES = 5 * 1024 * 1024  # 5 MB
 
-# Total wall-clock budget for Mermaid rendering across all diagrams. Diagrams
-# still running after this are cancelled and reported as timed-out.
-MERMAID_TOTAL_BUDGET_SECONDS = 75
+# One Dify invocation has to finish inside the 180-second connection lifetime.
+# The stages use fixed ceilings whose sum leaves time for post-processing.
+REQUEST_BUDGET_SECONDS = 165
+MERMAID_TOTAL_BUDGET_SECONDS = 60
+PANDOC_TIMEOUT_SECONDS = 90
+POSTPROCESS_RESERVE_SECONDS = 15
 
 # Bound the amount of generated media that can be embedded in one request.
 MAX_MERMAID_DIAGRAMS = 50
 MAX_MERMAID_TOTAL_BYTES = 32 * 1024 * 1024
+
+# Bound the number of image references Pandoc has to probe. In sandbox mode a
+# non-data image produces both substantial work and a warning.
+MAX_IMAGE_REFERENCES = 5000
+MAX_PANDOC_STDERR_BYTES = 1024 * 1024
 
 # Number of diagrams rendered at the same time.
 MERMAID_MAX_WORKERS = 4
@@ -94,6 +102,8 @@ MERMAID_BLOCK_RE = re.compile(
 # Keep these as escapes - U+F900 and U+8C48 are indistinguishable by eye.
 CJK_CHAR_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
 LATIN_CHAR_RE = re.compile(r"[A-Za-z]")
+IMAGE_REFERENCE_RE = re.compile(r"!\[[^\]]*\]")
+HTML_IMAGE_RE = re.compile(r"<img\b[^>]*\bsrc\s*=", re.IGNORECASE)
 
 # ── Profile defaults (ported from getProfileDocxDefaults) ───
 
@@ -605,19 +615,81 @@ def _ensure_pandoc() -> None:
     pypandoc.get_pandoc_version()
 
 
-# Ceiling on the time pandoc may take for one conversion. pypandoc has no
-# timeout of its own, so without this a document that keeps pandoc busy
-# would hold the plugin worker until the daemon gives up on it.
-#
-# The worst case the guards allow — 5 MB of Markdown plus 32 MB of rendered
-# PNG, inlined as data URIs — takes pandoc about 80 seconds on a fast
-# machine. The ceiling leaves room for a slower one and still sits well
-# below the daemon's own limit of 600 seconds.
-PANDOC_TIMEOUT_SECONDS = 300
+# Pandoc's ceiling is part of the request-wide budget defined above.
 
 
 class PandocTimeoutError(RuntimeError):
     """Pandoc took longer than the plugin allows."""
+
+
+def _run_subprocess_capped(
+    command: list[str],
+    input_bytes: bytes,
+    timeout: float,
+    max_stderr: int,
+) -> tuple[int, bytes, bool]:
+    """Run a child while retaining only the first ``max_stderr`` bytes."""
+    creation_flag = 0x08000000 if sys.platform == "win32" else 0
+    process = subprocess.Popen(
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        creationflags=creation_flag,
+    )
+    captured = bytearray()
+    truncated = [False]
+
+    def drain_stderr() -> None:
+        if process.stderr is None:
+            return
+        while True:
+            chunk = process.stderr.read(64 * 1024)
+            if not chunk:
+                return
+            remaining = max(0, max_stderr - len(captured))
+            if remaining:
+                captured.extend(chunk[:remaining])
+            if len(chunk) > remaining:
+                truncated[0] = True
+
+    def feed_stdin() -> None:
+        if process.stdin is None:
+            return
+        try:
+            process.stdin.write(input_bytes)
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
+
+    stderr_reader = Thread(target=drain_stderr, daemon=True)
+    stdin_writer = Thread(target=feed_stdin, daemon=True)
+    stderr_reader.start()
+    stdin_writer.start()
+
+    timed_out = False
+    try:
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            process.kill()
+            process.wait()
+    finally:
+        if process.stdin is not None and not process.stdin.closed:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+        stdin_writer.join(timeout=5)
+        stderr_reader.join(timeout=5)
+
+    if timed_out:
+        raise subprocess.TimeoutExpired(cmd=command, timeout=timeout)
+    if stderr_reader.is_alive():
+        logger.warning("Pandoc stderr reader did not stop after the process exited")
+
+    return process.returncode or 0, bytes(captured), truncated[0]
 
 
 def _run_pandoc(markdown_text: str, extra_args: list[str], out_path: str) -> None:
@@ -636,30 +708,39 @@ def _run_pandoc(markdown_text: str, extra_args: list[str], out_path: str) -> Non
         *extra_args,
     ]
 
-    creation_flag = 0x08000000 if sys.platform == "win32" else 0
     try:
-        completed = subprocess.run(
+        returncode, stderr_bytes, truncated = _run_subprocess_capped(
             args,
-            input=markdown_text.encode("utf-8"),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=creation_flag,
+            markdown_text.encode("utf-8"),
             timeout=PANDOC_TIMEOUT_SECONDS,
+            max_stderr=MAX_PANDOC_STDERR_BYTES,
         )
     except subprocess.TimeoutExpired as e:
         raise PandocTimeoutError(
             f"Pandoc did not finish within {PANDOC_TIMEOUT_SECONDS} seconds."
         ) from e
 
-    stderr = completed.stderr.decode("utf-8", errors="replace")
-    if completed.returncode != 0:
+    stderr = stderr_bytes.decode("utf-8", errors="replace")
+    if returncode != 0:
         raise RuntimeError(
-            f'Pandoc died with exitcode "{completed.returncode}" during '
+            f'Pandoc died with exitcode "{returncode}" during '
             f"conversion: {stderr}"
+        )
+    if truncated:
+        pypandoc.logger.warning(
+            "Pandoc stderr exceeded %s bytes and was truncated.",
+            MAX_PANDOC_STDERR_BYTES,
         )
     if stderr:
         for level, message in _classify_pandoc_logging(stderr):
             pypandoc.logger.log(level, message)
+
+
+def _count_image_references(markdown_text: str) -> int:
+    """Count Markdown and HTML image references before conversion."""
+    return len(IMAGE_REFERENCE_RE.findall(markdown_text)) + len(
+        HTML_IMAGE_RE.findall(markdown_text)
+    )
 
 
 def _classify_pandoc_logging(stderr: str) -> list[tuple[int, str]]:
@@ -1290,6 +1371,19 @@ class Md2DocxTool(Tool):
                     f"{size_mb}MB limit. Split the document or raise the limit."
                 )
                 yield self.create_json_message({"status": "error", "stage": "validation", "message": msg})
+                yield self.create_text_message(f"Error: {msg}")
+                return
+
+            image_references = _count_image_references(markdown_content)
+            if image_references > MAX_IMAGE_REFERENCES:
+                msg = (
+                    f"markdown_content contains {image_references} image references, "
+                    f"exceeding the {MAX_IMAGE_REFERENCES}-image limit. Embed fewer "
+                    "images or embed them as data: URIs."
+                )
+                yield self.create_json_message(
+                    {"status": "error", "stage": "validation", "message": msg}
+                )
                 yield self.create_text_message(f"Error: {msg}")
                 return
 

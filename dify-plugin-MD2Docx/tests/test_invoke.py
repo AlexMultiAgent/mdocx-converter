@@ -431,6 +431,28 @@ class TestMd2DocxToolInvokeEdgeCases:
         blob_msgs = [m for m in messages if m.type == 'blob']
         assert len(blob_msgs) == 1
 
+    def test_too_many_image_references_are_rejected_before_pandoc(self, monkeypatch):
+        """Pathological image counts must fail before Pandoc can stall."""
+        import md2docx
+
+        monkeypatch.setattr(
+            "md2docx.convert_via_pandoc",
+            lambda *a, **kw: pytest.fail("Pandoc must not run"),
+        )
+        tool, _ = self._make_tool()
+        markdown = "# Doc\n" + "![](missing.png)\n" * (
+            md2docx.MAX_IMAGE_REFERENCES + 1
+        )
+        messages = list(tool._invoke({"markdown_content": markdown}))
+
+        json_msgs = [m for m in messages if m.type == "json"]
+        blob_msgs = [m for m in messages if m.type == "blob"]
+        assert len(json_msgs) == 1
+        assert not blob_msgs
+        assert json_msgs[0].data["status"] == "error"
+        assert json_msgs[0].data["stage"] == "validation"
+        assert "image" in json_msgs[0].data["message"].lower()
+
     def test_custom_template_str_rejected_with_warning(self):
         """custom_template=str must be rejected with a warning, not silently corrupted."""
         tool, _ = self._make_tool()
