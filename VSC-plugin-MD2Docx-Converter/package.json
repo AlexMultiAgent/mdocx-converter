@@ -3,7 +3,7 @@
   "displayName": "MD2Docx Converter",
   "description": "Export Markdown files to DOCX with Pandoc, Mermaid diagrams, bundled reference templates, and document profiles.",
   "icon": "assets/icon.png",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "alexmultiagent",
   "license": "MIT",
   "repository": {

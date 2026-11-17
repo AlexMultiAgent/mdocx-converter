@@ -11,12 +11,14 @@ Export Markdown files to DOCX from VS Code with:
 - Mermaid code fence rendering
 - Built-in English and Chinese reference DOCX files for academic, technical, business, official (GB/T 9704) and thesis (GB/T 7713) exports
 - Optional custom `reference.docx` template support
+- A cancellable export with live progress
 - Helpful diagnostics in the output panel
 
 ## Features
 
 - Right-click any `.md` file and export it to `.docx`
 - Choose an export submenu type: academic paper, technical document, business report, official document, or thesis
+- Watch the export progress in the status bar and cancel it while it runs — a cancelled export leaves no half-written document behind
 - Render fenced mermaid diagrams such as:
 
 ```mermaid
@@ -125,6 +127,16 @@ Bundled template mapping follows both language and document type:
 Specialized templates do not fall back to the paper templates. If a required bundled template file is missing, export fails with a clear error.
 
 The bundled academic templates are generic academic reference DOCX files written for this extension and are not redistributed journal or conference submission templates. The bundled technical templates are derived from current software and systems documentation guidance such as GB/T 8567-2006, GB/T 32424-2015, ISO/IEC/IEEE 26514:2022, ISO/IEC/IEEE 15289:2019, and ISO/IEC/IEEE 42010:2022. The bundled business templates are derived from current business-plan and project-case guidance such as the NDRC 2023 feasibility-study outline, U.S. SBA business-plan guidance, and HM Treasury Green Book / Five Case Model guidance. These files are practical reference DOCX templates; they are not official Word attachments published by those bodies.
+
+### Changes in 0.4.0
+
+- **The export shows progress and can be cancelled.** The conversion runs in a progress notification, and cancelling it stops the whole process tree — on Windows a `.cmd` runs through `cmd.exe`, so killing only the direct child would leave the grandchild running. A cancelled export reports "Export cancelled." rather than a failure, and the request to the Mermaid Ink service is aborted so the diagram source stops travelling.
+- **The document is written atomically.** Pandoc writes to a staging file next to the target and the finished document is renamed into place, so the path you chose only ever holds a complete document. If the target is still open in Word, the extension says so instead of failing with an obscure error.
+- **A path that contains shell metacharacters is escaped.** Node's shell mode concatenates arguments without escaping them, so a `&` or a `|` in a path could have run a second command.
+- **The output of a child process is limited by bytes, not by characters**, so a large output cannot slip past the limit.
+- **`Check Export Environment` reports everything at once** — the Pandoc version, the Mermaid renderer in use, whether the Mermaid Ink API answers, the number of bundled templates and the active profile — instead of stopping at the first problem it finds.
+- **The Mermaid Ink fallback notice appears once per installation**, before the first request, even when several diagrams are rendered in parallel.
+- A font name that contains control characters is rejected instead of being written into the document.
 
 ### Changes in 0.3.0
 
