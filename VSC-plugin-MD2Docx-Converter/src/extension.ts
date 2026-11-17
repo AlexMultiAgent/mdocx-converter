@@ -12,6 +12,7 @@ import type { ReferenceLanguage, ReferenceLanguageSetting } from './language';
 import {
     buildPandocMetadata as buildProfileMetadata,
     normalizeStyleProfile,
+    normalizeNumericOverride,
     resolveMarginsMm
 } from './profiles';
 import type { StyleProfile } from './profiles';
@@ -550,18 +551,18 @@ function readSettings(markdownUri: vscode.Uri, exportOverrides?: ExportOverrides
         keepIntermediateFiles: readConfigValue(config, legacyConfig, 'keepIntermediateFiles', false),
         styleProfile: exportOverrides?.styleProfile ?? normalizeStyleProfile(readConfigValue(config, legacyConfig, 'styleProfile', 'template')),
         bodyFont: readConfigValue(config, legacyConfig, 'bodyFont', '').trim(),
-        bodySizePt: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'bodySizePt', undefined)),
+        bodySizePt: normalizeNumericOverride(readConfigValue<number | undefined>(config, legacyConfig, 'bodySizePt', undefined), 1, 96),
         heading1Font: readConfigValue(config, legacyConfig, 'heading1Font', '').trim(),
-        heading1SizePt: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'heading1SizePt', undefined)),
+        heading1SizePt: normalizeNumericOverride(readConfigValue<number | undefined>(config, legacyConfig, 'heading1SizePt', undefined), 1, 96),
         heading2Font: readConfigValue(config, legacyConfig, 'heading2Font', '').trim(),
-        heading2SizePt: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'heading2SizePt', undefined)),
+        heading2SizePt: normalizeNumericOverride(readConfigValue<number | undefined>(config, legacyConfig, 'heading2SizePt', undefined), 1, 96),
         heading3Font: readConfigValue(config, legacyConfig, 'heading3Font', '').trim(),
-        heading3SizePt: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'heading3SizePt', undefined)),
-        lineSpacing: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'lineSpacing', undefined)),
-        marginTopMm: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'marginTopMm', undefined)),
-        marginBottomMm: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'marginBottomMm', undefined)),
-        marginLeftMm: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'marginLeftMm', undefined)),
-        marginRightMm: normalizePositiveNumber(readConfigValue<number | undefined>(config, legacyConfig, 'marginRightMm', undefined))
+        heading3SizePt: normalizeNumericOverride(readConfigValue<number | undefined>(config, legacyConfig, 'heading3SizePt', undefined), 1, 96),
+        lineSpacing: normalizeNumericOverride(readConfigValue<number | undefined>(config, legacyConfig, 'lineSpacing', undefined), 0.5, 4),
+        marginTopMm: normalizeNumericOverride(readConfigValue<number | undefined>(config, legacyConfig, 'marginTopMm', undefined), 1, 50),
+        marginBottomMm: normalizeNumericOverride(readConfigValue<number | undefined>(config, legacyConfig, 'marginBottomMm', undefined), 1, 50),
+        marginLeftMm: normalizeNumericOverride(readConfigValue<number | undefined>(config, legacyConfig, 'marginLeftMm', undefined), 1, 50),
+        marginRightMm: normalizeNumericOverride(readConfigValue<number | undefined>(config, legacyConfig, 'marginRightMm', undefined), 1, 50)
     };
 }
 
@@ -580,14 +581,6 @@ function readConfigValue<T>(
     }
 
     return legacyConfig.get<T>(key, defaultValue);
-}
-
-function normalizePositiveNumber(value: number | undefined): number | undefined {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-        return undefined;
-    }
-
-    return value;
 }
 
 async function resolveOutputPath(markdownUri: vscode.Uri, configuredOutputDirectory: string): Promise<string> {

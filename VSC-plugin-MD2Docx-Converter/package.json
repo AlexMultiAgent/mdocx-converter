@@ -284,6 +284,7 @@
           "type": "number",
           "default": 0,
           "minimum": 0,
+          "maximum": 96,
           "description": "Optional body font size in points. Set 0 to use the template/default."
         },
         "mdocxConverter.heading1Font": {
@@ -295,6 +296,7 @@
           "type": "number",
           "default": 0,
           "minimum": 0,
+          "maximum": 96,
           "description": "Optional Heading 1 font size in points. Set 0 to use the template/default."
         },
         "mdocxConverter.heading2Font": {
@@ -306,6 +308,7 @@
           "type": "number",
           "default": 0,
           "minimum": 0,
+          "maximum": 96,
           "description": "Optional Heading 2 font size in points. Set 0 to use the template/default."
         },
         "mdocxConverter.heading3Font": {
@@ -317,37 +320,43 @@
           "type": "number",
           "default": 0,
           "minimum": 0,
+          "maximum": 96,
           "description": "Optional Heading 3 font size in points. Set 0 to use the template/default."
         },
         "mdocxConverter.lineSpacing": {
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Optional line spacing multiplier, for example 1, 1.25, or 1.5. Set 0 to use the template/default."
+          "maximum": 4,
+          "description": "Optional line spacing multiplier from 0.5 to 4, for example 1, 1.25, or 1.5. Set 0 to use the template/default."
         },
         "mdocxConverter.marginTopMm": {
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Optional top margin in millimeters. Set 0 to use the template/default."
+          "maximum": 50,
+          "description": "Optional top margin from 1 to 50 millimeters. Set 0 to use the template/default."
         },
         "mdocxConverter.marginBottomMm": {
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Optional bottom margin in millimeters. Set 0 to use the template/default."
+          "maximum": 50,
+          "description": "Optional bottom margin from 1 to 50 millimeters. Set 0 to use the template/default."
         },
         "mdocxConverter.marginLeftMm": {
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Optional left margin in millimeters. Set 0 to use the template/default."
+          "maximum": 50,
+          "description": "Optional left margin from 1 to 50 millimeters. Set 0 to use the template/default."
         },
         "mdocxConverter.marginRightMm": {
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Optional right margin in millimeters. Set 0 to use the template/default."
+          "maximum": 50,
+          "description": "Optional right margin from 1 to 50 millimeters. Set 0 to use the template/default."
         }
       }
     }

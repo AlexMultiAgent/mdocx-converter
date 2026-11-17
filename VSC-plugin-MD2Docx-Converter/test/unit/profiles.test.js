@@ -10,6 +10,7 @@ const {
     resolveLineSpacingTwips,
     buildPandocMetadata,
     resolveMarginsMm,
+    normalizeNumericOverride,
     STYLE_PROFILES
 } = require('../../out/profiles.js');
 const { BUNDLED_REFERENCE_DOCX, getBundledReferenceDocxCandidates } = require('../../out/templates.js');
@@ -22,6 +23,15 @@ test('normalizeStyleProfile falls back to template', () => {
     assert.equal(normalizeStyleProfile('academic'), 'academic');
     assert.equal(normalizeStyleProfile('nonsense'), 'template');
     assert.equal(normalizeStyleProfile(undefined), 'template');
+});
+
+test('numeric overrides outside the supported ranges fall back to presets', () => {
+    assert.equal(normalizeNumericOverride(0, 1, 96), undefined);
+    assert.equal(normalizeNumericOverride(97, 1, 96), undefined);
+    assert.equal(normalizeNumericOverride(12, 1, 96), 12);
+    assert.equal(normalizeNumericOverride(0.25, 0.5, 4), undefined);
+    assert.equal(normalizeNumericOverride(51, 1, 50), undefined);
+    assert.equal(normalizeNumericOverride(Number.POSITIVE_INFINITY, 1, 96), undefined);
 });
 
 test('official profile uses GB/T 9704 margins', () => {

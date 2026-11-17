@@ -209,6 +209,19 @@ export function normalizeStyleProfile(value: string | undefined): StyleProfile {
     return STYLE_PROFILES.includes(normalized as StyleProfile) ? (normalized as StyleProfile) : 'template';
 }
 
+/** Keep a finite user override inside the same range the Dify side accepts. */
+export function normalizeNumericOverride(
+    value: unknown,
+    minimum: number,
+    maximum: number
+): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return undefined;
+    }
+
+    return value >= minimum && value <= maximum ? value : undefined;
+}
+
 /** Explicit user font wins and fills both slots; otherwise fall back to the preset pair. */
 export function resolveFontPair(explicitFont: string | undefined, presetPair?: FontPair): FontPair | undefined {
     const explicit = explicitFont?.trim();
