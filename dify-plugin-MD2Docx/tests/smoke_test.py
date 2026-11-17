@@ -212,6 +212,12 @@ class TestSanitizeFilename:
         assert sanitize_filename("") == "Document"
         assert sanitize_filename("   ") == "Document"
 
+    def test_windows_reserved_names_and_trailing_dots_are_sanitized(self):
+        assert sanitize_filename("CON") == "_CON"
+        assert sanitize_filename("con.txt") == "_con.txt"
+        assert sanitize_filename("report... ") == "report"
+        assert sanitize_filename("...") == "Document"
+
 
 class TestCoerceBool:
     def test_bool_inputs(self):

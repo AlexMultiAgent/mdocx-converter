@@ -972,6 +972,12 @@ class TestFilenameLength:
         assert len(result) <= 120
         assert result.startswith("a")
 
+    def test_utf8_title_fits_the_filename_byte_limit(self):
+        from md2docx import sanitize_filename
+
+        result = sanitize_filename("汉" * 200)
+        assert len((result + ".docx").encode("utf-8")) <= 125
+
     def test_a_normal_title_is_untouched(self):
         from md2docx import sanitize_filename
 

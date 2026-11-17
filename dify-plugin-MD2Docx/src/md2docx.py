@@ -414,15 +414,33 @@ def parse_mm(value) -> Optional[float]:
 
 _FILENAME_BAD_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
-# Longest title we keep. The name becomes the file name of the produced
-# document and must leave room for the directory it is stored in.
-MAX_TITLE_LENGTH = 120
+# Longest UTF-8 byte sequence we keep. The produced ".docx" suffix still has
+# to fit inside the common 255-byte filesystem filename limit.
+MAX_TITLE_BYTES = 120
+
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+    | {f"COM{index}" for index in range(1, 10)}
+    | {f"LPT{index}" for index in range(1, 10)}
+)
 
 
 def sanitize_filename(name: str) -> str:
-    """Replace characters illegal in filenames with underscores."""
-    cleaned = _FILENAME_BAD_CHARS_RE.sub("_", name).strip() or "Document"
-    return cleaned[:MAX_TITLE_LENGTH].strip() or "Document"
+    """Return a filename stem that is safe on Windows and POSIX filesystems."""
+    cleaned = _FILENAME_BAD_CHARS_RE.sub("_", name).strip(" .")
+    if not cleaned:
+        return "Document"
+
+    device_name = cleaned.split(".", 1)[0].upper()
+    if device_name in _WINDOWS_RESERVED_NAMES:
+        cleaned = f"_{cleaned}"
+
+    encoded = cleaned.encode("utf-8")
+    if len(encoded) > MAX_TITLE_BYTES:
+        cleaned = encoded[:MAX_TITLE_BYTES].decode("utf-8", errors="ignore")
+
+    cleaned = cleaned.strip(" .")
+    return cleaned or "Document"
 
 
 # ── Mermaid preprocessing ────────────────────────────────────
