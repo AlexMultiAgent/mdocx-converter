@@ -59,6 +59,42 @@ test('body override matches styles by display name, not by hard-coded ids', () =
     assert.ok(styleByName(updated, 'Body Text').includes('w:ascii="Arial"'), 'Body Text must be styled');
 });
 
+test('replacement patterns in font names remain literal XML text', () => {
+    const hostile = "A$&B$'C$`D$$E";
+    const updated = upsertStyleOverride(CANONICAL_STYLES, {
+        styleId: 'Normal',
+        styleNames: ['Normal'],
+        asciiFont: hostile,
+        eastAsiaFont: hostile,
+        sizePt: 11
+    });
+
+    assert.equal(
+        (updated.match(/<w:rFonts\b/g) || []).length,
+        1,
+        'the existing font element must be replaced exactly once'
+    );
+    assert.ok(
+        updated.includes('w:ascii="A$&amp;B$\'C$`D$$E"'),
+        `the font name must survive literally: ${styleByName(updated, 'Normal')}`
+    );
+});
+
+test('replacement patterns in a newly inserted style remain literal', () => {
+    const hostile = "A$&B$'C$`D$$E";
+    const updated = upsertStyleOverride('<w:styles></w:styles>', {
+        styleId: 'Heading9',
+        styleNames: ['Heading 9'],
+        asciiFont: hostile,
+        eastAsiaFont: hostile,
+        sizePt: 11
+    });
+
+    assert.equal((updated.match(/<w:style\b/g) || []).length, 1);
+    assert.equal((updated.match(/<\/w:styles>/g) || []).length, 1);
+    assert.ok(updated.includes('w:ascii="A$&amp;B$\'C$`D$$E"'));
+});
+
 test('body override does not touch List Number', () => {
     const override = { styleId: 'Normal', styleNames: BODY_STYLE_NAMES, asciiFont: 'Arial', eastAsiaFont: 'Arial', sizePt: 11 };
     const updated = upsertStyleOverride(LEGACY_CHINESE_STYLES, override);

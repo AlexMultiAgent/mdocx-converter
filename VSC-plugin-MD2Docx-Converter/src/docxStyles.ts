@@ -363,16 +363,19 @@ export function upsertInsideElement(xml: string, tagName: string, childRegex: Re
 
     let updatedElement: string;
     if (childRegex.test(elementXml)) {
-        updatedElement = elementXml.replace(childRegex, childXml);
+        updatedElement = elementXml.replace(childRegex, () => childXml);
     } else if (order) {
         const childTagName = childXml.match(/^<([A-Za-z0-9:]+)/)?.[1];
         updatedElement = childTagName
             ? insertChildInOrder(elementXml, childTagName, childXml, order)
-            : elementXml.replace(/\/>$/, `>${childXml}</${tagName}>`);
+            : elementXml.replace(/\/>$/, () => `>${childXml}</${tagName}>`);
     } else if (elementXml.endsWith('/>')) {
-        updatedElement = elementXml.replace(/\/>$/, `>${childXml}</${tagName}>`);
+        updatedElement = elementXml.replace(/\/>$/, () => `>${childXml}</${tagName}>`);
     } else {
-        updatedElement = elementXml.replace(new RegExp(`</${tagName}>$`), `${childXml}</${tagName}>`);
+        updatedElement = elementXml.replace(
+            new RegExp(`</${tagName}>$`),
+            () => `${childXml}</${tagName}>`
+        );
     }
 
     return xml.slice(0, target.start) + updatedElement + xml.slice(target.end);
@@ -381,10 +384,16 @@ export function upsertInsideElement(xml: string, tagName: string, childRegex: Re
 export function upsertXmlAttribute(xml: string, attrName: string, value: string): string {
     const attrRegex = new RegExp(`${escapeRegex(attrName)}="[^"]*"`);
     if (attrRegex.test(xml)) {
-        return xml.replace(attrRegex, `${attrName}="${escapeXmlAttribute(value)}"`);
+        return xml.replace(
+            attrRegex,
+            () => `${attrName}="${escapeXmlAttribute(value)}"`
+        );
     }
 
-    return xml.replace(/\/>$/, ` ${attrName}="${escapeXmlAttribute(value)}"/>`);
+    return xml.replace(
+        /\/>$/,
+        () => ` ${attrName}="${escapeXmlAttribute(value)}"/>`
+    );
 }
 
 /**
@@ -472,7 +481,10 @@ export function insertDocxStyle(stylesXml: string, override: DocxStyleOverride):
     const styleName = override.styleNames[0] ?? override.styleId.replace(/([a-z])([A-Z])/g, '$1 $2');
     const baseStyleXml = `<w:style w:type="${styleType}" w:customStyle="1" w:styleId="${escapeXmlAttribute(override.styleId)}"><w:name w:val="${escapeXmlAttribute(styleName)}"/></w:style>`;
     const updatedStyleXml = updateStyleXml(baseStyleXml, override);
-    return stylesXml.replace(/<\/w:styles>\s*$/, `${updatedStyleXml}</w:styles>`);
+    return stylesXml.replace(
+        /<\/w:styles>\s*$/,
+        () => `${updatedStyleXml}</w:styles>`
+    );
 }
 
 /**
