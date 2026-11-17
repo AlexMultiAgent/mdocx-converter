@@ -282,8 +282,17 @@ python -c "import pypandoc; print(pypandoc.get_pandoc_version())"
 
 **Install / upgrade** — plugin daemon at `http://plugin_daemon:5002`, header `X-Api-Key: $PLUGIN_DAEMON_KEY` (from the Dify install's `docker/.env`):
 - `POST /plugin/{tenant_id}/management/install/upload/package` (multipart field `dify_pkg`) → returns `plugin_unique_identifier`.
-- `POST /plugin/{tenant_id}/management/install/identifiers` returns `all_installed: true` when the plugin is already installed and **changes nothing** — use `.../management/install/upgrade` (`original_plugin_unique_identifier` / `new_plugin_unique_identifier`) to move to a new version.
-- `POST /plugin/{tenant_id}/dispatch/tool/invoke` invokes a tool: `X-Plugin-ID: <author>/<name>`, `data.provider`, `data.tool`, `data.credential_type: unauthorized` (this plugin has no credentials).
+- `POST /plugin/{tenant_id}/management/install/identifiers` returns `all_installed: true` when the plugin is already installed and **changes nothing** — use `.../management/install/upgrade` (`original_plugin_unique_identifier` / `new_plugin_unique_identifier`) to move to a new version. The upgrade needs **`source`** as well, or the daemon rejects the request on a missing `Source` field.
+- `POST /plugin/{tenant_id}/dispatch/tool/invoke` invokes a tool: `X-Plugin-ID: <author>/<name>`, `data.provider`, `data.tool`, `data.credential_type: unauthorized` (this plugin has no credentials). The body also needs **`"credentials": {}`** — the daemon validates that field as a dictionary and a missing one fails with a pydantic error.
+
+⚠️ **The new version does not serve requests right away.** The daemon builds the venv first ("pre-compiling plugin"), then starts a new local runtime ("local runtime ready"), and only then does the session point at the new identifier — about a minute after the upgrade returns. **A test that runs in between is silently served by the old version**, which reads like the new code misbehaving: the 0.0.4 build tried to connect to a refused Mermaid endpoint, and it looked like the 0.0.5 filter was broken. Check which version answered before trusting a result:
+
+```bash
+docker exec docker-plugin_daemon-1 sh -c \
+  "grep -o 'plugin_unique_identifier=alexmultiagent/md2docx:[^ ]*' /app/logs/server.log | tail -5"
+```
+
+The session lines carry the `plugin_unique_identifier=` that served the call. The plugin itself runs in the **daemon** container, not in the sandbox — its venv is at `/app/storage/cwd/<author>/<name>-<version>@<hash>/.venv`.
 
 **Blob chunks are base64-encoded individually.** Decode each chunk on its own and concatenate the bytes in `sequence` order; joining the base64 strings and decoding once yields garbage. `total_length` on the first chunk is the expected size.
 
