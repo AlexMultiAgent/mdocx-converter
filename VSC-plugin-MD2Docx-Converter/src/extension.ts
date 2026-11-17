@@ -113,6 +113,17 @@ function throwIfCancellationRequested(token: CancellationToken | undefined): voi
     }
 }
 
+function requireTrustedWorkspace(): boolean {
+    if (vscode.workspace.isTrusted !== false) {
+        return true;
+    }
+
+    void vscode.window.showErrorMessage(
+        'Trust this workspace before running MD2Docx commands.'
+    );
+    return false;
+}
+
 /**
  * The extension context, kept at module level so the one-time Mermaid Ink
  * privacy notice can reach `globalState` without threading the context
@@ -187,6 +198,10 @@ async function runExport(
     extensionPath: string,
     exportOverrides?: ExportOverrides
 ): Promise<void> {
+    if (!requireTrustedWorkspace()) {
+        return;
+    }
+
     const markdownUri = getMarkdownUri(uri);
     if (!markdownUri) {
         void vscode.window.showErrorMessage('Open a Markdown file or right-click a .md file to export it.');
@@ -396,6 +411,10 @@ interface ExportOverrides {
 }
 
 async function checkEnvironment(uri: vscode.Uri | undefined, outputChannel: vscode.OutputChannel, extensionPath: string): Promise<void> {
+    if (!requireTrustedWorkspace()) {
+        return;
+    }
+
     const markdownUri = getMarkdownUri(uri) ?? vscode.Uri.file(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd());
     const settings = readSettings(markdownUri);
 
@@ -679,6 +698,10 @@ async function showMermaidApiNotice(host: string): Promise<void> {
  * referenced with a relative path, so the document stays portable.
  */
 async function renderMermaidToImage(outputChannel: vscode.OutputChannel): Promise<void> {
+    if (!requireTrustedWorkspace()) {
+        return;
+    }
+
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
         void vscode.window.showErrorMessage('Open a Markdown file to render a Mermaid diagram.');

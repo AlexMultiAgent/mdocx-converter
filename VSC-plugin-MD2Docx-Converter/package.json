@@ -14,6 +14,11 @@
     "vscode": "^1.116.0",
     "node": ">=22"
   },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
   "categories": [
     "Other",
     "Formatters"

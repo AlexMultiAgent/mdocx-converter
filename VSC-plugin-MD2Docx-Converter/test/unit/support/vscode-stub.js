@@ -154,6 +154,7 @@ function createVscodeStub(options = {}) {
     };
 
     const workspace = {
+        isTrusted: options.trusted ?? true,
         workspaceFolders: options.workspaceFolders,
         getConfiguration: (section) => createConfig(section === 'mdocxConverter' ? state.config : {}),
         getWorkspaceFolder: () => undefined
