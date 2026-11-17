@@ -229,6 +229,45 @@ test('the privacy notice appears before the diagram content is sent', async (t) 
     );
 });
 
+test('a new Mermaid API host receives its own privacy notice', async (t) => {
+    const dir = makeTempDir('mdocx-privacy-hosts-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const markdownPath = path.join(dir, 'doc.md');
+    fs.writeFileSync(markdownPath, '# Title\n\n```mermaid\ngraph TD;\nA-->B;\n```\n', 'utf8');
+
+    const first = await startFakeMermaidInkServer();
+    const second = await startFakeMermaidInkServer();
+    t.after(() => first.close());
+    t.after(() => second.close());
+
+    const stub = createVscodeStub({
+        config: {
+            mermaidRenderer: 'api',
+            mermaidApiUrl: first.url
+        }
+    });
+    const extension = loadExtension(stub);
+    extension.activate(createExtensionContext());
+    const handler = stub.state.commands.get(EXPORT_COMMAND_ID);
+
+    await withTimeout(handler(stub.Uri.file(markdownPath)), 30000, 'first host export');
+    stub.state.config.mermaidApiUrl = second.url;
+    await withTimeout(handler(stub.Uri.file(markdownPath)), 30000, 'second host export');
+
+    const notices = stub.state.messages.filter((entry) =>
+        entry.level === 'info' && /diagram content is sent/.test(entry.message)
+    );
+    assert.ok(
+        notices.some((entry) => entry.message.includes(first.url)),
+        `the first host must be announced: ${JSON.stringify(notices)}`
+    );
+    assert.ok(
+        notices.some((entry) => entry.message.includes(second.url)),
+        `the second host must receive a new notice: ${JSON.stringify(notices)}`
+    );
+});
+
 test('the privacy notice appears when the local Mermaid CLI fails', async (t) => {
     const dir = makeTempDir('mdocx-privacy-fallback-');
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

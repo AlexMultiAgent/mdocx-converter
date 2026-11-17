@@ -36,7 +36,7 @@ const RENDER_MERMAID_COMMAND_ID = 'mdocxConverter.renderMermaidToImage';
 const CHECK_ENVIRONMENT_COMMAND_ID = 'mdocxConverter.checkEnvironment';
 const CONFIGURATION_SECTION = 'mdocxConverter';
 const LEGACY_CONFIGURATION_SECTION = 'paperifyMd';
-const MERMAID_API_NOTICE_SHOWN_KEY = 'mdocxConverter.mermaidApiNoticeShown';
+const MERMAID_API_NOTICE_HOSTS_KEY = 'mdocxConverter.mermaidApiNoticeHosts';
 const EXPORT_CANCELLED_MESSAGE = 'Export cancelled.';
 const EXECUTABLE_PROBE_TIMEOUT_MS = 5000;
 
@@ -644,31 +644,55 @@ async function resolveReferenceDocx(
  * Tell the user once that diagram content leaves the machine.
  *
  * The Mermaid Ink API fallback sends the diagram source to a remote service,
- * so the export discloses it — once per installation, not once per diagram.
- * The flag lives in `globalState` so it survives a reload.
+ * so the export discloses it once per destination origin, not once per
+ * diagram. The announced origins live in `globalState` so they survive a
+ * reload.
  *
  * The notice comes before the first request: the content has to be on its way
  * only after the user has been told where it goes. The promise is kept, so
  * that diagrams rendered in parallel show the notice once and not once per
  * diagram.
  */
-let mermaidApiNotice: Promise<void> | undefined;
+const mermaidApiNotices = new Map<string, Promise<void>>();
+const announcedMermaidHosts = new Set<string>();
 
 function notifyMermaidApiFallback(host: string): Promise<void> {
-    if (!mermaidApiNotice) {
-        mermaidApiNotice = showMermaidApiNotice(host);
+    const normalizedHost = new URL(host).origin;
+    let notice = mermaidApiNotices.get(normalizedHost);
+    if (!notice) {
+        notice = showMermaidApiNotice(normalizedHost).finally(() => {
+            mermaidApiNotices.delete(normalizedHost);
+        });
+        mermaidApiNotices.set(normalizedHost, notice);
     }
 
-    return mermaidApiNotice;
+    return notice;
 }
 
 async function showMermaidApiNotice(host: string): Promise<void> {
     const state = extensionContext?.globalState;
-    if (!state || state.get<boolean>(MERMAID_API_NOTICE_SHOWN_KEY)) {
+    if (!state) {
         return;
     }
 
-    await state.update(MERMAID_API_NOTICE_SHOWN_KEY, true);
+    if (announcedMermaidHosts.size === 0) {
+        const stored = state.get<Record<string, boolean>>(MERMAID_API_NOTICE_HOSTS_KEY, {});
+        for (const [storedHost, announced] of Object.entries(stored)) {
+            if (announced) {
+                announcedMermaidHosts.add(storedHost);
+            }
+        }
+    }
+
+    if (announcedMermaidHosts.has(host)) {
+        return;
+    }
+
+    announcedMermaidHosts.add(host);
+    await state.update(
+        MERMAID_API_NOTICE_HOSTS_KEY,
+        Object.fromEntries([...announcedMermaidHosts].map((announcedHost) => [announcedHost, true]))
+    );
 
     const openSettingsLabel = 'Open Settings';
     const choice = await vscode.window.showInformationMessage(
