@@ -25,6 +25,19 @@ Unit tests live in `test/unit/*.test.js` — 12 files — and run on Node's buil
 - A glob that matches nothing exits 0, so a renamed test file looks like a passing run. If `npm test` reports zero tests, the naming convention was broken.
 - Node 18/20 lack `--test` glob support; use Node >= 22.
 
+**CI runs on `ubuntu-latest` and the local machine is Windows — the two disagree about process handling and shell quoting.** Run the suite in a Linux container before pushing:
+
+```bash
+MSYS_NO_PATHCONV=1 docker run --rm \
+  -v "d:/GitHub/mdocx-converter/VSC-plugin-MD2Docx-Converter:/app" \
+  -v mdocx-node-modules:/app/node_modules -w /app node:24 \
+  bash -c "npm ci --silent >/dev/null 2>&1 && npm test"
+```
+
+`MSYS_NO_PATHCONV=1` is required — Git Bash otherwise rewrites `/app` into a Windows path. The named volume keeps `node_modules` out of the host tree.
+
+**A process that has terminated but has not been reaped yet is a zombie**, and `kill(pid, 0)` still succeeds for it. The test helper therefore reads the process state (`/proc/<pid>/stat`, `ps` elsewhere) instead of trusting the signal: a zombie counts as terminated. Without this the cancellation test fails in a container, where nothing reaps the orphaned grandchild promptly.
+
 `npm run test:e2e` (`test/e2e/run.js`) is a **manual end-to-end check** — it drives the real `pandoc` for each of the 5 profiles × 2 languages against the bundled templates, applies the extension's own override layer from `out/docxStyles.js`, then asserts the exported body font, body size, heading font, heading size, page size, the page-number footer and all four margins. It needs pandoc on the runner, so it is **not** wired into CI. The repo CI (`.github/workflows/ci.yml`) runs four jobs: the Dify plugin's pytest suite, this extension's `npm test`, `scripts/sync-templates.sh --check`, and `scripts/check-preset-parity.py`. The parity gate compares the preset table of this side with the one of the Dify plugin — it needs `npm run compile` first, because it reads `out/profiles.js` and `out/templates.js`.
 
 ## Architecture

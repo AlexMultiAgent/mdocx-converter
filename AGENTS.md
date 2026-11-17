@@ -6,8 +6,8 @@ This monorepo ships two products that share a Markdown→DOCX pipeline. **Read t
 
 | Directory | Stack | Build | Tests |
 |---|---|---|---|
-| `VSC-plugin-MD2Docx-Converter/` | TypeScript VS Code extension (8 modules under `src/`, ~2800 LOC) | `npm install && npm run compile && npm run package` | `npm test` — Node's built-in `node:test`, 10 files under `test/unit/`; `npm run test:e2e` — real pandoc |
-| `dify-plugin-MD2Docx/` | Python Dify Tool plugin (`src/md2docx.py`, ~1310 LOC) | `python scripts/package.py --output MD2Docx.difypkg` | `pytest tests/ -v` from inside this dir |
+| `VSC-plugin-MD2Docx-Converter/` | TypeScript VS Code extension (9 modules under `src/`, ~3300 LOC) | `npm install && npm run compile && npm run package` | `npm test` — Node's built-in `node:test`, 12 files under `test/unit/`; `npm run test:e2e` — real pandoc |
+| `dify-plugin-MD2Docx/` | Python Dify Tool plugin (`src/md2docx.py`, ~1450 LOC) | `python scripts/package.py --output MD2Docx.difypkg` | `pytest tests/ -v` from inside this dir |
 | `scripts/sync-templates.sh` | bash | — | `bash scripts/sync-templates.sh --check` |
 | `scripts/check-preset-parity.py` | python | — | `python scripts/check-preset-parity.py` — runs in CI's `preset-parity` job |
 

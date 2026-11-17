@@ -1,5 +1,5 @@
 # CLAUDE.md
-<!-- last_updated: 2026-11-15 -->
+<!-- last_updated: 2026-11-17 -->
 
 Monorepo for **MD2Docx Converter** — tools that export Markdown to Word documents with templates, Mermaid diagram rendering, and style presets.
 
@@ -43,8 +43,8 @@ The Dify `.difypkg` cannot be built with the `dify-plugin` CLI — it is not on 
 
 ## Releasing
 
-- **VS Code extension**: `npm run package` → `.vsix`, published from `VSC-plugin-MD2Docx-Converter/`.
-- **Dify plugin**: a `.difypkg` committed to `AlexMultiAgent/md2docx/` in the `AlexMultiAgent/dify-plugins` fork, pulled into upstream with a PR. One version-update PR = one `.difypkg` file. The rules are in `dify-plugin-MD2Docx/CLAUDE.md`.
+- **VS Code extension**: `npm run package` → `.vsix` in `VSC-plugin-MD2Docx-Converter/`. Publishing needs an Azure DevOps PAT for the `alexmultiagent` publisher — it is **not stored on this machine**, so the last step has to be run by the user (`npx vsce publish --pat <PAT> --no-git-tag-version`). Only `v0.1.0` is tagged; later releases shipped untagged.
+- **Dify plugin**: a `.difypkg` committed to `AlexMultiAgent/md2docx/` in the `AlexMultiAgent/dify-plugins` fork, pulled into upstream with a PR. One version-update PR = one `.difypkg` file. **The manifest version must be incremented** — the marketplace keys a release by it and rejects a resubmission that reuses or lowers the version. The rules are in `dify-plugin-MD2Docx/CLAUDE.md`.
 
 ## Architecture
 

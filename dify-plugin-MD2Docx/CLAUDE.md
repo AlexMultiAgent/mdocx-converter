@@ -15,11 +15,11 @@ $env:RUN_LIVE_MERMAID="1"; pytest tests/test_mermaid_live.py -v # optional publi
 
 > The syntax check needs `encoding='utf-8'`: the source contains UTF-8 punctuation and the default locale encoding on a Chinese Windows install is GBK, which raises `UnicodeDecodeError`.
 
-Tests live in `tests/`: `smoke_test.py` (pure functions), `test_invoke.py` (Dify Tool entry with mocked deps), `test_docx_output.py` (end-to-end pandoc conversion plus security/limits), `test_mermaid_converter.py` (standalone Mermaid tool), `test_packaging.py` (archive contract), and `test_mermaid_live.py` (opt-in public API integration). `conftest.py` auto-skips when `dify_plugin` is missing.
+Tests live in `tests/`: `smoke_test.py` (pure functions), `test_invoke.py` (Dify Tool entry with mocked deps), `test_docx_output.py` (end-to-end pandoc conversion plus security/limits), `test_mermaid_converter.py` (standalone Mermaid tool), `test_mermaid_api_url.py` (the endpoint filter), `test_robustness.py` (the pandoc time limit, the cleanup after a failure, the error hygiene and the boolean coercion), `test_packaging.py` (archive contract), and `test_mermaid_live.py` (opt-in public API integration). `conftest.py` auto-skips when `dify_plugin` is missing.
 
 ## Architecture
 
-This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + three Python modules: `src/md2docx.py` (core conversion, ~1310 lines), `src/_mermaid_render.py` (shared Mermaid HTTP client), `src/mermaid_converter.py` (standalone Mermaid tool).
+This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + three Python modules: `src/md2docx.py` (core conversion, ~1450 lines), `src/_mermaid_render.py` (shared Mermaid HTTP client), `src/mermaid_converter.py` (standalone Mermaid tool).
 
 ### Conversion pipeline
 
@@ -58,8 +58,13 @@ markdown_content
 dify-plugin-MD2Docx/
 ├── manifest.yaml              # Plugin metadata, runtime config
 ├── main.py                    # Plugin entry point
-├── requirements.txt           # pypandoc-binary, python-docx, requests, lxml
+├── requirements.txt           # dify_plugin, pypandoc-binary, python-docx, requests, lxml
 ├── PRIVACY.md                 # Mermaid Ink API & Pandoc download disclosure
+├── README.md                  # English marketplace README — shipped
+├── readme/
+│   └── README_zh_Hans.md      # Chinese marketplace README — shipped
+├── requirements-dev.txt       # pytest, dify_plugin — excluded from the package itself
+├── pytest.ini                 # The `slow` and `integration` markers — excluded from the package itself
 ├── scripts/package.py         # .difypkg builder (excluded from the package itself)
 ├── icon.svg                   # Referenced by manifest `icon:` — keep byte-identical to _assets/icon.svg
 ├── _assets/
@@ -193,6 +198,21 @@ The marketplace lives in `langgenius/dify-plugins`; the fork is `AlexMultiAgent/
 - The PR body is **English only** (CJK outside code blocks is rejected) and carries the info fields Author / Plugin name / Version / Source repository / Contact, both submission-type checkboxes, and a risk level.
 
 The validators live in `langgenius/dify-marketplace-toolkit` under `toolkit/checks/*.py` — read them there for the exact rules.
+
+### Check the PR locally before opening it
+
+The marketplace's own validators run on the package and on the PR body, so a missing piece is found in seconds instead of in a CI round of ~15 minutes:
+
+```bash
+git clone --depth=1 git@github.com:langgenius/dify-marketplace-toolkit.git
+cd dify-marketplace-toolkit
+python validator/validate-difypkg.py <path>.difypkg \
+  --pr-body-file <pr-body.md> --output-dir <report-dir>
+```
+
+It reports `Blocking failures: 0` and writes `summary.md`. The checks that need GitHub metadata are skipped in the local run — cover them by hand with `validator/check-pr-body.py` and `validator/check-pr-review-notes.py`.
+
+Two traps on Windows: the toolkit needs the **real `yq`** (the pip `yq` package is a wrapper around `jq` and fails without it — put the `yq` binary first on `PATH`), and `PYTHONIOENCODING=utf-8` keeps the validator from dying on a GBK console while it prints the findings. A checkout of the toolkit that was patched by hand can also carry a broken `toolkit/checks/manifest.py` — `git status` in the clone and `git checkout -- <file>` restores the upstream version.
 
 ### Packaging without the CLI
 
