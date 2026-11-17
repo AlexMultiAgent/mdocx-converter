@@ -10,7 +10,7 @@ Monorepo for **MD2Docx Converter** — tools that export Markdown to Word docume
 | `VSC-plugin-MD2Docx-Converter/` | VS Code extension — right-click `.md` → export DOCX |
 | `dify-plugin-MD2Docx/` | Dify Tool plugin — `md_to_docx` / `md_to_docx_advanced` / `mermaid_converter` in Dify workflows |
 
-Each subdirectory has its own `CLAUDE.md` with architecture details and build commands. `AGENTS.md` at the repo root is the gotcha cheat sheet — read it before changing either plugin.
+Each subdirectory has its own `CLAUDE.md` with architecture details and build commands. `AGENTS.md` at the repo root is the gotcha cheat sheet — read it before changing either plugin. `.claude.local.md` holds the machine-local notes (the local Dify instance, the Git Bash `docker` path quirks); it is gitignored, so never commit it.
 
 ## Build & test
 
@@ -28,13 +28,17 @@ npm run build:templates  # regenerate multi-templates/ from src/profiles.ts
 cd dify-plugin-MD2Docx
 pip install -r requirements.txt            # runtime deps (pypandoc-binary bundles pandoc, no download)
 pip install -r requirements-dev.txt        # dev deps (pytest, dify_plugin for local testing)
-python -c "import ast; ast.parse(open('src/md2docx.py', encoding='utf-8').read()); print('Syntax OK')"
+python -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8')) for p in pathlib.Path('src').glob('*.py')]; print('Syntax OK')"
 pytest tests/ -v                           # run test suite (pandoc provided by pypandoc-binary)
 python scripts/package.py --output MD2Docx.difypkg   # build the plugin package
 
 # Templates (from the repo root)
 bash scripts/sync-templates.sh              # copy the VSC templates into the Dify plugin
 bash scripts/sync-templates.sh --check      # CI gate: fail when they drift
+
+# Preset parity (from the repo root) — the VS Code side has to be compiled first
+cd VSC-plugin-MD2Docx-Converter && npm run compile && cd ..
+python scripts/check-preset-parity.py       # CI gate: fail when the two preset tables drift
 ```
 
 `CI` runs on every push and pull request: the Dify plugin's pytest suite (against the declared minimum `dify_plugin` SDK 0.9.0, 0.9.1 and the current 0.11.0), the package build, the VS Code plugin's `node:test` suite, `scripts/sync-templates.sh --check`, and `scripts/check-preset-parity.py` (see `.github/workflows/ci.yml`).

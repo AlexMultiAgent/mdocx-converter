@@ -58,6 +58,7 @@ markdown_content
 dify-plugin-MD2Docx/
 ├── manifest.yaml              # Plugin metadata, runtime config
 ├── main.py                    # Plugin entry point
+├── .difyignore                # Controls what ships in the .difypkg (the file itself is kept)
 ├── requirements.txt           # dify_plugin, pypandoc-binary, python-docx, requests, lxml
 ├── PRIVACY.md                 # Mermaid Ink API & Pandoc download disclosure
 ├── README.md                  # English marketplace README — shipped

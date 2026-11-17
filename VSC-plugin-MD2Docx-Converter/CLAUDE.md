@@ -68,11 +68,14 @@ Markdown file
   ├─ 1. Mermaid preprocessing: regex-extract ```mermaid blocks → mmdc → PNG/SVG
   │     Falls back to the Mermaid Ink API when mmdc is unavailable (4 diagrams at a time, shared 120s budget)
   │     A diagram that fails both ways stays a code block — the export still succeeds
-  │     Replaces each fenced block with ![Mermaid Diagram N](path/to/rendered.png)
+  │     Replaces each fenced block with ![Mermaid Diagram N](./mermaid-assets/diagram-N.png)
+  │     (.svg when mermaidOutputFormat=svg — the Mermaid Ink fallback always writes .png)
   │     Produces a temp Markdown file in os.tmpdir()
   │
   ├─ 2. Pandoc: gfm+raw_html → docx via --reference-doc (template)
   │     Metadata injected via --metadata (mainfont, CJKmainfont, fontsize, linestretch, monofont)
+  │     plus a separate title=<document title> — of the six, only `title` reaches the output
+  │     (pandoc writes it into the DOCX core properties, as dc:title)
   │     --resource-path set to both the original Markdown dir and the temp dir
   │     NOT sandboxed — local image paths and remote URLs still resolve
   │
@@ -95,6 +98,30 @@ Markdown file
 | `mdocxConverter.checkEnvironment` | Checks pandoc and mmdc availability, the Mermaid renderer mode, the Mermaid Ink API reachability, the number of bundled templates and the active style profile |
 
 The 5 submenu commands override `styleProfile` and `referenceLanguage` regardless of user settings. This is the primary UX: right-click an `.md` file → choose document type → get auto language detection + template selection.
+
+### Settings
+
+`package.json` contributes 25 `mdocxConverter.*` settings. The 13 style overrides map 1:1 onto the Dify plugin's advanced-tool parameters — the names differ only in case style, so a change on one side has a counterpart on the other:
+
+| VS Code setting | Dify tool parameter |
+|---|---|
+| `bodyFont` | `body_font` |
+| `bodySizePt` | `body_size_pt` |
+| `lineSpacing` | `line_spacing` |
+| `marginTopMm` | `margin_top_mm` |
+| `marginBottomMm` | `margin_bottom_mm` |
+| `marginLeftMm` | `margin_left_mm` |
+| `marginRightMm` | `margin_right_mm` |
+| `heading1Font` | `heading1_font` |
+| `heading1SizePt` | `heading1_size_pt` |
+| `heading2Font` | `heading2_font` |
+| `heading2SizePt` | `heading2_size_pt` |
+| `heading3Font` | `heading3_font` |
+| `heading3SizePt` | `heading3_size_pt` |
+
+An empty string or `0` falls back to the profile default, and an explicit font fills **both** the Latin and the East-Asian slot (`resolveFontPair`) — the same rule the Dify side uses. The remaining 12 settings have no Dify counterpart: `pandocPath`, `mermaidCliPath`, `referenceDocx`, `referenceLanguage`, `styleProfile`, `outputDirectory`, `mermaidRenderer`, `mermaidOutputFormat`, `mermaidApiUrl`, `documentTitle`, `openAfterExport`, `keepIntermediateFiles`.
+
+Each one also has a `paperifyMd.*` legacy alias — see "Legacy config fallback" below.
 
 ### Template resolution order
 
@@ -195,7 +222,7 @@ The Dify plugin reaches the same result through python-docx, whose `doc.styles[n
 
 ### VSIX packaging
 
-`.vscodeignore` excludes `src/`, examples, docs, and most assets but whitelists `!node_modules/adm-zip/**` (runtime dependency), `!multi-templates/*.docx`, and `!assets/icon.png`. This keeps the .vsix small.
+`.vscodeignore` excludes `src/`, `test/`, `specs/`, `scripts/`, examples, docs, and most assets but whitelists `!node_modules/adm-zip/**` (runtime dependency), the 10 `!multi-templates/*.docx` files, and `!assets/icon.png`, `!assets/banner.png`, `!assets/mermaid-example.png`. This keeps the .vsix small.
 
 ## Related documents
 
