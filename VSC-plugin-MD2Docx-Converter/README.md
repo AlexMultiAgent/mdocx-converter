@@ -131,6 +131,15 @@ The bundled academic templates are generic academic reference DOCX files written
 
 The `official` and `thesis` presets are typography approximations for body text, headings and margins. They are not complete GB/T submission packages with covers, document registers, tables of contents or signature blocks.
 
+### Changes in 0.5.0
+
+- VS Code and Dify now share the same release version. The unified release line starts at 0.5.0 and skips the previously planned 0.4.2 and 0.0.6 versions.
+- Document title extraction now follows CommonMark fences, including tilde fences and longer closing fences.
+- Hash characters that belong to a heading are preserved, so titles such as `C#`, `F# Guide`, and `Title###` are no longer truncated.
+- Executable probes are bounded by the export cancellation token, and Mermaid file names are collision-resistant.
+- Mermaid API privacy notices are tracked per destination origin.
+- DOCX replacement values are treated literally, avoiding regex replacement expansion in custom templates.
+
 ### Changes in 0.4.1
 
 - The template build now sanitizes bundled reference DOCX metadata. The ten shipped templates no longer carry Pandoc's `Title` and `Author` placeholders or Word's stale document statistics.
