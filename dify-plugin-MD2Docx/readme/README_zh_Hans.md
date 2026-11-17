@@ -147,6 +147,8 @@ PLUGIN_MAX_EXECUTION_TIMEOUT=1800
 
 修改后重启：`docker compose down && docker compose up -d`
 
+这些容器级超时不会改变插件内部的 165 秒转换预算。插件必须在 180 秒连接时限内完成，避免 SDK 先于转换流程断开请求。
+
 ## 开发
 
 ```bash

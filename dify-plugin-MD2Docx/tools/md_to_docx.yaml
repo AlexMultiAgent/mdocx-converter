@@ -23,8 +23,8 @@ parameters:
       en_US: "Markdown Content"
       zh_Hans: "Markdown 内容"
     human_description:
-      en_US: "The Markdown text to convert (max 5 MB; supports GFM syntax, Mermaid code blocks, tables, and data-URI images)."
-      zh_Hans: "要转换的 Markdown 文本（最大 5MB；支持 GFM 语法、Mermaid 代码块、表格和 data URI 图片）。"
+      en_US: "The Markdown text to convert (max 5 MB and 5,000 image references; supports GFM syntax, Mermaid code blocks, tables, and data-URI images)."
+      zh_Hans: "要转换的 Markdown 文本（最大 5MB、最多 5,000 个图片引用；支持 GFM 语法、Mermaid 代码块、表格和 data URI 图片）。"
     llm_description: "The full markdown text content to be converted to a docx document"
     form: llm
 
