@@ -18,7 +18,7 @@ Press `F5` in VS Code to launch an Extension Development Host for manual testing
 
 ## Testing
 
-Unit tests live in `test/unit/*.test.js` — 12 files — and run on Node's built-in `node:test` runner — no test framework dependency.
+Unit tests live in `test/unit/*.test.js` — 13 files — and run on Node's built-in `node:test` runner — no test framework dependency.
 
 - The test glob is `test/unit/**/*.test.js`, so **every test file must be named `*.test.js`** or it will be silently skipped.
 - `npm test` compiles `src/` to `out/` first, then the tests `require()` the compiled output (e.g. `require('../../out/document.js')`). `test/` is not part of the TypeScript build.
@@ -38,7 +38,7 @@ MSYS_NO_PATHCONV=1 docker run --rm \
 
 **A process that has terminated but has not been reaped yet is a zombie**, and `kill(pid, 0)` still succeeds for it. The test helper therefore reads the process state (`/proc/<pid>/stat`, `ps` elsewhere) instead of trusting the signal: a zombie counts as terminated. Without this the cancellation test fails in a container, where nothing reaps the orphaned grandchild promptly.
 
-`npm run test:e2e` (`test/e2e/run.js`) is a **manual end-to-end check** — it drives the real `pandoc` for each of the 5 profiles × 2 languages against the bundled templates, applies the extension's own override layer from `out/docxStyles.js`, then asserts the exported body font, body size, heading font, heading size, page size, the page-number footer and all four margins. It needs pandoc on the runner, so it is **not** wired into CI. The repo CI (`.github/workflows/ci.yml`) runs four jobs: the Dify plugin's pytest suite, this extension's `npm test`, `scripts/sync-templates.sh --check`, and `scripts/check-preset-parity.py`. The parity gate compares the preset table of this side with the one of the Dify plugin — it needs `npm run compile` first, because it reads `out/profiles.js` and `out/templates.js`.
+`npm run test:e2e` (`test/e2e/run.js`) drives the real `pandoc` for each of the 5 profiles × 2 languages against the bundled templates, applies the extension's own override layer from `out/docxStyles.js`, then asserts the exported body font, body size, heading font, heading size, page size, the page-number footer and all four margins. CI installs Pandoc and runs it. The repo CI (`.github/workflows/ci.yml`) has five jobs: the Dify pytest/package matrix, this extension's unit tests + E2E + VSIX build, template sync, preset parity, and dependency audits. The parity gate compares the preset table of this side with the one of the Dify plugin — it needs `npm run compile` first, because it reads `out/profiles.js` and `out/templates.js`.
 
 ## Architecture
 
@@ -198,7 +198,7 @@ The Dify plugin reaches the same result through python-docx, whose `doc.styles[n
 
 ### Binary resolution
 
-`resolveExecutable()` tries candidates in order, runs each with `--version`, returns the first that succeeds. Pandoc candidates include winget package directories (searched recursively for `pandoc.exe`). Mermaid candidates include workspace `node_modules/.bin/mmdc.cmd` and `%APPDATA%/npm/mmdc.cmd` on Windows.
+`resolveExecutable()` tries candidates in order, runs each with `--version`, and returns the first that succeeds. Each probe has a 5-second timeout and receives the export cancellation token, so a blocking workspace binary cannot hang the export or ignore the Cancel button. Pandoc candidates include winget package directories (searched recursively for `pandoc.exe`). Mermaid candidates include workspace `node_modules/.bin/mmdc.cmd` and `%APPDATA%/npm/mmdc.cmd` on Windows.
 
 Because a workspace-owned executable is a code-execution boundary, the extension is disabled in untrusted workspaces (`capabilities.untrustedWorkspaces.supported: false`) and every command re-checks `vscode.workspace.isTrusted` before resolving binaries.
 
@@ -220,7 +220,7 @@ Because a workspace-owned executable is a code-execution boundary, the extension
 - The export runs inside `vscode.window.withProgress` and is cancellable: the pandoc call uses `spawn` (not `execFile`) so the child process can be killed, and a cancelled export reports "Export cancelled." rather than a failure
 - Cancelling takes down the whole process tree (`taskkill /T /F` on Windows). A `.cmd` runs through `cmd.exe`, so killing the direct child would leave the grandchild alive with the stdout pipe open — the export would hang instead of stopping
 - The arguments of a `.cmd` are escaped by `src/process.ts`. Node's own shell mode concatenates them without escaping, so a metacharacter in a path would run a second command. A line break inside an argument cannot survive a batch file and truncates the argument, but it cannot run a second command either
-- The Mermaid Ink API is used only after the user has been told that the diagram source leaves the machine — the notice comes before the first request, not after it
+- The Mermaid Ink API is used only after the user has been told that the diagram source leaves the machine — the notice is scoped per destination origin and comes before the first request to that origin
 - The request to the Mermaid Ink service is aborted when the export is cancelled, so the diagram source does not keep travelling after the user gave up
 - The document title comes from `mdocxConverter.documentTitle`, else the first ATX heading (`src/document.ts`), else the sanitised file name
 

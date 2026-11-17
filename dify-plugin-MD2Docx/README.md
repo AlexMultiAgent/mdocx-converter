@@ -101,6 +101,8 @@ mermaid_ink:
 
 Then set `mermaid_api_url` to `http://<host>:3000` (use `http://mermaid_ink:3000` inside compose). Provide the final endpoint directly; HTTP redirects are not followed. The address of the host the plugin runs on and the cloud metadata endpoints are refused, so point the parameter at the address of your instance rather than at a name that resolves to one of them.
 
+Self-hosted operators can also set `MERMAID_INK_URL` as the default when a tool call leaves `mermaid_api_url` empty. The parameter takes precedence over the environment variable.
+
 ## Network & Privacy
 
 - **Mermaid Ink** (`https://mermaid.ink`): Mermaid source code is sent for PNG rendering. No other data is transmitted. Disable via `mermaid_enabled=false` or use a self-hosted instance.

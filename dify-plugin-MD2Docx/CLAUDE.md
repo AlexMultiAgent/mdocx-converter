@@ -19,7 +19,7 @@ Tests live in `tests/`: `smoke_test.py` (pure functions), `test_invoke.py` (Dify
 
 ## Architecture
 
-This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + three Python modules: `src/md2docx.py` (core conversion, ~1450 lines), `src/_mermaid_render.py` (shared Mermaid HTTP client), `src/mermaid_converter.py` (standalone Mermaid tool).
+This is a **Dify Tool plugin** that converts Markdown to DOCX. The plugin consists of YAML schemas + three Python modules: `src/md2docx.py` (core conversion, ~1,620 lines), `src/_mermaid_render.py` (shared Mermaid HTTP client), `src/mermaid_converter.py` (standalone Mermaid tool).
 
 ### Conversion pipeline
 
@@ -228,9 +228,9 @@ Two traps on Windows: the toolkit needs the **real `yq`** (the pip `yq` package 
 python scripts/package.py --output MD2Docx.difypkg
 ```
 
-The script walks this directory, applies `.difyignore`, keeps `.difyignore` itself, sorts entries by ASCII path, writes them with `ZIP_DEFLATED` and no directory entries, and refuses to build unless every entry in `REQUIRED_ENTRIES` is present (manifest, `main.py`, both icons, the three tool YAMLs, the three `src/` modules). The entry **order and contents** are reproducible, but each zip entry embeds the source file's mtime — two builds of the same tree are **not** byte-identical. CI builds and uploads the package for both the minimum supported SDK and the current tested SDK.
+The script walks this directory, applies `.difyignore`, keeps `.difyignore` itself, sorts entries by ASCII path, writes them with `ZIP_DEFLATED` and no directory entries, and refuses to build unless every entry in `REQUIRED_ENTRIES` is present (manifest, `main.py`, both icons, the three tool YAMLs, the three `src/` modules). ZIP timestamps and modes are fixed, so two builds of the same tree are **byte-identical**. CI builds and uploads the package for the full SDK matrix.
 
-The daemon rejects a package whose **uncompressed** size exceeds `MAX_PLUGIN_PACKAGE_SIZE` (50 MB by default, `internal/types/app/default.go` in `dify-plugin-daemon`). The current package is ~140 KB compressed / ~220 KB uncompressed — never vendor the Pandoc binary into it.
+The daemon rejects a package whose **uncompressed** size exceeds `MAX_PLUGIN_PACKAGE_SIZE` (50 MB by default, `internal/types/app/default.go` in `dify-plugin-daemon`). The current package is approximately 145 KB compressed / 235 KB uncompressed — never vendor the Pandoc binary into it.
 
 ## Deployment tuning (self-hosted Dify)
 

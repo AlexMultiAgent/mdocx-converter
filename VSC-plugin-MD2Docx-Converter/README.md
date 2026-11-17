@@ -64,7 +64,7 @@ Install:
 npm install -g @mermaid-js/mermaid-cli
 ```
 
-If Mermaid CLI is not found and the Markdown file contains ` ```mermaid ` code fences, the default `auto` renderer falls back to the Mermaid Ink API. **The diagram source is then sent to that service** — the extension says so once per installation before the first request. Set `mdocxConverter.mermaidRenderer` to `local` to keep every diagram on your machine, or to `api` to always use the service. A diagram that fails both ways is kept as a code block instead of failing the export.
+If Mermaid CLI is not found and the Markdown file contains ` ```mermaid ` code fences, the default `auto` renderer falls back to the Mermaid Ink API. **The diagram source is then sent to that service** — the extension gives the first notice for each destination origin before sending content there. Set `mdocxConverter.mermaidRenderer` to `local` to keep every diagram on your machine, or to `api` to always use the service. A diagram that fails both ways is kept as a code block instead of failing the export.
 
 ## Settings
 
@@ -143,7 +143,7 @@ The `official` and `thesis` presets are typography approximations for body text,
 - **A path that contains shell metacharacters is escaped.** Node's shell mode concatenates arguments without escaping them, so a `&` or a `|` in a path could have run a second command.
 - **The output of a child process is limited by bytes, not by characters**, so a large output cannot slip past the limit.
 - **`Check Export Environment` reports everything at once** — the Pandoc version, the Mermaid renderer in use, whether the Mermaid Ink API answers, the number of bundled templates and the active profile — instead of stopping at the first problem it finds.
-- **The Mermaid Ink fallback notice appears once per installation**, before the first request, even when several diagrams are rendered in parallel.
+- **The Mermaid Ink fallback notice appears once per destination origin**, before the first request to that origin, even when several diagrams are rendered in parallel.
 - A font name that contains control characters is rejected instead of being written into the document.
 
 ### Changes in 0.3.0
