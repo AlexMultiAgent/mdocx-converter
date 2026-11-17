@@ -11,6 +11,12 @@ test('extractDocumentTitle strips trailing hashes and whitespace', () => {
     assert.equal(extractDocumentTitle('##   Spaced Title   ##'), 'Spaced Title');
 });
 
+test('extractDocumentTitle keeps hash characters that belong to the title text', () => {
+    assert.equal(extractDocumentTitle('# C#'), 'C#');
+    assert.equal(extractDocumentTitle('# F# Guide'), 'F# Guide');
+    assert.equal(extractDocumentTitle('# Title###'), 'Title###');
+});
+
 test('extractDocumentTitle ignores setext headings', () => {
     assert.equal(extractDocumentTitle('Setext\n======\n'), undefined);
 });
@@ -42,7 +48,10 @@ test('sanitizeFileName replaces illegal characters', () => {
 test('extractDocumentTitle ignores headings inside fenced code blocks', () => {
     assert.equal(extractDocumentTitle('```bash\n# Install the thing\nnpm i\n```'), undefined);
     assert.equal(extractDocumentTitle('````bash\n# Install the thing\nnpm i\n````'), undefined);
+    assert.equal(extractDocumentTitle('```bash\n# Install the thing\nnpm i\n````'), undefined);
+    assert.equal(extractDocumentTitle(' ~~~bash\n# Install the thing\nnpm i\n ~~~'), undefined);
     assert.equal(extractDocumentTitle('```\n# not a title\n```\n\n# Real Title'), 'Real Title');
+    assert.equal(extractDocumentTitle('```\n# not a title\n```\n\n~~~\n# also not a title\n~~~\n\n# Real Title'), 'Real Title');
 });
 
 test('resolveDocumentTitle handles Windows paths', () => {
