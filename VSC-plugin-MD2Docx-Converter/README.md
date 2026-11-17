@@ -128,6 +128,11 @@ Specialized templates do not fall back to the paper templates. If a required bun
 
 The bundled academic templates are generic academic reference DOCX files written for this extension and are not redistributed journal or conference submission templates. The bundled technical templates are derived from current software and systems documentation guidance such as GB/T 8567-2006, GB/T 32424-2015, ISO/IEC/IEEE 26514:2022, ISO/IEC/IEEE 15289:2019, and ISO/IEC/IEEE 42010:2022. The bundled business templates are derived from current business-plan and project-case guidance such as the NDRC 2023 feasibility-study outline, U.S. SBA business-plan guidance, and HM Treasury Green Book / Five Case Model guidance. These files are practical reference DOCX templates; they are not official Word attachments published by those bodies.
 
+### Changes in 0.4.1
+
+- The template build now sanitizes bundled reference DOCX metadata. The ten shipped templates no longer carry Pandoc's `Title` and `Author` placeholders or Word's stale document statistics.
+- Metadata cleanup runs directly in the cross-platform Node template generator, so Windows and Linux builds produce the same clean output.
+
 ### Changes in 0.4.0
 
 - **The export shows progress and can be cancelled.** The conversion runs in a progress notification, and cancelling it stops the whole process tree — on Windows a `.cmd` runs through `cmd.exe`, so killing only the direct child would leave the grandchild running. A cancelled export reports "Export cancelled." rather than a failure, and the request to the Mermaid Ink service is aborted so the diagram source stops travelling.
