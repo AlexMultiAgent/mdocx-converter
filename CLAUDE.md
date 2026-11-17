@@ -47,8 +47,8 @@ The Dify `.difypkg` cannot be built with the `dify-plugin` CLI — it is not on 
 
 ## Releasing
 
-- **VS Code extension**: `npm run package` → `.vsix` in `VSC-plugin-MD2Docx-Converter/`. Publishing needs an Azure DevOps PAT for the `alexmultiagent` publisher — it is **not stored on this machine**, so the last step has to be run by the user (`npx vsce publish --pat <PAT> --no-git-tag-version`). The release tag is separate and optional: `v0.1.0` and `v0.4.0` carry one, 0.2.0 and 0.3.0 shipped untagged.
-- **Dify plugin**: a `.difypkg` committed to `AlexMultiAgent/md2docx/` in the `AlexMultiAgent/dify-plugins` fork, pulled into upstream with a PR. One version-update PR = one `.difypkg` file. **The manifest version must be incremented** — the marketplace keys a release by it and rejects a resubmission that reuses or lowers the version. The rules are in `dify-plugin-MD2Docx/CLAUDE.md`.
+- **VS Code extension**: `npm run package` → `.vsix` in `VSC-plugin-MD2Docx-Converter/`. Publishing needs an Azure DevOps PAT for the `alexmultiagent` publisher — it is **not stored on this machine**, so the last step has to be run by the user (`npx vsce publish --pat <PAT> --no-git-tag-version`). The release tag is separate and optional: `v0.1.0` and `v0.4.0` carry one, 0.2.0, 0.3.0 and 0.4.1 shipped untagged. 0.4.1 is on the Marketplace (published 2026-11-17), so **the next release must be 0.4.2** — the Marketplace rejects a republished version number.
+- **Dify plugin**: a `.difypkg` committed to `AlexMultiAgent/md2docx/` in the `AlexMultiAgent/dify-plugins` fork, pulled into upstream with a PR. One version-update PR = one `.difypkg` file. **The manifest version must be incremented** — the marketplace keys a release by it and rejects a resubmission that reuses or lowers the version. 0.0.5 is published (PR #3797, merged 2026-11-17), so **the next release must be 0.0.6**. The rules are in `dify-plugin-MD2Docx/CLAUDE.md`.
 
 ## Architecture
 

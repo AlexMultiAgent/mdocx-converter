@@ -190,6 +190,10 @@ Rules the layer depends on:
 
 The marketplace lives in `langgenius/dify-plugins`; the fork is `AlexMultiAgent/dify-plugins`. The flow: commit and push the source here first, then commit the built `.difypkg` to `AlexMultiAgent/md2docx/MD2Docx.difypkg` on a branch of the fork, and open a PR against `langgenius/dify-plugins:main`. **A version-update PR changes exactly one `.difypkg` file.**
 
+**If a version-update PR is still open and that version was never published, replace the `.difypkg` in that same branch and update the PR title and body — do not open a second PR.** Two open PRs touching the same `.difypkg` conflict, and the upstream repository holds only one package per plugin directory, so the version that lands is whatever the manifest inside the `.difypkg` says. A skipped version number is accepted, but say so in the PR body so a reviewer is not left guessing.
+
+The release-flow gotchas — building the fork branch through the GitHub API instead of cloning the huge upstream repository, using `gh` rather than the GitHub MCP, and the environment limits of this machine — are in `../AGENTS.md`.
+
 ### The pre-check CI rejects the PR unless
 
 - `manifest.yaml` has **`contact`** — a valid email address.
