@@ -373,7 +373,7 @@
   "devDependencies": {
     "@types/adm-zip": "^0.5.8",
     "@types/node": "^24.9.1",
-    "@types/vscode": "^1.116.0",
+    "@types/vscode": "^1.146.0",
     "@vscode/vsce": "^4.1.1",
     "typescript": "^6.0.3"
   },
