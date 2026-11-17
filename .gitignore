@@ -14,3 +14,4 @@ docs/
 .offline-markdown-preview/
 architecture.html
 .kilo/
+.worktrees/
