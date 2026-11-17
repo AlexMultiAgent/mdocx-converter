@@ -228,6 +228,28 @@ class TestFontInput:
 
 
 class TestErrorMessages:
+    def test_render_write_error_does_not_return_temp_path(
+        self, monkeypatch, tmp_path
+    ):
+        import md2docx
+
+        monkeypatch.setattr(
+            md2docx,
+            "render_mermaid_with_retry",
+            lambda *a, **kw: b"\x89PNG\r\n\x1a\nx",
+        )
+        errors = []
+        missing_dir = tmp_path / "private" / "missing"
+
+        index, png_path, message = md2docx._render_one_with_retry(
+            1, "graph TD", str(missing_dir), errors
+        )
+
+        assert index == 1
+        assert png_path is None
+        assert "private" not in (message or "")
+        assert "private" not in " ".join(errors)
+
     def test_a_pandoc_failure_does_not_leak_the_stack_trace(self):
         from md2docx import _map_pandoc_error
 

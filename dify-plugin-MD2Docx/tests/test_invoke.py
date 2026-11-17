@@ -199,6 +199,23 @@ class TestMd2DocxToolInvoke:
         assert len(text_msgs) == 1
         assert "pandoc_conversion" in text_msgs[0].data.lower()
 
+    def test_file_errors_do_not_expose_server_paths(self, monkeypatch):
+        """Filesystem exceptions must not reveal plugin-server paths."""
+        monkeypatch.setattr(
+            "md2docx.convert_via_pandoc",
+            lambda *a, **kw: (_ for _ in ()).throw(
+                FileNotFoundError(r"Z:\srv\secret\missing")
+            ),
+        )
+
+        tool = self._make_tool()
+        messages = list(tool._invoke({"markdown_content": "# Bad doc\n"}))
+
+        json_payload = next(m.data for m in messages if m.type == "json")
+        text_payload = next(m.data for m in messages if m.type == "text")
+        assert "secret" not in json_payload["message"]
+        assert "secret" not in text_payload
+
     def test_custom_template_bytes(self, monkeypatch, tmp_path):
         """custom_template as bytes should be processed."""
         # Ensure resolve_template returns a valid path

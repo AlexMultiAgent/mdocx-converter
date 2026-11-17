@@ -491,9 +491,15 @@ def _render_one_with_retry(index: int, diagram: str, temp_dir: str,
         with open(png_path, "wb") as f:
             f.write(png_bytes)
     except OSError as e:
+        logger.warning(
+            "Mermaid diagram %s could not be written: %s",
+            index,
+            e,
+            exc_info=True,
+        )
         if render_state is not None:
             render_state.release(len(png_bytes))
-        message = f"Diagram {index}: {e}"
+        message = f"Diagram {index}: the rendered image could not be written."
         errors.append(message)
         return index, None, message
     return index, png_path, None
@@ -803,6 +809,13 @@ def _map_pandoc_error(message: str) -> str:
     # stack; it stays in the log, where the operator can read it.
     logger.warning("Pandoc conversion failed: %s", message)
     return "Pandoc conversion failed. Check the plugin log for the details."
+
+
+def _public_error_message(error: Exception) -> str:
+    """Return a caller-safe description while keeping paths in the log."""
+    if isinstance(error, OSError):
+        return "A temporary file operation failed during conversion."
+    return str(error)
 
 
 class _PandocWarningCollector(logging.Handler):
@@ -1530,12 +1543,23 @@ class Md2DocxTool(Tool):
         except Exception as e:
             # Keep whatever was collected before the failure: the caller needs
             # to know why the document is incomplete.
-            payload = {"status": "error", "stage": stage, "message": str(e)}
+            logger.warning(
+                "md2docx conversion failed at stage %s: %s",
+                stage,
+                e,
+                exc_info=True,
+            )
+            public_message = _public_error_message(e)
+            payload = {
+                "status": "error",
+                "stage": stage,
+                "message": public_message,
+            }
             if warnings:
                 payload["warnings"] = warnings
             yield self.create_json_message(payload)
             yield self.create_text_message(
-                f"md2docx conversion failed at stage '{stage}': {e}"
+                f"md2docx conversion failed at stage '{stage}': {public_message}"
             )
 
         finally:
