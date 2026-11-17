@@ -106,6 +106,12 @@ Bundled template mapping lives in the `BUNDLED_REFERENCE_DOCX` constant in `src/
 
 This extension ships the same **10** templates as the Dify plugin — academic, technical, business, official and thesis, each in an English and a Chinese variant. **The VS Code side is the source of truth for the template files**: they are **generated** by `npm run build:templates` from `src/profiles.ts` + `scripts/reference-base.docx`, `scripts/sync-templates.sh` copies them into `dify-plugin-MD2Docx/multi-templates/`, and `scripts/sync-templates.sh --check` (run by CI) fails when they drift. Never hand-edit a `.docx` under `multi-templates/` — the next build overwrites it.
 
+#### Template metadata
+
+`npm run build:templates` sanitizes every generated template as part of the build. `scripts/build-templates.js` rewrites `docProps/core.xml` to clear `dc:title`, `dc:creator`, `cp:lastModifiedBy`, `dc:subject` and `cp:keywords`, and resets `cp:revision` to 1. It rewrites `docProps/app.xml` to reset Word's document statistics and remove `ap:HLinks`. The base DOCX stays untouched; only the emitted templates are sanitized.
+
+This step is implemented in Node rather than delegated to `scripts/sanitize-docx-metadata.ps1`, so the same build works on Windows and Linux. The PowerShell file remains a manual helper for sanitizing an existing DOCX, not a build prerequisite. `test/unit/templates.test.js` checks all ten shipped templates for placeholder metadata, so a later change that bypasses the sanitizer fails CI. After rebuilding, run `bash scripts/sync-templates.sh` to copy both sides into parity.
+
 ### Language auto-detection
 
 `detectMarkdownLanguage()` samples the first 20,000 characters. Chinese is selected when CJK character count ≥ 40 OR > 15% of Latin letter count. Otherwise English.

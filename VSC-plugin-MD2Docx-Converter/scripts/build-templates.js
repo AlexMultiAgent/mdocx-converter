@@ -37,6 +37,49 @@ function escapeXml(value) {
         .replace(/"/g, '&quot;');
 }
 
+function setXmlText(xml, qualifiedName, value) {
+    const name = qualifiedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const element = new RegExp(`<${name}(?:\\s[^>]*)?>[\\s\\S]*?</${name}>`);
+    return xml.replace(element, (match) => {
+        const openingTag = match.match(new RegExp(`^<${name}(?:\\s[^>]*)?>`))[0];
+        return `${openingTag}${escapeXml(value)}</${qualifiedName}>`;
+    });
+}
+
+function removeXmlElement(xml, qualifiedName) {
+    const name = qualifiedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return xml.replace(new RegExp(`<${name}\\b(?:\\s[^>]*)?(?:\\/>|>[\\s\\S]*?</${name}>)`), '');
+}
+
+function sanitizeCoreProperties(xml) {
+    let sanitized = xml;
+    for (const field of ['dc:title', 'dc:creator', 'cp:lastModifiedBy', 'dc:subject', 'cp:keywords']) {
+        sanitized = setXmlText(sanitized, field, '');
+    }
+    return setXmlText(sanitized, 'cp:revision', '1');
+}
+
+function sanitizeExtendedProperties(xml) {
+    let sanitized = removeXmlElement(xml, 'HLinks');
+    const values = {
+        Company: '',
+        Manager: '',
+        Template: 'Normal.dotm',
+        TotalTime: '0',
+        Pages: '1',
+        Words: '0',
+        Characters: '0',
+        Lines: '0',
+        Paragraphs: '0',
+        CharactersWithSpaces: '0'
+    };
+
+    for (const [field, value] of Object.entries(values)) {
+        sanitized = setXmlText(sanitized, field, value);
+    }
+    return sanitized;
+}
+
 function mmToTwips(mm) {
     return Math.round((mm * 1440) / 25.4);
 }
@@ -258,6 +301,10 @@ function buildTemplate(baseZip, profile, language) {
             output.addFile(name, Buffer.from(contentTypes, 'utf8'));
         } else if (name === 'word/_rels/document.xml.rels') {
             output.addFile(name, Buffer.from(rels, 'utf8'));
+        } else if (name === 'docProps/core.xml') {
+            output.addFile(name, Buffer.from(sanitizeCoreProperties(entry.getData().toString('utf8')), 'utf8'));
+        } else if (name === 'docProps/app.xml') {
+            output.addFile(name, Buffer.from(sanitizeExtendedProperties(entry.getData().toString('utf8')), 'utf8'));
         } else {
             output.addFile(name, entry.getData());
         }

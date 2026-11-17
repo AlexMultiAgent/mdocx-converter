@@ -15,10 +15,40 @@ function readTemplate(profile, language) {
     return new AdmZip(file);
 }
 
+function xmlText(xml, qualifiedName) {
+    const match = xml.match(new RegExp(`<${qualifiedName}(?:\\s[^>]*)?>([\\s\\S]*?)</${qualifiedName}>`));
+    return match ? match[1] : undefined;
+}
+
 test('all ten templates exist', () => {
     for (const profile of GENERATED_PROFILES) {
         for (const language of ['english', 'chinese']) {
             assert.ok(fs.existsSync(path.join(TEMPLATE_DIR, `reference_${language}_${profile}.docx`)));
+        }
+    }
+});
+
+test('all ten templates strip placeholder core properties', () => {
+    for (const profile of GENERATED_PROFILES) {
+        for (const language of ['english', 'chinese']) {
+            const core = readTemplate(profile, language).readAsText('docProps/core.xml');
+            assert.equal(xmlText(core, 'dc:title'), '', `${profile}/${language} must not ship pandoc's title placeholder`);
+            assert.equal(xmlText(core, 'dc:creator'), '', `${profile}/${language} must not ship pandoc's author placeholder`);
+            assert.equal(xmlText(core, 'cp:keywords') ?? '', '');
+            assert.equal(xmlText(core, 'cp:revision') ?? '1', '1');
+        }
+    }
+});
+
+test('all ten templates strip stale extended-property statistics', () => {
+    for (const profile of GENERATED_PROFILES) {
+        for (const language of ['english', 'chinese']) {
+            const app = readTemplate(profile, language).readAsText('docProps/app.xml');
+            assert.equal(xmlText(app, 'Template'), 'Normal.dotm');
+            for (const field of ['TotalTime', 'Words', 'Characters', 'Lines', 'Paragraphs', 'CharactersWithSpaces']) {
+                assert.equal(xmlText(app, field), '0', `${profile}/${language} ${field} must be reset`);
+            }
+            assert.ok(!/<HLinks\b/.test(app), `${profile}/${language} must not carry hyperlink statistics`);
         }
     }
 });
