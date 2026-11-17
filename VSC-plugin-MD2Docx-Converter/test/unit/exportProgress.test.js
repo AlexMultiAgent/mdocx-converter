@@ -4,8 +4,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
+const AdmZip = require('adm-zip');
 
 const {
+    BUNDLED_TEMPLATE,
     createExtensionContext,
     createVscodeStub,
     isProcessAlive,
@@ -18,6 +20,25 @@ const {
 } = require('./support/vscode-stub.js');
 
 const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
+
+function makeReferenceWithBrokenOrder(directory) {
+    const zip = new AdmZip(BUNDLED_TEMPLATE);
+    const stylesEntry = zip.getEntry('word/styles.xml');
+    let styles = stylesEntry.getData().toString('utf8');
+    const normal = styles.match(/<w:style[^>]*w:styleId="Normal"[\s\S]*?<\/w:style>/)?.[0];
+    const spacing = normal?.match(/<w:spacing\b[^>]*\/>/)?.[0];
+    assert.ok(normal && spacing, 'the bundled template must contain Normal spacing');
+
+    const brokenNormal = normal
+        .replace(spacing, '')
+        .replace('</w:pPr>', `${spacing}</w:pPr>`);
+    styles = styles.replace(normal, brokenNormal);
+    zip.updateFile(stylesEntry, Buffer.from(styles, 'utf8'));
+
+    const reference = path.join(directory, 'broken-order-reference.docx');
+    zip.writeZip(reference);
+    return reference;
+}
 
 function stageOf(message) {
     if (typeof message !== 'string') {
@@ -107,6 +128,39 @@ test('the progress notification is cancellable', async (t) => {
 
     assert.equal(stub.state.progress.options.cancellable, true);
     assert.equal(stub.state.progress.options.location, stub.ProgressLocation.Notification);
+});
+
+test('the template profile repairs style property order', async (t) => {
+    const dir = makeTempDir('mdocx-template-order-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const markdownPath = path.join(dir, 'doc.md');
+    fs.writeFileSync(markdownPath, '# Title\n\nBody.\n', 'utf8');
+    const reference = makeReferenceWithBrokenOrder(dir);
+    const fakePandoc = writeFakePandoc(dir, reference);
+
+    const stub = createVscodeStub({
+        config: {
+            pandocPath: fakePandoc,
+            styleProfile: 'template'
+        }
+    });
+    const extension = loadExtension(stub);
+    extension.activate(createExtensionContext());
+
+    await withTimeout(runExport(stub, markdownPath), 30000, 'template export');
+
+    const output = path.join(dir, 'doc.docx');
+    const zip = new AdmZip(output);
+    const styles = zip.readAsText('word/styles.xml');
+    const normal = styles.match(/<w:style[^>]*w:styleId="Normal"[\s\S]*?<\/w:style>/)?.[0];
+    const spacingIndex = normal.indexOf('<w:spacing');
+    const justificationIndex = normal.indexOf('<w:jc');
+    assert.ok(spacingIndex >= 0 && justificationIndex >= 0);
+    assert.ok(
+        spacingIndex < justificationIndex,
+        `w:spacing must precede w:jc: ${normal}`
+    );
 });
 
 test('the mermaid counter advances for every diagram, including failed ones', async (t) => {

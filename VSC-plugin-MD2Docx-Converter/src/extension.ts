@@ -23,7 +23,7 @@ import { findDocxPart } from './docxParts';
 import { getBundledReferenceDocxCandidates } from './templates';
 import { resolveDocumentTitle } from './document';
 import { execExecutable, shouldRunThroughShell, ProcessCancelledError, DEFAULT_MAX_BUFFER } from './process';
-import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, findMermaidBlockAtPosition, isPngImage, normalizeMermaidOutputFormat, parseMermaidBlocks, renderMermaidViaInk, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
+import { mapWithConcurrency, MERMAID_TOTAL_BUDGET_MS, createMermaidFileName, findMermaidBlockAtPosition, isPngImage, normalizeMermaidOutputFormat, parseMermaidBlocks, renderMermaidViaInk, renderMermaidWithRetry, validateMermaidApiUrl } from './mermaid';
 
 const OUTPUT_CHANNEL_NAME = 'mdocx-converter';
 const EXPORT_COMMAND_ID = 'mdocxConverter.exportToDocx';
@@ -303,10 +303,10 @@ async function runExport(
                     heading3SizePt: settings.heading3SizePt,
                     lineSpacing: settings.lineSpacing
                 });
-                if (docxStyleOverrides.length > 0 || hasMarginOverrides(settings)) {
-                    await applyDocxStyleOverrides(stagingPath, settings, docxStyleOverrides);
-                    outputChannel.appendLine('Applied DOCX style overrides.');
-                }
+                await applyDocxStyleOverrides(stagingPath, settings, docxStyleOverrides);
+                outputChannel.appendLine(docxStyleOverrides.length > 0 || hasMarginOverrides(settings)
+                    ? 'Applied DOCX style overrides.'
+                    : 'Normalized DOCX style order.');
 
                 await publishOutput(stagingPath, outputPath);
                 stagingPath = undefined;
@@ -764,7 +764,7 @@ async function renderMermaidToImage(outputChannel: vscode.OutputChannel): Promis
         const outputDirectory = path.join(path.dirname(document.uri.fsPath), 'mermaid-images');
         await fsp.mkdir(outputDirectory, { recursive: true });
 
-        const fileName = `mermaid-${formatTimestamp(new Date())}.${extension}`;
+        const fileName = createMermaidFileName(new Date(), extension);
         const outputPath = path.join(outputDirectory, fileName);
 
         await renderDiagramToFile(code, outputPath, settings, outputChannel, localMermaid);
@@ -793,12 +793,6 @@ async function renderMermaidToImage(outputChannel: vscode.OutputChannel): Promis
         outputChannel.appendLine(`Mermaid render failed: ${message}`);
         void vscode.window.showErrorMessage(message);
     }
-}
-
-function formatTimestamp(date: Date): string {
-    const pad = (value: number) => String(value).padStart(2, '0');
-    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
-        + `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 }
 
 /**

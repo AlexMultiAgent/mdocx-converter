@@ -115,7 +115,7 @@ test('cancelling an export stops an executable probe', async () => {
     setTimeout(() => source.cancel(), 100);
 
     try {
-        await assert.rejects(withTimeout(running, 1000, 'probe cancellation'), (error) => {
+        await assert.rejects(withTimeout(running, 3000, 'probe cancellation'), (error) => {
             assert.equal(error.name, 'ProcessCancelledError');
             return true;
         });

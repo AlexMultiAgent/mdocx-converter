@@ -1,6 +1,7 @@
 import * as http from 'http';
 import * as https from 'https';
 import * as zlib from 'zlib';
+import { randomUUID } from 'crypto';
 
 /**
  * Mermaid fence detection.
@@ -142,6 +143,26 @@ export function isPngImage(data: Buffer): boolean {
  */
 export function normalizeMermaidOutputFormat(value: unknown): 'png' | 'svg' {
     return value === 'svg' ? 'svg' : 'png';
+}
+
+let lastFileNameTimestamp = -1;
+let fileNameSequence = 0;
+
+/** Build a portable, collision-resistant name for a standalone diagram. */
+export function createMermaidFileName(date: Date, extension: 'png' | 'svg'): string {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    const timestamp = date.getTime();
+    if (timestamp === lastFileNameTimestamp) {
+        fileNameSequence += 1;
+    } else {
+        lastFileNameTimestamp = timestamp;
+        fileNameSequence = 0;
+    }
+
+    const readable = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
+        + `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+        + `-${String(date.getMilliseconds()).padStart(3, '0')}`;
+    return `mermaid-${readable}-${fileNameSequence}-${randomUUID().slice(0, 8)}.${extension}`;
 }
 
 /**

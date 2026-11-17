@@ -12,7 +12,8 @@ const {
     MERMAID_RETRY_DELAYS_MS,
     findMermaidBlockAtPosition,
     mapWithConcurrency,
-    normalizeMermaidOutputFormat
+    normalizeMermaidOutputFormat,
+    createMermaidFileName
 } = require('../../out/mermaid.js');
 
 // The retry helper rejects anything that is not a PNG, so a successful render
@@ -271,4 +272,13 @@ test('normalizeMermaidOutputFormat only accepts png and svg', () => {
     assert.equal(normalizeMermaidOutputFormat(undefined), 'png');
     assert.equal(normalizeMermaidOutputFormat(42), 'png');
     assert.equal(normalizeMermaidOutputFormat(null), 'png');
+});
+
+test('Mermaid image names do not collide within one millisecond', () => {
+    const now = new Date('2026-11-17T10:00:00.123Z');
+    const first = createMermaidFileName(now, 'png');
+    const second = createMermaidFileName(now, 'png');
+    assert.notEqual(first, second);
+    assert.match(first, /^mermaid-\d{8}-\d{6}-\d{3}-\d+-[0-9a-f]{8}\.png$/);
+    assert.match(second, /^mermaid-\d{8}-\d{6}-\d{3}-\d+-[0-9a-f]{8}\.png$/);
 });
