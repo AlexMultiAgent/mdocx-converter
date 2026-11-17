@@ -375,7 +375,7 @@
     "@types/node": "^24.9.1",
     "@types/vscode": "^1.116.0",
     "@vscode/vsce": "^4.1.1",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   },
   "overrides": {
     "minimatch": "11.0.9"
