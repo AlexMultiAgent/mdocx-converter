@@ -47,7 +47,7 @@ jobs:
         run: python scripts/package.py --output dist/MD2Docx.difypkg
 
       - name: Upload plugin package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: MD2Docx-dify-plugin-${{ matrix.dify-plugin-version }}
           path: dify-plugin-MD2Docx/dist/MD2Docx.difypkg
@@ -82,7 +82,7 @@ jobs:
         run: npm run package
 
       - name: Upload the VSIX
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mdocx-converter-vsix
           path: VSC-plugin-MD2Docx-Converter/*.vsix
