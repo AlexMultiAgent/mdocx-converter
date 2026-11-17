@@ -132,6 +132,24 @@ class TestPandocTimeout:
 
 
 class TestConversionBudget:
+    def test_image_counting_scales_linearly(self):
+        import time
+
+        import md2docx
+
+        small = "![" * 20_000
+        large = "![" * 40_000
+
+        started = time.perf_counter()
+        assert md2docx._count_image_references(small) == 20_000
+        small_elapsed = time.perf_counter() - started
+
+        started = time.perf_counter()
+        assert md2docx._count_image_references(large) == 40_000
+        large_elapsed = time.perf_counter() - started
+
+        assert large_elapsed < max(0.05, small_elapsed * 3)
+
     def test_all_stages_fit_inside_the_connection_timeout(self):
         from md2docx import (
             MERMAID_TOTAL_BUDGET_SECONDS,

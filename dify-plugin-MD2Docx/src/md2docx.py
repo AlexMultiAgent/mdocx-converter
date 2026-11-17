@@ -102,8 +102,7 @@ MERMAID_BLOCK_RE = re.compile(
 # Keep these as escapes - U+F900 and U+8C48 are indistinguishable by eye.
 CJK_CHAR_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
 LATIN_CHAR_RE = re.compile(r"[A-Za-z]")
-IMAGE_REFERENCE_RE = re.compile(r"!\[[^\]]*\]")
-HTML_IMAGE_RE = re.compile(r"<img\b[^>]*\bsrc\s*=", re.IGNORECASE)
+IMAGE_MARKER_RE = re.compile(r"!\[|<img\b", re.IGNORECASE)
 
 # ── Profile defaults (ported from getProfileDocxDefaults) ───
 
@@ -762,9 +761,7 @@ def _run_pandoc(markdown_text: str, extra_args: list[str], out_path: str) -> Non
 
 def _count_image_references(markdown_text: str) -> int:
     """Count Markdown and HTML image references before conversion."""
-    return len(IMAGE_REFERENCE_RE.findall(markdown_text)) + len(
-        HTML_IMAGE_RE.findall(markdown_text)
-    )
+    return sum(1 for _ in IMAGE_MARKER_RE.finditer(markdown_text))
 
 
 def _classify_pandoc_logging(stderr: str) -> list[tuple[int, str]]:
