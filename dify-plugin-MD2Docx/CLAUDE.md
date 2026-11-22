@@ -6,7 +6,7 @@ This plugin lives in the `dify-plugin-MD2Docx/` directory of the [mdocx-converte
 
 ```bash
 pip install -r requirements.txt                                # install runtime deps
-pip install -r requirements-dev.txt                            # install dev deps (pytest, dify_plugin)
+pip install -r requirements-dev.txt                            # install dev deps (pytest)
 python -c "import ast; ast.parse(open('src/md2docx.py', encoding='utf-8').read()); print('Syntax OK')"  # syntax check
 pytest tests/ -v                                               # run test suite
 python scripts/package.py --output MD2Docx.difypkg             # build deterministic package
@@ -14,6 +14,8 @@ $env:RUN_LIVE_MERMAID="1"; pytest tests/test_mermaid_live.py -v # optional publi
 ```
 
 > The syntax check needs `encoding='utf-8'`: the source contains UTF-8 punctuation and the default locale encoding on a Chinese Windows install is GBK, which raises `UnicodeDecodeError`.
+>
+> `dify_plugin` comes from `requirements.txt`, which pins the range `>=0.9.0,<0.12`. A local `pip install` therefore resolves to the **newest** SDK in that range (0.11.x), while CI pins each matrix version explicitly (`dify_plugin==<version>`) — including the **0.9.0 floor**, where the SDK API differences bite. Test against the floor before shipping a change that touches the SDK surface.
 
 Tests live in `tests/`: `smoke_test.py` (pure functions), `test_invoke.py` (Dify Tool entry with mocked deps), `test_docx_output.py` (end-to-end pandoc conversion plus security/limits), `test_mermaid_converter.py` (standalone Mermaid tool), `test_mermaid_api_url.py` (the endpoint filter), `test_robustness.py` (the pandoc time limit, the cleanup after a failure, the error hygiene and the boolean coercion), `test_packaging.py` (archive contract), and `test_mermaid_live.py` (opt-in public API integration). `conftest.py` auto-skips when `dify_plugin` is missing.
 
@@ -64,7 +66,7 @@ dify-plugin-MD2Docx/
 ├── README.md                  # English marketplace README — shipped
 ├── readme/
 │   └── README_zh_Hans.md      # Chinese marketplace README — shipped
-├── requirements-dev.txt       # pytest, dify_plugin — excluded from the package itself
+├── requirements-dev.txt       # pytest — excluded from the package itself
 ├── pytest.ini                 # The `slow` and `integration` markers — excluded from the package itself
 ├── scripts/package.py         # .difypkg builder (excluded from the package itself)
 ├── icon.svg                   # Referenced by manifest `icon:` — keep byte-identical to _assets/icon.svg
