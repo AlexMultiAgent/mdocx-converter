@@ -26,7 +26,7 @@ jobs:
       run:
         working-directory: dify-plugin-MD2Docx
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
@@ -60,7 +60,7 @@ jobs:
       run:
         working-directory: VSC-plugin-MD2Docx-Converter
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
         with:
@@ -92,7 +92,7 @@ jobs:
     name: Template sync check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify the Dify templates match the VS Code source of truth
         run: bash scripts/sync-templates.sh --check
 
@@ -100,7 +100,7 @@ jobs:
     name: Preset parity check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
@@ -131,7 +131,7 @@ jobs:
     name: Dependency audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v7
         with:
