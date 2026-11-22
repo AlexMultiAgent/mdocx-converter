@@ -24,6 +24,7 @@ Unit tests live in `test/unit/*.test.js` — 13 files — and run on Node's buil
 - `npm test` compiles `src/` to `out/` first, then the tests `require()` the compiled output (e.g. `require('../../out/document.js')`). `test/` is not part of the TypeScript build.
 - A glob that matches nothing exits 0, so a renamed test file looks like a passing run. If `npm test` reports zero tests, the naming convention was broken.
 - Node 18/20 lack `--test` glob support; use Node >= 22.
+- One file at a time: `npm run compile && node --test test/unit/document.test.js`. The compiled `out/` must exist first — the tests load `out/`, not `src/`.
 
 **CI runs on `ubuntu-latest` and the local machine is Windows — the two disagree about process handling and shell quoting.** Run the suite in a Linux container before pushing:
 
@@ -201,6 +202,15 @@ The Dify plugin reaches the same result through python-docx, whose `doc.styles[n
 `resolveExecutable()` tries candidates in order, runs each with `--version`, and returns the first that succeeds. Each probe has a 5-second timeout and receives the export cancellation token, so a blocking workspace binary cannot hang the export or ignore the Cancel button. Pandoc candidates include winget package directories (searched recursively for `pandoc.exe`). Mermaid candidates include workspace `node_modules/.bin/mmdc.cmd` and `%APPDATA%/npm/mmdc.cmd` on Windows.
 
 Because a workspace-owned executable is a code-execution boundary, the extension is disabled in untrusted workspaces (`capabilities.untrustedWorkspaces.supported: false`) and every command re-checks `vscode.workspace.isTrusted` before resolving binaries.
+
+### Mermaid Ink API policy
+
+The Ink fallback is a network client, so `src/mermaid.ts` bounds every dimension of it:
+
+- **Endpoint** — `validateMermaidApiUrl()` accepts only `http:`/`https:` URLs that carry a host and have neither a query string nor a fragment. A 3xx response is rejected rather than followed, and the body must carry the PNG signature (`isPngImage()`) — the request always asks for `?type=png`, so the Ink fallback writes a `.png` even when `mermaidOutputFormat=svg`.
+- **No SSRF filter here, deliberately.** The Dify plugin refuses loopback, link-local and cloud-metadata targets, because its URL arrives as an LLM-supplied tool parameter. Here the URL comes from the user's own `mdocxConverter.mermaidApiUrl` setting, so only the cheap structural checks are worth doing.
+- **Retry** — `renderMermaidWithRetry()` retries **any** failure (not only transient ones) up to `MERMAID_MAX_ATTEMPTS = 3` times, with 1 s and 2 s backoff. A cancelled request is never retried, and a retry is skipped when its delay would sleep past the deadline.
+- **Limits** — 30 s per request (`MERMAID_REQUEST_TIMEOUT_MS`), 20 MB per response (`MERMAID_MAX_RESPONSE_BYTES`), and 120 s for the whole stage (`MERMAID_TOTAL_BUDGET_MS`), shared by every diagram of one export so ten diagrams cannot each burn the full budget.
 
 ### Legacy config fallback
 

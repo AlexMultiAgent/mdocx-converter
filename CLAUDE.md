@@ -1,5 +1,5 @@
 # CLAUDE.md
-<!-- last_updated: 2026-11-17 -->
+<!-- last_updated: 2026-11-18 -->
 
 Monorepo for **MD2Docx Converter** — tools that export Markdown to Word documents with templates, Mermaid diagram rendering, and style presets.
 
@@ -9,6 +9,8 @@ Monorepo for **MD2Docx Converter** — tools that export Markdown to Word docume
 |---|---|
 | `VSC-plugin-MD2Docx-Converter/` | VS Code extension — right-click `.md` → export DOCX |
 | `dify-plugin-MD2Docx/` | Dify Tool plugin — `md_to_docx` / `md_to_docx_advanced` / `mermaid_converter` in Dify workflows |
+| `scripts/` | `sync-templates.sh` (VSC → Dify template copy) and `check-preset-parity.py` (preset drift gate) |
+| `VSC-plugin-MD2Docx-Converter/specs/` | The parity design and implementation plan that produced the shared preset table |
 
 Each subdirectory has its own `CLAUDE.md` with architecture details and build commands. `AGENTS.md` at the repo root is the gotcha cheat sheet — read it before changing either plugin. `.claude.local.md` holds the machine-local notes (the local Dify instance, the Git Bash `docker` path quirks); it is gitignored, so never commit it.
 
@@ -27,7 +29,7 @@ npm run build:templates  # regenerate multi-templates/ from src/profiles.ts
 # Dify plugin
 cd dify-plugin-MD2Docx
 pip install -r requirements.txt            # runtime deps (pypandoc-binary bundles pandoc, no download)
-pip install -r requirements-dev.txt        # dev deps (pytest, dify_plugin for local testing)
+pip install -r requirements-dev.txt        # dev deps (pytest)
 python -c "import ast, pathlib; [ast.parse(p.read_text(encoding='utf-8')) for p in pathlib.Path('src').glob('*.py')]; print('Syntax OK')"
 pytest tests/ -v                           # run test suite (pandoc provided by pypandoc-binary)
 python scripts/package.py --output MD2Docx.difypkg   # build the plugin package
@@ -47,8 +49,9 @@ The Dify `.difypkg` cannot be built with the `dify-plugin` CLI — it is not on 
 
 ## Releasing
 
-- **VS Code extension**: `npm run package` → `.vsix` in `VSC-plugin-MD2Docx-Converter/`. Publishing needs an Azure DevOps PAT for the `alexmultiagent` publisher — it is **not stored on this machine**, so the last step has to be run by the user (`npx vsce publish --pat <PAT> --no-git-tag-version`). The release tag is separate and optional: `v0.1.0` and `v0.4.0` carry one, 0.2.0, 0.3.0 and 0.4.1 shipped untagged. 0.4.1 is on the Marketplace (published 2026-11-17), so **the next release must be 0.4.2** — the Marketplace rejects a republished version number.
-- **Dify plugin**: a `.difypkg` committed to `AlexMultiAgent/md2docx/` in the `AlexMultiAgent/dify-plugins` fork, pulled into upstream with a PR. One version-update PR = one `.difypkg` file. **The manifest version must be incremented** — the marketplace keys a release by it and rejects a resubmission that reuses or lowers the version. 0.0.5 is published (PR #3797, merged 2026-11-17), so **the next release must be 0.0.6**. The rules are in `dify-plugin-MD2Docx/CLAUDE.md`.
+- **VS Code extension**: `npm run package` → `.vsix` in `VSC-plugin-MD2Docx-Converter/`. Publishing needs an Azure DevOps PAT for the `alexmultiagent` publisher — it is **not stored on this machine**, so the last step has to be run by the user (`npx vsce publish --pat <PAT> --no-git-tag-version`). The release tag is separate and optional: `v0.1.0` and `v0.4.0` carry one, 0.2.0, 0.3.0 and 0.4.1 shipped untagged. 0.4.1 is the last version on the Marketplace (published 2026-11-17) — the Marketplace rejects a republished version number.
+- **Dify plugin**: a `.difypkg` committed to `AlexMultiAgent/md2docx/` in the `AlexMultiAgent/dify-plugins` fork, pulled into upstream with a PR. One version-update PR = one `.difypkg` file. **The manifest version must be incremented** — the marketplace keys a release by it and rejects a resubmission that reuses or lowers the version. 0.0.5 is published (PR #3797, merged 2026-11-17). The rules are in `dify-plugin-MD2Docx/CLAUDE.md`.
+- ⚠️ **Both products share one version line.** `VSC-plugin-MD2Docx-Converter/package.json` and `dify-plugin-MD2Docx/manifest.yaml` carry the **same** version, and a release bumps both. The unified line starts at **0.5.0** (2026-11-18), skipping the previously planned 0.4.2 and 0.0.6 — 0.5.0 is what `package.json` and `manifest.yaml` already say.
 
 ## Architecture
 
@@ -70,7 +73,7 @@ Templates are at `multi-templates/` under each subdirectory. **Both plugins ship
 
 ⚠️ **Template sync note:** the VS Code extension is the primary source for templates. They are **generated** — edit `src/profiles.ts` (or `scripts/reference-base.docx`), run `npm run build:templates`, then `bash scripts/sync-templates.sh`. A hand edit to a `.docx` under `multi-templates/` is overwritten by the next build. `scripts/sync-templates.sh --check` (CI) fails when the two directories drift.
 
-⚠️ **CJK ranges must be written as escapes.** The CJK ideograph ranges are spelled `\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF` (ASCII escapes \uXXXX — copy them as written, they are not placeholders). Written as literal characters the lower bound silently becomes U+8C48 instead of U+F900, and the range then swallows Hangul and Yi syllables — a Korean document gets the Chinese template. The two characters look identical in an editor, so never retype them: both plugins must carry the same byte sequence.
+⚠️ **CJK ranges must be written as escapes.** The CJK ideograph ranges are spelled `\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF` (ASCII escapes \uXXXX — copy them as written, they are not placeholders). Written as literal characters the lower bound silently becomes U+8C48 instead of U+F900, and the range then swallows Hangul and Yi syllables — a Korean document gets the Chinese template. The two characters look identical in an editor, so never retype them: both plugins must carry the same byte sequence. ⚠️ **The parity gate does not check this** — `scripts/check-preset-parity.py` compares fonts, sizes, margins, line spacing and the template map, not the regex. Compare the two byte sequences by hand after touching either one.
 
 ## 模板修改流程 (Template modification workflow)
 
