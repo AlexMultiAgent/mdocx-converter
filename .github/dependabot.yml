@@ -5,15 +5,46 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Must stay in lockstep with engines.vscode — vsce rejects newer types.
+      - dependency-name: "@types/vscode"
+      # 0.6.0 is a deprecated stub; adm-zip ships its own types (remove manually).
+      - dependency-name: "@types/adm-zip"
+      # Major upgrades need a manual tsconfig migration (TS 7 drops moduleResolution=node10).
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: pip
     directory: /dify-plugin-MD2Docx
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      pip-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # The CI matrix pins 0.9.0/0.9.1 while requirements.txt declares the floor;
+      # raising that floor is a manual change together with the matrix.
+      - dependency-name: dify_plugin
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
+    groups:
+      github-actions:
+        patterns:
+          - "*"
