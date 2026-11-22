@@ -1,0 +1,55 @@
+# CodeQL analysis for both products in this monorepo.
+#
+# The VS Code extension (TypeScript) and the Dify plugin (Python) live in
+# separate trees, so each language is scanned with its own `paths` — pointing
+# CodeQL at the repo root would analyze the wrong tree and silently produce
+# no alerts. PowerShell and Shell sources are present too, but CodeQL does not
+# support them, so they are not scanned.
+#
+# Code scanning is free for public repositories on GitHub.com.
+
+name: CodeQL
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+  packages: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, on an off-peak minute so it does not collide with the other
+    # repos' crons.
+    - cron: '31 4 * * 1'
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+            paths: VSC-plugin-MD2Docx-Converter
+          - language: python
+            paths: dify-plugin-MD2Docx
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          paths: ${{ matrix.paths }}
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
