@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "module": "commonjs",
+    "module": "node16",
     "target": "ES2022",
     "lib": [
       "ES2022"
@@ -14,8 +14,7 @@
     "strict": true,
     "noUnusedLocals": true,
     "esModuleInterop": true,
-    "moduleResolution": "node",
-    "ignoreDeprecations": "6.0",
+    "moduleResolution": "node16",
     "skipLibCheck": true
   },
   "include": [
