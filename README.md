@@ -1,5 +1,7 @@
 # MD2Docx Converter
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/AlexMultiAgent/mdocx-converter/badge)](https://api.scorecard.dev/projects/github.com/AlexMultiAgent/mdocx-converter)
+
 Tools that convert Markdown to polished Word (`.docx`) documents, with built-in Chinese/English templates, Mermaid diagram rendering, and fine-grained style control.
 
 The project ships the same conversion pipeline in two packaging formats — a VS Code extension for local editing and a Dify plugin for workflow automation.
