@@ -28,7 +28,6 @@ from dify_plugin import Tool
 from dify_plugin.entities.tool import ToolInvokeMessage
 
 # ── Third-party imports (safe now — gevent has patched stdlib) ──
-import requests
 import pypandoc
 from docx import Document
 from docx.shared import Cm
@@ -683,6 +682,8 @@ def _run_subprocess_capped(
             process.stdin.write(input_bytes)
             process.stdin.close()
         except (BrokenPipeError, OSError):
+            # Pandoc closed the pipe early — it died or stopped reading. The
+            # failure that matters is its exit code, not this write.
             pass
 
     stderr_reader = Thread(target=drain_stderr, daemon=True)
@@ -703,6 +704,8 @@ def _run_subprocess_capped(
             try:
                 process.stdin.close()
             except OSError:
+                # The pipe is already broken or closed; the process is gone
+                # either way, so a failing close cannot change the outcome.
                 pass
         stdin_writer.join(timeout=5)
         stderr_reader.join(timeout=5)
@@ -1382,11 +1385,13 @@ class Md2DocxTool(Tool):
     ) -> Generator[ToolInvokeMessage, None, None]:
         custom_template_path = None
         mermaid_dir = ""
-        stage = "start"
+        # The stage the failure is reported for. Bound before the try so the
+        # handler can always name the stage, even if the first statement of
+        # the try block were to fail.
+        stage = "validation"
         warnings: list[str] = []
 
         try:
-            stage = "validation"
             raw_markdown = parameters.get("markdown_content")
             if raw_markdown is None:
                 markdown_content = ""
@@ -1492,6 +1497,9 @@ class Md2DocxTool(Tool):
                         try:
                             os.unlink(custom_template_path)
                         except OSError:
+                            # The write already failed; a partial temp file
+                            # that cannot be removed must not mask the
+                            # original error.
                             pass
                     custom_template_path = None
                     # The message of the exception carries the path of the
@@ -1613,6 +1621,8 @@ class Md2DocxTool(Tool):
                 try:
                     os.unlink(custom_template_path)
                 except OSError:
+                    # This runs after the result was already yielded; a failed
+                    # cleanup must not turn a finished conversion into an error.
                     pass
             if mermaid_dir and os.path.isdir(mermaid_dir):
                 shutil.rmtree(mermaid_dir, ignore_errors=True)

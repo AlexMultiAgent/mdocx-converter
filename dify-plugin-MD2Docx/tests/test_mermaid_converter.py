@@ -6,8 +6,6 @@ The tool talks to the public Mermaid Ink API, so the network is mocked here.
 import os
 import sys
 
-import pytest
-
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"

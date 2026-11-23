@@ -497,17 +497,23 @@ class TestMermaidApiUrlValidation:
 
 
 def _style_fonts(style):
-    """Return (ascii_font, east_asia_font, size) of a style."""
+    """Return (ascii_font, east_asia_font, size, size_cs) of a style.
+
+    The complex-script size travels in its own `w:szCs` slot, so it is read
+    separately from the Latin `w:sz` one — a style that only sets `w:sz`
+    leaves complex-script text on the template's size.
+    """
     rPr = style._element.find(f"{W_NS}rPr")
     if rPr is None:
-        return None, None, None
+        return None, None, None, None
     rFonts = rPr.find(f"{W_NS}rFonts")
     sz = rPr.find(f"{W_NS}sz")
     szCs = rPr.find(f"{W_NS}szCs")
     ascii_font = rFonts.get(f"{W_NS}ascii") if rFonts is not None else None
     east_asia = rFonts.get(f"{W_NS}eastAsia") if rFonts is not None else None
     size = sz.get(f"{W_NS}val") if sz is not None else None
-    return ascii_font, east_asia, size
+    size_cs = szCs.get(f"{W_NS}val") if szCs is not None else None
+    return ascii_font, east_asia, size, size_cs
 
 
 class TestCjkFontHandling:
@@ -544,7 +550,7 @@ class TestCjkFontHandling:
         apply_style_overrides(doc, "technical", {})
 
         normal = _find_style_by_name(doc, "Normal")
-        ascii_font, east_asia, _ = _style_fonts(normal)
+        ascii_font, east_asia, _, _ = _style_fonts(normal)
         assert ascii_font == "Arial"
         assert east_asia == "Microsoft YaHei"
 
@@ -560,9 +566,28 @@ class TestCjkFontHandling:
         apply_style_overrides(doc, "technical", {"body_font": "Arial"})
 
         normal = _find_style_by_name(doc, "Normal")
-        ascii_font, east_asia, _ = _style_fonts(normal)
+        ascii_font, east_asia, _, _ = _style_fonts(normal)
         assert ascii_font == "Arial"
         assert east_asia == "Arial"
+
+    def test_the_complex_script_slot_gets_the_latin_font(self, pandoc_available):
+        """`w:cs` is a third slot next to `w:ascii` and `w:eastAsia`: it takes
+        the Latin face, so complex-script text does not fall back to whatever
+        the system picks."""
+        from docx import Document
+
+        ref = os.path.join(TEMPLATE_DIR, "reference_english_technical.docx")
+        docx_io = convert_via_pandoc(
+            "# Heading\n\nbody\n", ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("technical", None, None, None),
+        )
+        doc = Document(docx_io)
+        apply_style_overrides(doc, "technical", {})
+
+        normal = _find_style_by_name(doc, "Normal")
+        rPr = normal._element.find(f"{W_NS}rPr")
+        rFonts = rPr.find(f"{W_NS}rFonts")
+        assert rFonts.get(f"{W_NS}cs") == "Arial"
 
     def test_a_cjk_heading_keeps_its_own_font(self, pandoc_available):
         """A CJK preset heading font is used for the East Asian slot as is."""
@@ -577,7 +602,7 @@ class TestCjkFontHandling:
         apply_style_overrides(doc, "academic", {})
 
         heading1 = _find_style_by_name(doc, "Heading 1")
-        ascii_font, east_asia, _ = _style_fonts(heading1)
+        ascii_font, east_asia, _, _ = _style_fonts(heading1)
         assert ascii_font == "Times New Roman"
         assert east_asia == "SimHei"
 
@@ -602,6 +627,27 @@ class TestComplexScriptFontSize:
         assert szCs is not None
         assert szCs.get(f"{W_NS}val") == sz.get(f"{W_NS}val")
 
+    def test_the_headings_keep_the_complex_script_size_as_well(self, pandoc_available):
+        """`w:szCs` travels with `w:sz` for the headings too — a heading in a
+        complex script must not fall back to the template's size."""
+        from docx import Document
+
+        ref = os.path.join(TEMPLATE_DIR, "reference_english_academic.docx")
+        docx_io = convert_via_pandoc(
+            "# Heading 1\n\n## Heading 2\n\n### Heading 3\n\nbody\n",
+            ref, TEMPLATE_DIR, "",
+            build_pandoc_metadata("academic", None, None, None),
+        )
+        doc = Document(docx_io)
+        apply_style_overrides(doc, "academic", {})
+
+        for name, size in (("Heading 1", "32"), ("Heading 2", "28"), ("Heading 3", "24")):
+            style = _find_style_by_name(doc, name)
+            assert style is not None, name
+            _, _, latin_size, size_cs = _style_fonts(style)
+            assert latin_size == size, name
+            assert size_cs == size, name
+
 
 class TestStyleResolutionScope:
     """Style ids are not portable: 'a' is Normal in the English templates but
@@ -618,7 +664,7 @@ class TestStyleResolutionScope:
 
         list_number = _find_style_by_id(doc, "a")
         assert list_number is not None
-        ascii_font, _, _ = _style_fonts(list_number)
+        ascii_font, _, _, _ = _style_fonts(list_number)
         assert ascii_font != "SimSun", "List Number must not inherit the body font"
 
     def test_body_style_still_receives_the_overrides(self):
@@ -626,9 +672,10 @@ class TestStyleResolutionScope:
         apply_style_overrides(doc, "academic", {})
 
         normal = _find_style_by_id(doc, "a1")
-        ascii_font, _, size = _style_fonts(normal)
+        ascii_font, _, size, size_cs = _style_fonts(normal)
         assert ascii_font == "Times New Roman"
         assert size == "24"
+        assert size_cs == "24"
 
     def test_the_normal_table_style_is_left_alone(self):
         """'a3' is Normal Table in the legacy templates, not a body style."""
@@ -637,7 +684,7 @@ class TestStyleResolutionScope:
 
         normal_table = _find_style_by_id(doc, "a3")
         assert normal_table is not None
-        ascii_font, east_asia, _ = _style_fonts(normal_table)
+        ascii_font, east_asia, _, _ = _style_fonts(normal_table)
         assert ascii_font != "Times New Roman"
         assert east_asia != "SimSun"
 
@@ -660,7 +707,7 @@ class TestStyleResolutionScope:
                 for style in doc.styles:
                     name = (style.name or "").lower()
                     if "list" in name or "table" in name:
-                        ascii_font, east_asia, _ = _style_fonts(style)
+                        ascii_font, east_asia, _, _ = _style_fonts(style)
                         assert ascii_font != "SimSun", (
                             f"{profile}/{language}: style {style.style_id!r} "
                             f"({style.name!r}) must not inherit the body font"
@@ -1171,7 +1218,7 @@ class TestEveryProfileConverts:
         for style in doc.styles:
             name = (style.name or "").lower()
             if "list" in name or "table" in name:
-                ascii_font, _, _ = _style_fonts(style)
+                ascii_font, _, _, _ = _style_fonts(style)
                 assert ascii_font != "SimSun", (
                     f"{template_name}: style {style.style_id!r} ({style.name!r}) "
                     f"must not inherit the body font"
@@ -1304,7 +1351,7 @@ class TestFontNameNormalization:
         apply_style_overrides(doc, "academic", {"body_font": "  SimSun  "})
 
         normal = _find_style_by_name(doc, "Normal")
-        ascii_font, _, _ = _style_fonts(normal)
+        ascii_font, _, _, _ = _style_fonts(normal)
         assert ascii_font == "SimSun"
 
 
@@ -1602,7 +1649,8 @@ class TestHeadingLevels:
         for name, size in (("Heading 1", "32"), ("Heading 2", "28"), ("Heading 3", "24")):
             style = _find_style_by_name(doc, name)
             assert style is not None, name
-            ascii_font, east_asia, font_size = _style_fonts(style)
+            ascii_font, east_asia, font_size, font_size_cs = _style_fonts(style)
             assert ascii_font == "Times New Roman", name
             assert east_asia == "SimHei", name
             assert font_size == size, name
+            assert font_size_cs == size, name

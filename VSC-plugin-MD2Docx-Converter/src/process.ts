@@ -87,20 +87,85 @@ const CMD_META_CHAR = /[()\][%!^"`<>&|;, *?\t\r\n]/;
  * unchanged: quoting it would change what a batch file sees in `%1`. An
  * argument that carries a metacharacter is wrapped in double quotes, so that
  * the spaces and the operators inside it stay text, and every metacharacter
- * gets a caret in front of it, so that nothing escapes the quotes. The
- * quotes inside the argument are escaped for the C runtime of the program
- * that receives them, and the backslashes in front of them are doubled.
+ * gets a caret in front of it, so that nothing escapes the quotes.
+ *
+ * A quote inside the argument is doubled instead of being escaped. The
+ * command processor reads `""` inside a quoted region as one literal quote
+ * and keeps the region open, so the quotes of the argument never end the
+ * region that holds the metacharacters. A `\"` is read as a delimiter
+ * instead: the region ends at the quote of the argument, and a payload like
+ * `x" & calc` would put the `&` outside of every quoted region — the command
+ * processor would then run it as a second command.
+ *
+ * The scan is written by hand on purpose. The regular expressions it
+ * replaces had to backtrack over every run of backslashes, which made the
+ * escaping quadratic in the length of the argument.
  */
-function escapeCmdArgument(argument: string): string {
+export function escapeCmdArgument(argument: string): string {
     if (argument.length > 0 && !CMD_META_CHAR.test(argument)) {
         return argument;
     }
 
-    const escaped = argument
-        .replace(/(\\*)"/g, '$1$1\\"')
-        .replace(/(\\*)$/, '$1$1');
+    return `"${escapeCmdQuotes(argument)}"`.replace(CMD_META_CHARS, '^$1');
+}
 
-    return `"${escaped}"`.replace(CMD_META_CHARS, '^$1');
+/**
+ * Prepare the inside of the double quotes that `escapeCmdArgument` puts
+ * around an argument.
+ *
+ * - A quote becomes `""`, which the command processor reads as one literal
+ *   quote and which keeps the quoted region open.
+ * - The backslashes in front of a quote are doubled, so that the C runtime
+ *   of the program reads them back as the backslashes that were there.
+ * - The backslashes at the end of the argument are doubled, so that they do
+ *   not escape the closing quote.
+ */
+function escapeCmdQuotes(argument: string): string {
+    let escaped = '';
+    let index = 0;
+
+    while (index < argument.length) {
+        const character = argument[index];
+
+        if (character === '"') {
+            escaped += '""';
+            index += 1;
+            continue;
+        }
+
+        if (character !== '\\') {
+            escaped += character;
+            index += 1;
+            continue;
+        }
+
+        // The whole run of backslashes belongs to the character behind it.
+        let end = index;
+        while (end < argument.length && argument[end] === '\\') {
+            end += 1;
+        }
+        const run = end - index;
+
+        if (end < argument.length && argument[end] === '"') {
+            // Two backslashes per backslash of the argument, so that the C
+            // runtime reads them back as they were.
+            escaped += '\\'.repeat(run * 2) + '""';
+            index = end + 1;
+            continue;
+        }
+
+        if (end === argument.length) {
+            // The backslashes at the end would escape the closing quote.
+            escaped += '\\'.repeat(run * 2);
+            index = end;
+            continue;
+        }
+
+        escaped += '\\'.repeat(run);
+        index = end;
+    }
+
+    return escaped;
 }
 
 /** Escape one argument for a POSIX shell. */
@@ -114,7 +179,19 @@ function escapePosixArgument(argument: string): string {
  * The `/s` switch tells the command processor to strip the outermost quotes,
  * so the whole line is wrapped in one more pair.
  */
-function buildCmdCommandLine(command: string, args: string[]): string {
+export function buildCmdCommandLine(command: string, args: string[]): string {
+    // Every part goes through escapeCmdArgument, which doubles the quotes of
+    // an argument and puts a caret in front of every metacharacter. The
+    // quotes of an argument therefore never close the quoted region, and an
+    // argument cannot start a second command.
+    //
+    // CodeQL cannot see through the escaping, so it reports these two lines
+    // as a shell-injection sink. The escaping is what makes the flow safe:
+    // the injection regression test in test/unit/process.test.js drives a
+    // quote-carrying payload through a real cmd.exe and asserts that no
+    // second command runs. The alerts are dismissed in the code-scanning UI
+    // rather than suppressed inline, because an inline `codeql[...]` comment
+    // is never applied to an uploaded SARIF and would mislead a reader.
     const parts = [escapeCmdArgument(command), ...args.map(escapeCmdArgument)];
     return `"${parts.join(' ')}"`;
 }

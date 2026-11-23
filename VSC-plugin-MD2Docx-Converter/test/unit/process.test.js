@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-const { execExecutable } = require('../../out/process.js');
+const { execExecutable, escapeCmdArgument, buildCmdCommandLine } = require('../../out/process.js');
 const { CancellationTokenSource, makeTempDir } = require('./support/vscode-stub.js');
 const {
     createExtensionContext,
@@ -280,4 +280,103 @@ test('a batch file still sees its argument unquoted', { skip: process.platform !
     const { stdout } = await execExecutable(cmd, ['--version'], { shell: true });
 
     assert.match(stdout, /VERSION-MATCH/, `the batch file must see the plain argument: ${stdout}`);
+});
+
+/**
+ * The escaped form of an argument, as the command processor reads it.
+ *
+ * A quote of the argument becomes `""`, which the command processor reads as
+ * one literal quote and which keeps the quoted region open. A `\"` would end
+ * the region instead, and the metacharacters behind it would leave the
+ * region — a payload like `x" & calc` would then run `calc` as a second
+ * command.
+ */
+const ESCAPED_ARGUMENTS = [
+    ['plain.txt', 'plain.txt'],
+    ['a & b', '^"a^ ^&^ b^"'],
+    ['a b c', '^"a^ b^ c^"'],
+    ['', '^"^"'],
+    ['a "quoted" b', '^"a^ ^"^"quoted^"^"^ b^"'],
+    ['x" & calc', '^"x^"^"^ ^&^ calc^"'],
+    ['x"', '^"x^"^"^"'],
+    ['trailing\\', 'trailing\\'],
+    ['C:\\Users\\Test & Co\\file.txt', '^"C:\\Users\\Test^ ^&^ Co\\file.txt^"'],
+    ['a\\"b', '^"a\\\\^"^"b^"'],
+    ['a%PATH% b', '^"a^%PATH^%^ b^"']
+];
+
+test('an argument is escaped so that it cannot end the quoted region', () => {
+    for (const [argument, expected] of ESCAPED_ARGUMENTS) {
+        assert.equal(
+            escapeCmdArgument(argument),
+            expected,
+            `the argument ${JSON.stringify(argument)} must be escaped as ${JSON.stringify(expected)}`
+        );
+    }
+});
+
+test('the command line is built from the escaped parts', () => {
+    const line = buildCmdCommandLine('C:\\Program Files\\pandoc.cmd', ['--metadata', 'title=x" & calc']);
+
+    assert.equal(
+        line,
+        '"^"C:\\Program^ Files\\pandoc.cmd^" --metadata ^"title=x^"^"^ ^&^ calc^""',
+        `the command line must hold the escaped parts: ${line}`
+    );
+});
+
+test('a long run of backslashes does not slow the escaping down', () => {
+    // The old implementation used two regular expressions that had to
+    // backtrack over every backslash, which made the escaping quadratic:
+    // 200 000 backslashes took a minute. The scan has to stay linear.
+    const argument = '\\'.repeat(200000) + '&';
+
+    const started = process.hrtime.bigint();
+    const escaped = escapeCmdArgument(argument);
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+
+    assert.ok(
+        escaped.startsWith('^"' + '\\'.repeat(200000)),
+        'the run of backslashes has to survive'
+    );
+    assert.ok(
+        escaped.endsWith('^&^"'),
+        `the metacharacter has to be escaped: ${escaped.slice(-8)}`
+    );
+    assert.ok(
+        elapsedMs < 15000,
+        `the escaping of 200 000 backslashes took ${elapsedMs.toFixed(0)}ms, it has to be linear`
+    );
+});
+
+test('a quote in an argument cannot run a second command', { skip: process.platform !== 'win32' }, async (t) => {
+    const dir = makeTempDir('mdocx-quote-');
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const { cmd, recordFile } = writeArgumentRecorder(dir);
+
+    // The second command is a batch file of its own, so that the payload
+    // needs no quotes of its own to run it.
+    const marker = path.join(dir, 'INJECTED.txt');
+    const boom = path.join(dir, 'boom.cmd');
+    fs.writeFileSync(boom, `@echo off\r\ntype nul > "${marker}"\r\n`, 'utf8');
+
+    // The quote of the payload would end the quoted region of the argument,
+    // and the `&` behind it would then start a second command.
+    const payload = `x" & ${boom} & "y`;
+
+    await execExecutable(cmd, ['--flag', payload], { shell: true });
+
+    assert.equal(
+        fs.existsSync(marker),
+        false,
+        'a quote in an argument must not run a second command'
+    );
+
+    const received = JSON.parse(fs.readFileSync(recordFile, 'utf8'));
+    assert.deepEqual(
+        received,
+        ['--flag', payload],
+        `the argument must arrive unchanged: ${JSON.stringify(received)}`
+    );
 });

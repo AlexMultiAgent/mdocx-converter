@@ -409,3 +409,33 @@ test('a created character style is a character style and gets no paragraph shadi
     assert.ok(!updated.includes('<w:pPr'), 'a character style must not get paragraph properties');
     assert.ok(!updated.includes('<w:shd'), 'a character style must not get a paragraph shading');
 });
+
+test('a font override also fills the complex-script slot', () => {
+    // `w:cs` is the third font slot next to `w:ascii` and `w:eastAsia`.
+    // Without it, complex-script text falls back to whatever the system
+    // picks instead of the profile's Latin face.
+    const updated = upsertStyleOverride(CANONICAL_STYLES, {
+        styleId: 'Normal', styleNames: BODY_STYLE_NAMES,
+        asciiFont: 'Arial', eastAsiaFont: 'SimSun', sizePt: 11
+    });
+
+    const normal = styleByName(updated, 'Normal');
+    assert.ok(normal.includes('w:cs="Arial"'),
+        'w:cs must carry the Latin face, so complex-script text does not fall back');
+    assert.ok(normal.includes('w:eastAsia="SimSun"'),
+        'w:eastAsia must keep the CJK face while w:cs takes the Latin one');
+});
+
+test('a size override also writes the complex-script size', () => {
+    // `w:szCs` travels with `w:sz`; a style that sets only `w:sz` leaves
+    // complex-script text on the template's size.
+    const updated = upsertStyleOverride(CANONICAL_STYLES, {
+        styleId: 'Heading1', styleNames: HEADING_1_STYLE_NAMES,
+        asciiFont: 'SimHei', sizePt: 16
+    });
+
+    const heading1 = styleByName(updated, 'heading 1');
+    assert.ok(heading1.includes('<w:sz w:val="32"/>'), 'the Latin size must be written');
+    assert.ok(heading1.includes('<w:szCs w:val="32"/>'),
+        'w:szCs must travel with w:sz, so complex-script text keeps the size');
+});
