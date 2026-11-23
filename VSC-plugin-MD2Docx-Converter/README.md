@@ -134,6 +134,12 @@ The `official` and `thesis` presets are typography approximations for body text,
 
 ## Changelog
 
+### Changes in 0.5.2
+
+- **A document title can no longer run a second command on Windows.** When the Mermaid CLI or a Pandoc shim is a `.cmd`/`.bat`, the argument went through `cmd.exe`; a title that contained a double quote could end the quoted region and let an `&` behind it start a second command. Arguments are now escaped by doubling embedded quotes, so a quote stays inside the quoted region. Covered by a regression test that drives a quote-carrying payload through a real `cmd.exe`.
+- **Escaping an argument no longer slows down on a long run of backslashes.** The two regular expressions that escaped the quotes were quadratic; a path with tens of thousands of backslashes could stall the export. The escaping is now a linear character scan.
+- The Dify plugin and the VS Code extension still carry the same version line; 0.5.2 ships the security fix on both sides.
+
 ### Changes in 0.5.1
 
 - The bundled release notes now cover every change in 0.5.0. The 0.5.0 entry listed six of them; the release itself contained fourteen, including the untrusted-workspace block, the conversion time and output budgets, the Windows filename rules and the style-override ranges.
