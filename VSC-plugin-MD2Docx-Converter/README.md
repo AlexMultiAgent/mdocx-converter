@@ -2,6 +2,7 @@
 
 [![VS Code](https://img.shields.io/badge/VS%20Code-Marketplace-007ACC?logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=alexmultiagent.mdocx-converter)
 [![Dify](https://img.shields.io/badge/Dify-Plugin-1c64f2?logo=dify)](https://marketplace.dify.ai/plugin/alexmultiagent/md2docx)
+[![GitHub Release](https://img.shields.io/badge/GitHub-Release-181717?logo=github)](https://github.com/AlexMultiAgent/mdocx-converter/releases)
 
 ![MD2Docx Converter banner](https://raw.githubusercontent.com/AlexMultiAgent/mdocx-converter/main/VSC-plugin-MD2Docx-Converter/assets/banner.png)
 
@@ -132,6 +133,12 @@ The bundled academic templates are generic academic reference DOCX files written
 The `official` and `thesis` presets are typography approximations for body text, headings and margins. They are not complete GB/T submission packages with covers, document registers, tables of contents or signature blocks.
 
 ## Changelog
+
+### Changes in 0.5.1
+
+- The bundled release notes now cover every change in 0.5.0. The 0.5.0 entry listed six of them; the release itself contained fourteen, including the untrusted-workspace block, the conversion time and output budgets, the Windows filename rules and the style-override ranges.
+- The extension is rebuilt with TypeScript 7. The source is unchanged, so the behaviour is the same; only the compiler and its module resolution are newer.
+- Every release now also carries a Sigstore provenance bundle, so the published VSIX can be traced back to the workflow run that built it. The bundle is attached to the GitHub Release as a `.sigstore.json` asset.
 
 ### Changes in 0.5.0
 

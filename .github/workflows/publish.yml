@@ -1,6 +1,6 @@
 name: Publish
 
-# Tag pushes only: `git push origin v0.5.0`. The publisher's Trusted Publishing
+# Tag pushes only: `git push origin v0.5.1`. The publisher's Trusted Publishing
 # policy must name this repository and this workflow file; no PAT is stored here.
 on:
   push:

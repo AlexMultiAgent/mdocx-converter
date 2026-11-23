@@ -1,6 +1,7 @@
 # MD2Docx Converter
 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/AlexMultiAgent/mdocx-converter/badge)](https://api.scorecard.dev/projects/github.com/AlexMultiAgent/mdocx-converter)
+[![GitHub Release](https://img.shields.io/badge/GitHub-Release-181717?logo=github)](https://github.com/AlexMultiAgent/mdocx-converter/releases)
 
 Tools that convert Markdown to polished Word (`.docx`) documents, with built-in Chinese/English templates, Mermaid diagram rendering, and fine-grained style control.
 

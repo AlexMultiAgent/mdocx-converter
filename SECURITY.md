@@ -38,11 +38,11 @@ Advisories for already fixed vulnerabilities are published on the same page.
 
 ## Supported versions
 
-Both products share a single version line. The current release is **0.5.0**.
+Both products share a single version line. The current release is **0.5.1**.
 
 | Version | Supported |
 | --- | --- |
-| 0.5.0 | Yes |
-| < 0.5.0 | No |
+| 0.5.1 | Yes |
+| < 0.5.1 | No |
 
-Security fixes land on the current version line only, so please upgrade to 0.5.0 before testing a report.
+Security fixes land on the current version line only, so please upgrade to 0.5.1 before testing a report.
