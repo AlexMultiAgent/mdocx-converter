@@ -131,14 +131,26 @@ The bundled academic templates are generic academic reference DOCX files written
 
 The `official` and `thesis` presets are typography approximations for body text, headings and margins. They are not complete GB/T submission packages with covers, document registers, tables of contents or signature blocks.
 
+## Changelog
+
 ### Changes in 0.5.0
 
-- VS Code and Dify now share the same release version. The unified release line starts at 0.5.0 and skips the previously planned 0.4.2 and 0.0.6 versions.
-- Document title extraction now follows CommonMark fences, including tilde fences and longer closing fences.
-- Hash characters that belong to a heading are preserved, so titles such as `C#`, `F# Guide`, and `Title###` are no longer truncated.
-- Executable probes are bounded by the export cancellation token, and Mermaid file names are collision-resistant.
-- Mermaid API privacy notices are tracked per destination origin.
-- DOCX replacement values are treated literally, avoiding regex replacement expansion in custom templates.
+0.5.0 is the first release in which the VS Code extension and the Dify plugin carry the same version number; the previously planned 0.4.2 and 0.0.6 versions are skipped. Below are the user-visible changes.
+
+- The extension refuses to run in an untrusted workspace. VS Code marks it as not supporting untrusted workspaces, and `Export Markdown to DOCX (MDocx)`, `Check Export Environment` and `Render Mermaid Diagram to Image (MDocx)` ask you to trust the workspace first, because an export may run a workspace-local Mermaid binary.
+- A Dify conversion is bounded end to end. The whole request has to finish inside the plugin's 165-second budget, Pandoc is stopped after 90 seconds, and Pandoc's error output is capped at 1 MB.
+- A document with more than 5,000 image references is rejected before Pandoc runs, so a pathological Markdown file cannot stall the plugin worker.
+- The Dify plugin no longer returns server-side file paths in its error messages. A file-system failure is reported as a temporary-file problem and a diagram that cannot be written is reported without its path; the details stay in the plugin log.
+- The Dify plugin sanitizes the output title for Windows as well: a reserved device name such as `CON` is prefixed with an underscore, trailing dots and spaces are removed, and the length limit counts UTF-8 bytes, so a Chinese title is not cut in the middle of a character.
+- The VS Code style overrides now use the same ranges as the Dify plugin: 1 to 96 pt for the body and heading sizes, 0.5 to 4 for line spacing, and 1 to 50 mm for the margins. A value outside its range is ignored, so the template or the profile preset is used instead of an unreadable document.
+- A font name that contains `$` characters, for example `A$&B`, is written into the document literally instead of being expanded by the XML replacement.
+- Every export now repairs the order of the style properties in the produced DOCX, so a custom reference template whose properties are in the wrong order no longer loses its spacing or justification in Word.
+- The document title is taken from a real heading again: a `#` line inside a fenced code block is no longer used as the title, and a heading such as `C# Guide` keeps its hash characters instead of being truncated.
+- Looking for Pandoc and the Mermaid CLI is bounded to five seconds and follows the export's cancel button, so a hanging executable no longer blocks the export, and a cancelled export is still reported as cancelled instead of as an error.
+- The Mermaid Ink privacy notice is shown once per destination origin. Pointing the renderer at a second host produces its own notice before any diagram source is sent there.
+- The standalone Mermaid image gets a unique file name, so two diagrams rendered in the same second no longer overwrite each other.
+- The Dify tools reject a non-string parameter with a clear message instead of failing with an internal error, and the DOCX post-processing keeps external image links and tolerates XML comments in a template's styles.
+- The runtime dependencies were upgraded to their current releases (adm-zip 0.6.1, pypandoc-binary 1.17, python-docx 1.2.0, requests 2.34.2 and lxml 6.1.3), which removes the advisories that affected the previous build.
 
 ### Changes in 0.4.1
 
