@@ -1,0 +1,100 @@
+name: Publish
+
+# Tag pushes only: `git push origin v0.5.0`. The publisher's Trusted Publishing
+# policy must name this repository and this workflow file; no PAT is stored here.
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+
+# The workflow-level block stays read-only. The publish job is the only job,
+# and it needs the two write permissions, so they are declared on the job --
+# a workflow-level `write` grants that scope to every job in the file.
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Create the GitHub Release and upload the VSIX to it.
+      id-token: write  # Mint the OIDC token for Marketplace Trusted Publishing.
+    defaults:
+      run:
+        working-directory: VSC-plugin-MD2Docx-Converter
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          # The release is created from the tag, so the tag has to be fetched.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: VSC-plugin-MD2Docx-Converter/package-lock.json
+
+      - name: Install Pandoc
+        # The E2E suite exports every profile against the real pandoc.
+        run: sudo apt-get update && sudo apt-get install -y pandoc
+
+      - name: Check the tag matches the extension version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version."
+            exit 1
+          fi
+
+      - name: Check the Dify plugin carries the same version
+        # The VS Code extension and the Dify plugin share one release version
+        # line, so a tag that only moved one of them would publish a VSIX whose
+        # plugin counterpart does not exist yet.
+        run: |
+          extension="$(node -p "require('./package.json').version")"
+          plugin="$(grep -m1 -E '^version:' ../dify-plugin-MD2Docx/manifest.yaml | tr -d '"' | awk '{print $2}')"
+          meta="$(grep -m1 -E '^  version:' ../dify-plugin-MD2Docx/manifest.yaml | tr -d '"' | awk '{print $2}')"
+          if [ "$plugin" != "$extension" ] || [ "$meta" != "$extension" ]; then
+            echo "::error::Version mismatch: extension $extension, manifest.yaml $plugin, meta.version $meta."
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - run: npm test
+
+      - name: Run real-Pandoc profile exports
+        run: npm run test:e2e
+
+      - name: Build the VSIX
+        run: npm run package
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: mdocx-converter-${{ github.ref_name }}
+          path: VSC-plugin-MD2Docx-Converter/*.vsix
+          if-no-files-found: error
+
+      - name: Publish to the Visual Studio Marketplace
+        # Pin the publisher so a devDependency bump cannot silently change the
+        # release path. --skip-duplicate keeps a re-run idempotent: if the version
+        # is already published, the desired end state is already reached.
+        run: >-
+          npx --yes @vscode/vsce@4.1.1 publish
+          --oidc
+          --skip-duplicate
+          --packagePath "mdocx-converter-${GITHUB_REF_NAME#v}.vsix"
+
+      - name: Attach the VSIX to a GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="$(awk -v ver="${GITHUB_REF_NAME#v}" 'index($0, "### Changes in " ver) == 1 { found = 1; next } found && /^### / { exit } found { print }' README.md)"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "mdocx-converter-${GITHUB_REF_NAME#v}.vsix" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "mdocx-converter-${GITHUB_REF_NAME#v}.vsix" \
+              --verify-tag \
+              --title "MD2Docx Converter $GITHUB_REF_NAME" \
+              --notes "${notes:-MD2Docx Converter $GITHUB_REF_NAME}"
+          fi
