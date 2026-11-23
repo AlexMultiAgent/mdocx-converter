@@ -12,6 +12,7 @@ test_*.js
 test/**
 specs/**
 CLAUDE.md
+CLAUDE.local.md
 tmp*
 .gitignore
 examples/**

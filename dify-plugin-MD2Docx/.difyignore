@@ -1,5 +1,6 @@
 .gitignore
 CLAUDE.md
+CLAUDE.local.md
 pytest.ini
 requirements-dev.txt
 scripts/

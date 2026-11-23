@@ -8,7 +8,10 @@ dify-plugin-MD2Docx/dist/
 dify-plugin-MD2Docx/*.difypkg
 **/__pycache__/
 *.pyc
-.claude/
+.claude/worktrees/
+.claude/scratch/
+.claude/*.png
+.claude/settings.local.json
 CLAUDE.local.md
 docs/
 .offline-markdown-preview/
