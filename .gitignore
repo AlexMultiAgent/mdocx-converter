@@ -9,7 +9,7 @@ dify-plugin-MD2Docx/*.difypkg
 **/__pycache__/
 *.pyc
 .claude/
-.claude.local.md
+CLAUDE.local.md
 docs/
 .offline-markdown-preview/
 architecture.html

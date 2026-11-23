@@ -12,7 +12,7 @@ Monorepo for **MD2Docx Converter** — tools that export Markdown to Word docume
 | `scripts/` | `sync-templates.sh` (VSC → Dify template copy) and `check-preset-parity.py` (preset drift gate) |
 | `VSC-plugin-MD2Docx-Converter/specs/` | The parity design and implementation plan that produced the shared preset table |
 
-Each subdirectory has its own `CLAUDE.md` with architecture details and build commands. `AGENTS.md` at the repo root is the gotcha cheat sheet — read it before changing either plugin. `.claude.local.md` holds the machine-local notes (the local Dify instance, the Git Bash `docker` path quirks); it is gitignored, so never commit it.
+Each subdirectory has its own `CLAUDE.md` with architecture details and build commands. `AGENTS.md` at the repo root is the gotcha cheat sheet — read it before changing either plugin. `CLAUDE.local.md` holds the machine-local notes (the local Dify instance, the Git Bash `docker` path quirks); it is gitignored, so never commit it.
 
 ## Build & test
 
