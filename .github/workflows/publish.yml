@@ -19,6 +19,7 @@ jobs:
     permissions:
       contents: write  # Create the GitHub Release and upload the VSIX to it.
       id-token: write  # Mint the OIDC token for Marketplace Trusted Publishing.
+      attestations: write  # Register the build provenance attestation.
     defaults:
       run:
         working-directory: VSC-plugin-MD2Docx-Converter
@@ -39,12 +40,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pandoc
 
       - name: Check the tag matches the extension version
+        id: version
         run: |
           version="$(node -p "require('./package.json').version")"
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version."
             exit 1
           fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Check the Dify plugin carries the same version
         # The VS Code extension and the Dify plugin share one release version
@@ -69,6 +72,19 @@ jobs:
       - name: Build the VSIX
         run: npm run package
 
+      - name: Attest the VSIX
+        # The bundle is a Sigstore bundle (mediaType
+        # application/vnd.dev.sigstore.bundle.v0.3+json) and is attached to the
+        # release as a .sigstore.json asset -- the name Sigstore itself uses for
+        # that file. OSSF Scorecard's Signed-Releases check looks for a release
+        # asset with that suffix, so the file has to be a genuine bundle and not
+        # a renamed one.
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: ${{ github.workspace }}/VSC-plugin-MD2Docx-Converter/mdocx-converter-${{ steps.version.outputs.version }}.vsix
+          subject-name: mdocx-converter-${{ steps.version.outputs.version }}.vsix
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: mdocx-converter-${{ github.ref_name }}
@@ -88,12 +104,16 @@ jobs:
       - name: Attach the VSIX to a GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
         run: |
+          asset="mdocx-converter-${GITHUB_REF_NAME#v}.vsix"
+          signature="mdocx-converter-${GITHUB_REF_NAME#v}.sigstore.json"
+          cp "$BUNDLE" "$signature"
           notes="$(awk -v ver="${GITHUB_REF_NAME#v}" 'index($0, "### Changes in " ver) == 1 { found = 1; next } found && /^### / { exit } found { print }' README.md)"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "mdocx-converter-${GITHUB_REF_NAME#v}.vsix" --clobber
+            gh release upload "$GITHUB_REF_NAME" "$asset" "$signature" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "mdocx-converter-${GITHUB_REF_NAME#v}.vsix" \
+            gh release create "$GITHUB_REF_NAME" "$asset" "$signature" \
               --verify-tag \
               --title "MD2Docx Converter $GITHUB_REF_NAME" \
               --notes "${notes:-MD2Docx Converter $GITHUB_REF_NAME}"
